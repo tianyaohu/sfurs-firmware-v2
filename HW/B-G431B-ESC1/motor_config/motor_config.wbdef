@@ -53,7 +53,7 @@
         <define key="M1_AMPLIFICATION_GAIN" value="9.14" />
         <define key="M1_ANGC" value="{0,0,0,0,0,0,0,0}" />
         <define key="M1_AUXILIARY_SPEED_SENSOR" value="NONE" />
-        <define key="M1_BOARD_MAX_CURRENT" value="9.5" />
+        <define key="M1_BOARD_MAX_CURRENT" value="3" />
         <define key="M1_BUS_VOLTAGE_READING" value="ENABLE" />
         <define key="M1_COMMUTATION_STEP_TIME_BUF_SIZE" value="12" />
         <define key="M1_CONSTANT1_D" value="318149" />
@@ -82,7 +82,7 @@
         <define key="M1_CURRENT_SENSING_TOPO" value="THREE_SHUNT" />
         <define key="M1_DAC_CURRENT_THRESHOLD" value="4083" />
         <define key="M1_DBG_OPEN_LOOP_ENABLE" value="FALSE" />
-        <define key="M1_DC_CURRENT_RS_MEAS" value="9.5" />
+        <define key="M1_DC_CURRENT_RS_MEAS" value="3" />
         <define key="M1_DEFAULT_CONTROL_MODE" value="STC_SPEED_MODE" />
         <define key="M1_DEFAULT_FLUX_COMPONENT" value="0" />
         <define key="M1_DEFAULT_TARGET_SPEED_RPM" value="1071" />
@@ -109,12 +109,12 @@
         <define key="M1_HIGH_SIDE_IDLE_STATE" value="TURN_OFF" />
         <define key="M1_HW_DEAD_TIME_NS" value="800" />
         <define key="M1_ICL_ENABLED" value="FALSE" />
-        <define key="M1_ID_DEMAG" value="-9.5" />
+        <define key="M1_ID_DEMAG" value="-3" />
         <define key="M1_INT_AMP_OPAMP1_PIN" value="[{'mode':'Standalone','name':'PA1','signal':'OPAMP1_VINP','label':'SHUNT_P_U'},{'mode':'PGA Connected-INVERTINGINPUT_IO0_BIAS','name':'PA3','signal':'OPAMP1_VINM0','label':'SHUNT_M_U'}]" />
         <define key="M1_INT_AMP_OPAMP2_PIN" value="[{'mode':'Standalone','name':'PA7','signal':'OPAMP2_VINP','label':'SHUNT_P_V'},{'mode':'PGA Connected-INVERTINGINPUT_IO0_BIAS','name':'PA5','signal':'OPAMP2_VINM0','label':'SHUNT_M_V'}]" />
         <define key="M1_INT_AMP_OPAMP3_PIN" value="[{'mode':'Standalone','name':'PB0','signal':'OPAMP3_VINP','label':'SHUNT_P_W'},{'mode':'PGA Connected-INVERTINGINPUT_IO0_BIAS','name':'PB2','signal':'OPAMP3_VINM0','label':'SHUNT_M_W'}]" />
         <define key="M1_INT_AMP_OPAMPS" value="['OPAMP1','OPAMP2','OPAMP3']" />
-        <define key="M1_IQMAX" value="9.5" />
+        <define key="M1_IQMAX" value="3" />
         <define key="M1_LDLQ_RATIO" value="1.000" />
         <define key="M1_LOW_SIDE_IDLE_STATE" value="TURN_OFF" />
         <define key="M1_LOW_SIDE_SIGNALS_ENABLING" value="LS_PWM_TIMER" />
@@ -128,7 +128,7 @@
         <define key="M1_MOTOR_VOLTAGE_CONSTANT" value="3.0" />
         <define key="M1_MTPA_ENABLING" value="DISABLE" />
         <define key="M1_NOMINAL_BUS_VOLTAGE_V" value="12" />
-        <define key="M1_NOMINAL_CURRENT" value="9.5" />
+        <define key="M1_NOMINAL_CURRENT" value="3" />
         <define key="M1_OCP_BKIN_FILTER" value="3" />
         <define key="M1_OCP_BKIN_MODE" value="INT_MODE" />
         <define key="M1_OCP_BKIN_POLARITY" value="EMSTOP_ACTIVE_HIGH" />

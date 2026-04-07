@@ -20,10 +20,19 @@
  * Helper Macros
  */
 #define CAN_U32_FROM_PAYLOAD(p) \
-  ( ((uint32_t)((p)[0]) << 24) | \
-    ((uint32_t)((p)[1]) << 16) | \
-    ((uint32_t)((p)[2]) << 8)  | \
-    ((uint32_t)((p)[3])) )
+  ( ((uint32_t)((p)[0]))        | \
+    ((uint32_t)((p)[1]) << 8)   | \
+    ((uint32_t)((p)[2]) << 16)  | \
+    ((uint32_t)((p)[3]) << 24) )
+
+#define CAN_PAYLOAD_FROM_U32(p, v)         \
+  do                                       \
+  {                                        \
+    (p)[0] = (uint8_t)((v) & 0xFFU);       \
+    (p)[1] = (uint8_t)(((v) >> 8) & 0xFFU);  \
+    (p)[2] = (uint8_t)(((v) >> 16) & 0xFFU); \
+    (p)[3] = (uint8_t)(((v) >> 24) & 0xFFU); \
+  } while (0)
 
 #define CAN_COMMAND_FROM_ID(p) ((uint32_t)(p) & 0b11110000000)
 
@@ -48,5 +57,15 @@
 #define SPEED_READ  (2U << 7)
 #define TORQUE_WRITE (3U << 7)
 #define MOTOR_STOP   (15U << 7)
+
+/*
+ * CAN Wrapper Functions
+ */
+HAL_StatusTypeDef can_motor_write_speed_ramp(FDCAN_HandleTypeDef* can_pointer,
+		FDCAN_TxHeaderTypeDef* tx_header,
+		uint8_t* tx_data,
+		uint8_t* motor_id,
+		int32_t speed,
+		uint32_t time);
 
 #endif

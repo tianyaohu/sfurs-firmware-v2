@@ -1080,7 +1080,7 @@
       },
       "powerSupply_0": {
         "nominalDcBusVoltage": 12,
-        "nominalCurrent": 9.5,
+        "nominalCurrent": 3,
         "maxCurrent_pk": "Number.NaN",
         "icl": {
           "enable": false,

@@ -44,7 +44,7 @@ static const ApplicationConfig_reg_t M1_ApplicationConfig_reg =
 {
   .maxMechanicalSpeed = 2976,
   .maxReadableCurrent = M1_MAX_READABLE_CURRENT,
-  .nominalCurrent     = 9.5,
+  .nominalCurrent     = 3,
   .nominalVoltage     = 12,
   .driveType          = DRIVE_TYPE_M1,
 };
@@ -57,7 +57,7 @@ static const MotorConfig_reg_t M1_MotorConfig_reg =
   .rs         = 0.22,
   .ls         = 0.00011*1.000,
   .ld         = 0.00011,
-  .maxCurrent = 9.5,
+  .maxCurrent = 3,
   .name = "bldc_motor_12V_4kRPM_2.7"
 };
 

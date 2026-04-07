@@ -1,0 +1,38 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Static libraries
+*.a
+*.lib
+
+# Executables
+*.out
+*.elf
+*.mk
+
+.DS_Store
+
+.cache
+
+STM32CubeIDE/.settings/
+STM32CubeIDE/.metadata/
+STM32CubeIDE/Debug/
+STM32CubeIDE/Release/
+STM32CubeIDE/DEBUG_*
+
+.settings
+
+motor_config.log
+motor_config.ioc.bak
+motor_config.ioc.wb
+motor_config.settings

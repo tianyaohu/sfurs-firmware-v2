@@ -77,8 +77,6 @@ FDCAN_FilterTypeDef   can_filter_config;
 uint8_t             can_tx_data[8];
 uint8_t             can_rx_data[8];
 
-volatile bool movement_flag = false;
-
 
 /* USER CODE END PV */
 
@@ -207,8 +205,16 @@ int main(void)
   	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET);
   #endif
 
-  #ifdef MOTOR_SW
+  #ifdef MOTOR_SE
   	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET);
+  #endif
+
+  #ifdef MOTOR_SW
+  	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
+  #endif
+
+  #ifdef MOTOR_NW
+  	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
   #endif
 
   /* USER CODE END 2 */
@@ -222,11 +228,9 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 	MCI_State_t s = MC_GetSTMStateMotor1();
-
-	if (s == FAULT_OVER) {
-		(void)MC_AcknowledgeFaultMotor1();
-	} else if (s == IDLE && movement_flag) {
-		(void)MC_StartMotor1();
+	if ((s == FAULT_OVER) && (MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS))
+	{
+	  (void)MC_AcknowledgeFaultMotor1();
 	}
   }
   /* USER CODE END 3 */
@@ -688,14 +692,14 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.AutoRetransmission = ENABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
-  hfdcan1.Init.NominalPrescaler = 10;
-  hfdcan1.Init.NominalSyncJumpWidth = 3;
-  hfdcan1.Init.NominalTimeSeg1 = 13;
-  hfdcan1.Init.NominalTimeSeg2 = 3;
-  hfdcan1.Init.DataPrescaler = 1;
-  hfdcan1.Init.DataSyncJumpWidth = 1;
-  hfdcan1.Init.DataTimeSeg1 = 1;
-  hfdcan1.Init.DataTimeSeg2 = 1;
+  hfdcan1.Init.NominalPrescaler = 2;
+  hfdcan1.Init.NominalSyncJumpWidth = 17;
+  hfdcan1.Init.NominalTimeSeg1 = 152;
+  hfdcan1.Init.NominalTimeSeg2 = 17;
+  hfdcan1.Init.DataPrescaler = 17;
+  hfdcan1.Init.DataSyncJumpWidth = 9;
+  hfdcan1.Init.DataTimeSeg1 = 10;
+  hfdcan1.Init.DataTimeSeg2 = 9;
   hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
@@ -1087,27 +1091,32 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
   if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == SPEED_WRITE)
   {
 	  uint32_t rx_data = CAN_U32_FROM_PAYLOAD(can_rx_data);
-	  int16_t final_speed = (int16_t)(rx_data & 0xFFFFU);
+	  int16_t final_speed_rpm = (int16_t)(rx_data & 0xFFFFU);
 	  uint16_t duration_ms = (uint16_t)((rx_data >> 16) & 0xFFFFU);
-	  movement_flag = true;
-	  MC_ProgramSpeedRampMotor1(final_speed, duration_ms);
+	  MC_ProgramSpeedRampMotor1(RPM_2_SPEED_UNIT(final_speed_rpm), duration_ms);
+
+	  if (MC_GetSTMStateMotor1() == IDLE)
+	  {
+		  (void)MC_StartMotor1();
+	  }
   }
   else if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == TORQUE_WRITE)
   {
 	  uint32_t rx_data = CAN_U32_FROM_PAYLOAD(can_rx_data);
 	  int16_t final_torque = (int16_t)(rx_data & 0xFFFFU);
 	  uint16_t duration_ms = (uint16_t)((rx_data >> 16) & 0xFFFFU);
-	  movement_flag = true;
-	  MC_ProgramTorqueRampMotor1(final_torque, duration_ms);
+      MC_ProgramTorqueRampMotor1(final_torque, duration_ms);
+
+	  if (MC_GetSTMStateMotor1() == IDLE)
+	  {
+		  (void)MC_StartMotor1();
+	  }
   }
   else if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == MOTOR_STOP)
   {
-	  movement_flag = false;
 	  MC_StopMotor1();
   } else {
-	  // by default if we do not recognize the instruction just stop the motors
-	  movement_flag = false;
-	  MC_StopMotor1();
+	  // just do nothing if we do not recognize the command
   }
 }
 

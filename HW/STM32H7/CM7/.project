@@ -3,6 +3,7 @@
 	<name>STM32H7_CM7</name>
 	<comment></comment>
 	<projects>
+		<project>SPI</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>

@@ -27,9 +27,9 @@ uint32_t rs_i2t_init(rs_i2t_instance_t* instance, rs_i2t_config_t* config)
     {
         ret_val = -1;
     }
-    else if (NULL == config->set_derate_current_A)
+    else if (NULL == config->set_max_current_A)
     {
-        ret_val = -;1
+        ret_val = -1;
     }
     else if (config->nominal_current_A < config->derate_current_A)
     {
@@ -47,7 +47,7 @@ uint32_t rs_i2t_init(rs_i2t_instance_t* instance, rs_i2t_config_t* config)
     return ret_val;
 }
 
-uint32_t rs_i2t_step(rs_i2t_config_t* instance)
+uint32_t rs_i2t_step(rs_i2t_instance_t* instance)
 {
     uint32_t ret_val = 0;    
 
@@ -62,7 +62,7 @@ uint32_t rs_i2t_step(rs_i2t_config_t* instance)
     else 
     {
         prev_derate_requested = curr_derate_requested;
-        float current_A = instance->config->get_current_A;    
+        float current_A = instance->config->get_current_A();    
         i2t_accumulator += (current_A + instance->config->nominal_current_A) * (current_A - instance->config->nominal_current_A) * (instance->config->period);
         if (i2t_accumulator >= instance->config->thermal_budget_A2S)
         {

@@ -83,16 +83,26 @@ int main(void)
     // osKernelStart();
 
     /* Should never get here */
-    // uint8_t product_id;
+    uint8_t product_id;
 
-    // HAL_StatusTypeDef status = spi_optical_flow_read_register(
-    //&hspi2, SPI_OPTICAL_FLOW_REGISTER_PRODUCT_ID, &product_id);
+    HAL_StatusTypeDef status = spi_optical_flow_read_register(&hspi2, 0x00U, &product_id);
     HAL_StatusTypeDef optical_flow_status;
     SPI_OPTICAL_FLOW_DELTA_DATA_t data;
 
+    int32_t dx = 0;
+    int32_t dy = 0;
     while (1) {
         optical_flow_status = spi_optical_flow_get_delta(&hspi2, &data);
-        HAL_Delay(10);
+
+        if (optical_flow_status == HAL_OK) {
+            dx += data.delta_x;
+            dy += data.delta_y;
+            printf("delta x: %ld, delta y: %ld\r\n", (long)dx, (long)dy);
+        } else {
+            printf("Optical-flow read failed: %d\r\n", (int)optical_flow_status);
+        }
+
+        HAL_Delay(200);
     }
 }
 

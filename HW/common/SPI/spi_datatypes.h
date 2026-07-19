@@ -29,9 +29,10 @@ typedef struct {
 HAL_StatusTypeDef spi_optical_flow_init(SPI_HandleTypeDef *spi_pointer);
 
 /*
- * Reads the latest optical flow delta.
- * Populates delta_data with the measured X and Y motion.
- * Returns HAL_OK when valid motion data is available
+ * Reads the latest optical-flow delta.
+ * Returns HAL_OK when communication succeeds. If no valid motion is
+ * available, delta_x and delta_y are set to zero.
+ * Returns HAL_ERROR for invalid arguments or communication failures.
  */
 HAL_StatusTypeDef spi_optical_flow_get_delta(SPI_HandleTypeDef *spi_pointer,
                                              SPI_OPTICAL_FLOW_DELTA_DATA_t *delta_data);

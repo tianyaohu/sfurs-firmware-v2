@@ -29,12 +29,25 @@ void Board_Init(void)
     SystemClock_Config();
     MX_GPIO_Init();
     // MX_FDCAN1_Init();
-    // Peripherals_Init();
+    Peripherals_Init();
     MX_SPI2_Init();
     if (spi_optical_flow_init(&hspi2) != HAL_OK) {
         Error_Handler();
     }
 }
+
+int _write(int file, char *ptr, int len)
+{
+    (void)file;
+
+    if (HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t *)ptr, (uint16_t)len, HAL_MAX_DELAY)
+        != HAL_OK) {
+        return -1;
+    }
+
+    return len;
+}
+
 
 /**
  * @brief Initialize application peripherals and state.

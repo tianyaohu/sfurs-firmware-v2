@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// SET_MAX_CURRENT_A SHOULD NOT RETURN VOID IT SHOULD RETURN A STATUS
+
 typedef struct rs_i2t_config_s
 {
     float period_ms;
@@ -13,7 +15,7 @@ typedef struct rs_i2t_config_s
     float derate_current_A;
     float thermal_budget_A2S;
     float (*get_current_A) (void);
-    void  (*set_max_current_A) (float max_current_A);
+    uint32_t (*set_max_current_A) (float max_current_A);
 } rs_i2t_config_t;
 
 typedef struct rs_i2t_instance_s

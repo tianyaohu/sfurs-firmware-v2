@@ -11,7 +11,7 @@ uint32_t rs_i2t_init(rs_i2t_instance_t* instance, rs_i2t_config_t* config)
     {
         ret_val = -1;
     }
-    else if (false == instance->initialized)
+    else if (true == instance->initialized)
     {
         ret_val = -1;
     }
@@ -23,11 +23,19 @@ uint32_t rs_i2t_init(rs_i2t_instance_t* instance, rs_i2t_config_t* config)
     {
         ret_val = -1;
     }
-    else if (NULL == config->get_current_A)
+    else if (config->nominal_current_A <= 0)
     {
         ret_val = -1;
     }
-    else if (NULL == config->set_max_current_A)
+    else if (config->peak_current_A <= 0)
+    {
+        ret_val = -1;
+    }
+    else if (config->derate_current_A <= 0)
+    {
+        ret_val = -1;
+    }
+    else if (config->thermal_budget_A2S <= 0)
     {
         ret_val = -1;
     }
@@ -35,7 +43,15 @@ uint32_t rs_i2t_init(rs_i2t_instance_t* instance, rs_i2t_config_t* config)
     {
         ret_val = -1;
     }
-    else if (config->derate_current_A >= config->peak_current_A)
+    else if (config->nominal_current_A > config->peak_current_A)
+    {
+        ret_val = -1;
+    }
+    else if (NULL == config->get_current_A)
+    {
+        ret_val = -1;
+    }
+    else if (NULL == config->set_max_current_A)
     {
         ret_val = -1;
     }

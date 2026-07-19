@@ -7,7 +7,7 @@
 
 typedef struct rs_i2t_config_s
 {
-    float period;
+    float period_ms;
     float nominal_current_A;
     float peak_current_A;
     float derate_current_A;

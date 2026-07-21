@@ -1,10 +1,10 @@
 /*
- * spi_datatypes.h
+ * optical_flow.h
  * Driver interface for the PAA5100JE-Q optical flow sensor.
  */
 
-#ifndef SPI_DATATYPES_H
-#define SPI_DATATYPES_H
+#ifndef OPTICAL_FLOW_H
+#define OPTICAL_FLOW_H
 
 #include "stm32h7xx_hal.h"
 #include <stdint.h>

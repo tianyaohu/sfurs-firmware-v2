@@ -83,9 +83,6 @@ int main(void)
     // osKernelStart();
 
     /* Should never get here */
-    uint8_t product_id;
-
-    HAL_StatusTypeDef status = spi_optical_flow_read_register(&hspi2, 0x00U, &product_id);
     HAL_StatusTypeDef optical_flow_status;
     SPI_OPTICAL_FLOW_DELTA_DATA_t data;
 

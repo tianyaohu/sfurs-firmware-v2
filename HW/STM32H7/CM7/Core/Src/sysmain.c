@@ -99,7 +99,7 @@ int main(void)
             printf("Optical-flow read failed: %d\r\n", (int)optical_flow_status);
         }
 
-        HAL_Delay(200);
+        HAL_Delay(10);
     }
 }
 

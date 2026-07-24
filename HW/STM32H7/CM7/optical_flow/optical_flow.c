@@ -37,6 +37,8 @@
 #define PAA5100_PRODUCT_ID_VALUE                     0x49U
 #define PAA5100_INVERSE_PRODUCT_ID_VALUE             0xB6U
 
+#define SPI_OPTICAL_FLOW_SPI_TIMEOUT_MS 10U
+
 
 typedef struct {
     uint8_t reg;
@@ -224,7 +226,8 @@ static HAL_StatusTypeDef spi_optical_flow_write_register(SPI_HandleTypeDef *spi_
     uint8_t spi_tx_data[2] = {(uint8_t)(reg | SPI_OPTICAL_FLOW_WRITE_MASK), value};
 
     spi_optical_flow_begin_transaction();
-    status = HAL_SPI_Transmit(spi_pointer, spi_tx_data, 2U, HAL_MAX_DELAY);
+    status
+        = HAL_SPI_Transmit(spi_pointer, spi_tx_data, 2U, SPI_OPTICAL_FLOW_SPI_TIMEOUT_MS);
     spi_optical_flow_end_transaction(SPI_OPTICAL_FLOW_T_WRITE_HOLD_US,
                                      SPI_OPTICAL_FLOW_T_WRITE_RECOVERY_US);
 
@@ -244,12 +247,13 @@ static HAL_StatusTypeDef spi_optical_flow_read_register(SPI_HandleTypeDef *spi_p
     }
 
     spi_optical_flow_begin_transaction();
-    status = HAL_SPI_Transmit(spi_pointer, &reg_address, 1U, HAL_MAX_DELAY);
+    status = HAL_SPI_Transmit(spi_pointer, &reg_address, 1U,
+                              SPI_OPTICAL_FLOW_SPI_TIMEOUT_MS);
 
     if (status == HAL_OK) {
         spi_optical_flow_delay_us(SPI_OPTICAL_FLOW_T_READ_ACCESS_US);
         status = HAL_SPI_TransmitReceive(spi_pointer, &tx_dummy, &reg_value, 1U,
-                                         HAL_MAX_DELAY);
+                                         SPI_OPTICAL_FLOW_SPI_TIMEOUT_MS);
     }
 
     spi_optical_flow_end_transaction(0U, SPI_OPTICAL_FLOW_T_READ_RECOVERY_US);
@@ -266,13 +270,14 @@ spi_optical_flow_bulk_write(SPI_HandleTypeDef *spi_pointer,
                             const SPI_OPTICAL_FLOW_REGISTER_WRITE_t *writes,
                             uint32_t count)
 {
+    HAL_StatusTypeDef status;
     uint32_t index;
 
     for (index = 0U; index < count; index++) {
-        if (spi_optical_flow_write_register(spi_pointer, writes[index].reg,
-                                            writes[index].value)
-            != HAL_OK) {
-            return HAL_ERROR;
+        status = spi_optical_flow_write_register(spi_pointer, writes[index].reg,
+                                                 writes[index].value);
+        if (status != HAL_OK) {
+            return status;
         }
     }
 
@@ -288,12 +293,14 @@ spi_optical_flow_read_motion_burst_raw(SPI_HandleTypeDef *spi_pointer,
     uint8_t tx_dummy[SPI_OPTICAL_FLOW_BURST_LENGTH] = {0};
 
     spi_optical_flow_begin_transaction();
-    status = HAL_SPI_Transmit(spi_pointer, &burst_reg, 1U, HAL_MAX_DELAY);
+    status
+        = HAL_SPI_Transmit(spi_pointer, &burst_reg, 1U, SPI_OPTICAL_FLOW_SPI_TIMEOUT_MS);
 
     if (status == HAL_OK) {
         spi_optical_flow_delay_us(SPI_OPTICAL_FLOW_T_BURST_ACCESS_US);
         status = HAL_SPI_TransmitReceive(spi_pointer, tx_dummy, spi_rx_data,
-                                         SPI_OPTICAL_FLOW_BURST_LENGTH, HAL_MAX_DELAY);
+                                         SPI_OPTICAL_FLOW_BURST_LENGTH,
+                                         SPI_OPTICAL_FLOW_SPI_TIMEOUT_MS);
     }
 
     spi_optical_flow_end_transaction(0U, SPI_OPTICAL_FLOW_T_BURST_EXIT_US);
@@ -305,27 +312,27 @@ static HAL_StatusTypeDef
 spi_optical_flow_read_identifiers(SPI_HandleTypeDef *spi_pointer,
                                   SPI_OPTICAL_FLOW_IDENTIFIERS_t *identifiers)
 {
-    if (identifiers == NULL) {
+    HAL_StatusTypeDef status;
+
+    if (spi_pointer == NULL || identifiers == NULL) {
         return HAL_ERROR;
     }
 
-    if (spi_optical_flow_read_register(spi_pointer, SPI_OPTICAL_FLOW_REGISTER_PRODUCT_ID,
-                                       &identifiers->product_id)
-        != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_register(
+        spi_pointer, SPI_OPTICAL_FLOW_REGISTER_PRODUCT_ID, &identifiers->product_id);
+    if (status != HAL_OK) {
+        return status;
     }
-
-    if (spi_optical_flow_read_register(spi_pointer, SPI_OPTICAL_FLOW_REGISTER_REVISION_ID,
-                                       &identifiers->revision_id)
-        != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_register(
+        spi_pointer, SPI_OPTICAL_FLOW_REGISTER_REVISION_ID, &identifiers->revision_id);
+    if (status != HAL_OK) {
+        return status;
     }
-
-    if (spi_optical_flow_read_register(spi_pointer,
-                                       SPI_OPTICAL_FLOW_REGISTER_INVERSE_PRODUCT_ID,
-                                       &identifiers->inverse_product_id)
-        != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_register(spi_pointer,
+                                            SPI_OPTICAL_FLOW_REGISTER_INVERSE_PRODUCT_ID,
+                                            &identifiers->inverse_product_id);
+    if (status != HAL_OK) {
+        return status;
     }
 
     return HAL_OK;
@@ -351,32 +358,40 @@ static uint8_t spi_optical_flow_identifiers_match_expected(
 static HAL_StatusTypeDef
 spi_optical_flow_apply_calibration(SPI_HandleTypeDef *spi_pointer)
 {
+    HAL_StatusTypeDef status;
     uint8_t value = 0U;
+    uint8_t c1    = 0U;
+    uint8_t c2    = 0U;
 
-    if (spi_optical_flow_read_register(spi_pointer, 0x67U, &value) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_register(spi_pointer, 0x67U, &value);
+    if (status != HAL_OK) {
+        return status;
     }
 
-    if (spi_optical_flow_write_register(spi_pointer, 0x48U,
-                                        (value & 0x80U) != 0U ? 0x04U : 0x02U)
-        != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_write_register(spi_pointer, 0x48U,
+                                             (value & 0x80U) != 0U ? 0x04U : 0x02U);
+
+    if (status != HAL_OK) {
+        return status;
     }
 
-    if (spi_optical_flow_read_register(spi_pointer, 0x73U, &value) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_register(spi_pointer, 0x73U, &value);
+    if (status != HAL_OK) {
+        return status;
     }
 
     if (value != 0x00U) {
         return HAL_OK;
     }
 
-    uint8_t c1 = 0U;
-    uint8_t c2 = 0U;
+    status = spi_optical_flow_read_register(spi_pointer, 0x70U, &c1);
+    if (status != HAL_OK) {
+        return status;
+    }
 
-    if (spi_optical_flow_read_register(spi_pointer, 0x70U, &c1) != HAL_OK
-        || spi_optical_flow_read_register(spi_pointer, 0x71U, &c2) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_register(spi_pointer, 0x71U, &c2);
+    if (status != HAL_OK) {
+        return status;
     }
 
     if (c1 <= 28U) {
@@ -391,35 +406,43 @@ spi_optical_flow_apply_calibration(SPI_HandleTypeDef *spi_pointer)
 
     c2 = (uint8_t)((((uint32_t)c2) * 45U) / 100U);
 
-    if (spi_optical_flow_write_register(spi_pointer, 0x7FU, 0x00U) != HAL_OK
-        || spi_optical_flow_write_register(spi_pointer, 0x61U, 0xADU) != HAL_OK
-        || spi_optical_flow_write_register(spi_pointer, 0x51U, 0x70U) != HAL_OK
-        || spi_optical_flow_write_register(spi_pointer, 0x7FU, 0x0EU) != HAL_OK
-        || spi_optical_flow_write_register(spi_pointer, 0x70U, c1) != HAL_OK
-        || spi_optical_flow_write_register(spi_pointer, 0x71U, c2) != HAL_OK) {
-        return HAL_ERROR;
-    }
-    return HAL_OK;
+    const SPI_OPTICAL_FLOW_REGISTER_WRITE_t calibration_writes[] = {
+        {0x7FU, 0x00U},
+        {0x61U, 0xADU},
+        {0x51U, 0x70U},
+        {0x7FU, 0x0EU},
+        {0x70U, c1   },
+        {0x71U, c2   },
+    };
+
+    return spi_optical_flow_bulk_write(spi_pointer, calibration_writes,
+                                       ARRAY_COUNT(calibration_writes));
 }
 
 static HAL_StatusTypeDef spi_optical_flow_apply_config(SPI_HandleTypeDef *spi_pointer)
 {
-    if (spi_optical_flow_bulk_write(spi_pointer, startup_config_initial,
-                                    ARRAY_COUNT(startup_config_initial))
-        != HAL_OK) {
-        return HAL_ERROR;
+    HAL_StatusTypeDef status;
+
+    status = spi_optical_flow_bulk_write(spi_pointer, startup_config_initial,
+                                         ARRAY_COUNT(startup_config_initial));
+
+    if (status != HAL_OK) {
+        return status;
     }
 
-    if (spi_optical_flow_apply_calibration(spi_pointer) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_apply_calibration(spi_pointer);
+
+    if (status != HAL_OK) {
+        return status;
     }
 
     HAL_Delay(10U);
 
-    if (spi_optical_flow_bulk_write(spi_pointer, startup_config_after_delay,
-                                    ARRAY_COUNT(startup_config_after_delay))
-        != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_bulk_write(spi_pointer, startup_config_after_delay,
+                                         ARRAY_COUNT(startup_config_after_delay));
+
+    if (status != HAL_OK) {
+        return status;
     }
 
     HAL_Delay(10U);
@@ -430,25 +453,44 @@ static HAL_StatusTypeDef spi_optical_flow_apply_config(SPI_HandleTypeDef *spi_po
 
 static HAL_StatusTypeDef spi_optical_flow_read_motion(SPI_HandleTypeDef *spi_pointer)
 {
+    HAL_StatusTypeDef status;
     uint8_t value = 0U;
 
-    if (spi_optical_flow_read_register(spi_pointer, SPI_OPTICAL_FLOW_REGISTER_MOTION,
-                                       &value)
-            != HAL_OK
-        || spi_optical_flow_read_register(spi_pointer,
-                                          SPI_OPTICAL_FLOW_REGISTER_DELTA_X_L, &value)
-               != HAL_OK
-        || spi_optical_flow_read_register(spi_pointer,
-                                          SPI_OPTICAL_FLOW_REGISTER_DELTA_X_H, &value)
-               != HAL_OK
-        || spi_optical_flow_read_register(spi_pointer,
-                                          SPI_OPTICAL_FLOW_REGISTER_DELTA_Y_L, &value)
-               != HAL_OK
-        || spi_optical_flow_read_register(spi_pointer,
-                                          SPI_OPTICAL_FLOW_REGISTER_DELTA_Y_H, &value)
-               != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_register(spi_pointer, SPI_OPTICAL_FLOW_REGISTER_MOTION,
+                                            &value);
+
+    if (status != HAL_OK) {
+        return status;
     }
+
+    status = spi_optical_flow_read_register(spi_pointer,
+                                            SPI_OPTICAL_FLOW_REGISTER_DELTA_X_L, &value);
+
+    if (status != HAL_OK) {
+        return status;
+    }
+
+    status = spi_optical_flow_read_register(spi_pointer,
+                                            SPI_OPTICAL_FLOW_REGISTER_DELTA_X_H, &value);
+
+    if (status != HAL_OK) {
+        return status;
+    }
+
+    status = spi_optical_flow_read_register(spi_pointer,
+                                            SPI_OPTICAL_FLOW_REGISTER_DELTA_Y_L, &value);
+
+    if (status != HAL_OK) {
+        return status;
+    }
+
+    status = spi_optical_flow_read_register(spi_pointer,
+                                            SPI_OPTICAL_FLOW_REGISTER_DELTA_Y_H, &value);
+
+    if (status != HAL_OK) {
+        return status;
+    }
+
     return HAL_OK;
 }
 
@@ -456,6 +498,7 @@ static HAL_StatusTypeDef spi_optical_flow_read_motion(SPI_HandleTypeDef *spi_poi
 static HAL_StatusTypeDef spi_optical_flow_read_sample(SPI_HandleTypeDef *spi_pointer,
                                                       SPI_OPTICAL_FLOW_SAMPLE_t *sample)
 {
+    HAL_StatusTypeDef status;
     uint8_t *burst;
 
     if (sample == NULL) {
@@ -465,8 +508,9 @@ static HAL_StatusTypeDef spi_optical_flow_read_sample(SPI_HandleTypeDef *spi_poi
     memset(sample, 0, sizeof(*sample));
     burst = sample->raw_burst;
 
-    if (spi_optical_flow_read_motion_burst_raw(spi_pointer, burst) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_motion_burst_raw(spi_pointer, burst);
+    if (status != HAL_OK) {
+        return status;
     }
 
     sample->motion  = burst[0];
@@ -491,6 +535,7 @@ static HAL_StatusTypeDef spi_optical_flow_read_sample(SPI_HandleTypeDef *spi_poi
 /* Public APIs */
 HAL_StatusTypeDef spi_optical_flow_init(SPI_HandleTypeDef *spi_pointer)
 {
+    HAL_StatusTypeDef status;
     SPI_OPTICAL_FLOW_IDENTIFIERS_t identifiers;
 
     if (spi_pointer == NULL) {
@@ -502,24 +547,31 @@ HAL_StatusTypeDef spi_optical_flow_init(SPI_HandleTypeDef *spi_pointer)
     spi_optical_flow_chip_select(GPIO_PIN_SET);
     HAL_Delay(50U);
 
-    if (spi_optical_flow_write_register(spi_pointer,
-                                        SPI_OPTICAL_FLOW_REGISTER_POWER_UP_RESET, 0x5AU)
-        != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_write_register(
+        spi_pointer, SPI_OPTICAL_FLOW_REGISTER_POWER_UP_RESET, 0x5AU);
+
+    if (status != HAL_OK) {
+        return status;
     }
 
     HAL_Delay(20U);
 
-    if (spi_optical_flow_read_motion(spi_pointer) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_motion(spi_pointer);
+
+    if (status != HAL_OK) {
+        return status;
     }
 
-    if (spi_optical_flow_apply_config(spi_pointer) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_apply_config(spi_pointer);
+
+    if (status != HAL_OK) {
+        return status;
     }
 
-    if (spi_optical_flow_read_identifiers(spi_pointer, &identifiers) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_identifiers(spi_pointer, &identifiers);
+
+    if (status != HAL_OK) {
+        return status;
     }
 
     if (spi_optical_flow_identifiers_match_expected(&identifiers) == 0U) {
@@ -532,6 +584,7 @@ HAL_StatusTypeDef spi_optical_flow_init(SPI_HandleTypeDef *spi_pointer)
 HAL_StatusTypeDef spi_optical_flow_get_delta(SPI_HandleTypeDef *spi_pointer,
                                              SPI_OPTICAL_FLOW_DELTA_DATA_t *delta_data)
 {
+    HAL_StatusTypeDef status;
     SPI_OPTICAL_FLOW_SAMPLE_t sample;
 
     if (delta_data == NULL || spi_pointer == NULL) {
@@ -541,8 +594,9 @@ HAL_StatusTypeDef spi_optical_flow_get_delta(SPI_HandleTypeDef *spi_pointer,
     delta_data->delta_y = 0;
 
     /* SPI communication failure. */
-    if (spi_optical_flow_read_sample(spi_pointer, &sample) != HAL_OK) {
-        return HAL_ERROR;
+    status = spi_optical_flow_read_sample(spi_pointer, &sample);
+    if (status != HAL_OK) {
+        return status;
     }
 
     /* No motion or unusable sample. */

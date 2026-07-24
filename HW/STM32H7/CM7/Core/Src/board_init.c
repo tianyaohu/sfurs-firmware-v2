@@ -31,7 +31,7 @@ void Board_Init(void)
     // MX_FDCAN1_Init();
     Peripherals_Init();
     MX_SPI2_Init();
-    if (spi_optical_flow_init(&hspi2) != HAL_OK) {
+    if (paa5100_init(&hspi2) != HAL_OK) {
         Error_Handler();
     }
 }

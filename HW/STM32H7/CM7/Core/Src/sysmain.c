@@ -84,12 +84,12 @@ int main(void)
 
     /* Should never get here */
     HAL_StatusTypeDef optical_flow_status;
-    SPI_OPTICAL_FLOW_DELTA_DATA_t data;
+    PAA5100_DELTA_t data;
 
     int32_t dx = 0;
     int32_t dy = 0;
     while (1) {
-        optical_flow_status = spi_optical_flow_get_delta(&hspi2, &data);
+        optical_flow_status = paa5100_get_delta(&hspi2, &data);
 
         if (optical_flow_status == HAL_OK) {
             dx += data.delta_x;

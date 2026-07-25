@@ -25,16 +25,19 @@ typedef struct {
  * Resets the sensor, clears motion registers, applies the vendor config
  * sequence, then reads and validates the sensor identifiers.
  * Returns HAL_OK on successful initialization.
+ * Returns HAL_ERROR, HAL_TIMEOUT or HAL_BUSY for invalid arguments or communication
+ * failures.
  */
-HAL_StatusTypeDef paa5100_init(SPI_HandleTypeDef *spi_pointer);
+HAL_StatusTypeDef paa5100_init(SPI_HandleTypeDef *spi_handle);
 
 /*
- * Reads the latest optical-flow delta.
+ * Reads the latest optical-flow raw delta counts.
  * Returns HAL_OK when communication succeeds. If no valid motion is
  * available, delta_x and delta_y are set to zero.
- * Returns HAL_ERROR for invalid arguments or communication failures.
+ * Returns HAL_ERROR, HAL_TIMEOUT or HAL_BUSY for invalid arguments or communication
+ * failures.
  */
-HAL_StatusTypeDef paa5100_get_delta(SPI_HandleTypeDef *spi_pointer,
-                                    PAA5100_DELTA_t *delta_data);
+HAL_StatusTypeDef paa5100_get_delta(SPI_HandleTypeDef *spi_handle,
+                                    PAA5100_DELTA_t *delta);
 
 #endif

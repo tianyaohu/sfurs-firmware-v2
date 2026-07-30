@@ -1,0 +1,3 @@
+cd "C:\Robot Soccer\firmware-v2\HW\STM32H7\CM7\IMU\tests"
+cmake --build build
+.\build\test_sensor_board.exe

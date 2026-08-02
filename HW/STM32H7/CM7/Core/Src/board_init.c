@@ -11,8 +11,8 @@
 #include "stm32h7xx_hal.h"
 #include "cmsis_os.h"
 #include "main.h"
-#include "spi_datatypes.h"
-#include "sensor_board.h"
+#include "../../Common_SPI/spi_datatypes.h"
+#include "../../IMU/sensor_board.h"
 
 
 // Private Variables

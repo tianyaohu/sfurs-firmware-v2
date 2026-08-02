@@ -15,7 +15,7 @@
 #include "board_init.h"
 #include "cmsis_os.h"
 #include "main.h"
-#include "spi_datatypes.h"
+#include "../../Common_SPI/spi_datatypes.h"
 
 /* Private define ------------------------------------------------------------*/
 #define DEFAULT_TASK_STACK_SIZE (128U * 4U)

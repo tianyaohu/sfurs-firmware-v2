@@ -9,33 +9,37 @@
 #include "stm32h7xx_hal.h"
 #include <stdint.h>
 
-/*
- * SPI CHIP SELECT PINS
+/**
+ * @brief Stores X and Y motion deltas reported by the PAA5100JE sensor.
  */
-#define PAA5100_CHIP_SELECT_PIN  GPIO_PIN_9
-#define PAA5100_CHIP_SELECT_GPIO GPIOB
-
 typedef struct {
     int32_t delta_x;
     int32_t delta_y;
 } PAA5100_DELTA_t;
 
-/*
- * Initializes the optical flow sensor for delta reads.
- * Resets the sensor, clears motion registers, applies the vendor config
- * sequence, then reads and validates the sensor identifiers.
- * Returns HAL_OK on successful initialization.
- * Returns HAL_ERROR, HAL_TIMEOUT or HAL_BUSY for invalid arguments or communication
- * failures.
+/**
+ * @brief Initializes the PAA5100JE optical flow sensor for motion tracking.
+ *
+ * Resets the sensor, clears the motion registers, applies the vendor
+ * configuration sequence, and verifies communication by reading and
+ * validating the sensor identifiers.
+ *
+ * @param spi_handle Pointer to the SPI peripheral used to communicate with
+ *                   the optical flow sensor.
+ * @return HAL_OK if the initialization succeeds, otherwise an appropriate HAL error code.
  */
 HAL_StatusTypeDef paa5100_init(SPI_HandleTypeDef *spi_handle);
 
-/*
- * Reads the latest optical-flow raw delta counts.
- * Returns HAL_OK when communication succeeds. If no valid motion is
- * available, delta_x and delta_y are set to zero.
- * Returns HAL_ERROR, HAL_TIMEOUT or HAL_BUSY for invalid arguments or communication
- * failures.
+/**
+ * @brief Reads the latest motion delta from the PAA5100JE optical flow sensor.
+ *
+ * Reads the X and Y motion deltas reported by the sensor.
+ *
+ * @param spi_handle Pointer to the SPI peripheral used to communicate with the
+ *                   optical flow sensor.
+ * @param delta Pointer to a structure that receives the measured X and Y
+ *              motion deltas.
+ * @return HAL_OK if the read succeeds, otherwise an appropriate HAL error code.
  */
 HAL_StatusTypeDef paa5100_get_delta(SPI_HandleTypeDef *spi_handle,
                                     PAA5100_DELTA_t *delta);

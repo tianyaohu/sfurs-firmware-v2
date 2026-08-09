@@ -72,6 +72,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/sysmain.c
     Core/Src/board_init.c
+    Common_SPI/spi_datatypes.c
+    IMU/sensor_board.c
 )
 
 # Link directories setup

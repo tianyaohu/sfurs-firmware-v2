@@ -34,9 +34,6 @@
 #include "stm32h7xx_hal.h"
 #include "sensor_board.h"
 
-typedef struct __GPIO_TypeDef GPIO_TypeDef;
-typedef struct __SPI_HandleTypeDef SPI_HandleTypeDef;
-
 /*
  * The sensor board layer is IMU-only on the STM32H7 target. The board code is
  * expected to populate this context with the shared SPI bus and IMU control

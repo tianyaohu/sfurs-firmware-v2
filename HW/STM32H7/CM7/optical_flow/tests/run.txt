@@ -1,0 +1,3 @@
+cd "/Users/michaelchandra/RobotSoccer/firmware-v2/HW/STM32H7/CM7/optical_flow/tests"
+cmake --build build
+ctest --test-dir build --output-on-failure

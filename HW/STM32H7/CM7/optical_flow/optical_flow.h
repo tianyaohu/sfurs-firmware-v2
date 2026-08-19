@@ -13,8 +13,8 @@
  * @brief Stores X and Y motion deltas reported by the PAA5100JE sensor.
  */
 typedef struct {
-    int32_t delta_x;
-    int32_t delta_y;
+    int32_t delta_x; /* Relative X-axis motion since the last read. */
+    int32_t delta_y; /* Relative Y-axis motion since the last read. */
 } PAA5100_DELTA_t;
 
 /**

@@ -51,31 +51,32 @@
  * @brief Represents a register write operation.
  */
 typedef struct {
-    uint8_t reg;
-    uint8_t value;
+    uint8_t reg;   /* Register address to write. */
+    uint8_t value; /* Value written to the register. */
 } PAA5100_REGISTER_WRITE_t;
 
 /**
  * @brief Stores the PAA5100JE sensor identification values.
  */
 typedef struct {
-    uint8_t product_id;
-    uint8_t revision_id;
-    uint8_t inverse_product_id;
+    uint8_t product_id;         /* Product identifier reported by the sensor. */
+    uint8_t revision_id;        /* Hardware revision identifier. */
+    uint8_t inverse_product_id; /* Inverted product identifier used for verification. */
 } PAA5100_IDENTIFIERS_t;
 
 /**
  * @brief Stores data decoded from a PAA5100JE motion burst read.
  */
 typedef struct {
-    int16_t delta_x;
-    int16_t delta_y;
-    uint16_t shutter;
-    uint8_t motion;
-    uint8_t squal;
-    uint8_t raw_sum;
+    int16_t delta_x;       /* Relative X-axis motion since the last read. */
+    int16_t delta_y;       /* Relative Y-axis motion since the last read. */
+    uint16_t shutter;      /* Raw shutter value reported by the sensor. */
+    uint8_t motion;        /* Motion register value from the burst. */
+    uint8_t squal;         /* Surface quality (SQUAL) measurement. */
+    uint8_t raw_sum;       /* Sum of raw pixel values. */
     uint8_t motion_usable; /* Driver-computed motion validity flag. */
-    uint8_t raw_burst[PAA5100_BURST_LENGTH];
+    uint8_t
+        raw_burst[PAA5100_BURST_LENGTH]; /* Raw burst bytes received from the sensor. */
 } PAA5100_SAMPLE_t;
 
 /*

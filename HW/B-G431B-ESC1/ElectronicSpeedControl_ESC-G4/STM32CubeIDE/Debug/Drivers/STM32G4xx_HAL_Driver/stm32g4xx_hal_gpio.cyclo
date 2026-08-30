@@ -1,0 +1,8 @@
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:162:6:HAL_GPIO_Init	28
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:292:6:HAL_GPIO_DeInit	14
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:373:15:HAL_GPIO_ReadPin	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:407:6:HAL_GPIO_WritePin	2
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:430:6:HAL_GPIO_TogglePin	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:455:19:HAL_GPIO_LockPin	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:505:13:HAL_GPIO_EXTI_Callback	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c:490:6:HAL_GPIO_EXTI_IRQHandler	2

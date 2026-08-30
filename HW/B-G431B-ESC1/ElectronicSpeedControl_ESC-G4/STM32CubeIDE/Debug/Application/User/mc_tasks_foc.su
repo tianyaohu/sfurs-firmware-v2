@@ -1,0 +1,7 @@
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Src/mc_tasks_foc.c:471:13:FOC_Clear	16	static
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Src/mc_tasks_foc.c:79:13:FOC_Init	40	static
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Src/mc_tasks_foc.c:149:6:TSK_MF_StopProcessing	8	static
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Src/mc_tasks_foc.c:505:13:FOC_InitAdditionalMethods	0	static
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Src/mc_tasks_foc.c:528:13:FOC_CalcCurrRef	24	static,ignoring_inline_asm
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Src/mc_tasks_foc.c:168:13:TSK_MediumFrequencyTaskM1	32	static
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Src/mc_tasks_foc.c:583:16:FOC_HighFrequencyTask	64	static

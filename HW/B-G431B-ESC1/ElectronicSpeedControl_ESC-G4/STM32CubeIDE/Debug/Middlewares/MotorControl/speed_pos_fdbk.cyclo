@@ -1,0 +1,7 @@
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/speed_pos_fdbk.c:64:16:SPD_GetMecAngle	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/speed_pos_fdbk.c:78:16:SPD_GetAvrgMecSpeedUnit	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/speed_pos_fdbk.c:96:16:SPD_GetElSpeedDpp	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/speed_pos_fdbk.c:132:13:SPD_IsMecSpeedReliable	8
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/speed_pos_fdbk.c:246:16:SPD_GetS16Speed	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/speed_pos_fdbk.c:274:16:SPD_GetElToMecRatio	1
+/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/speed_pos_fdbk.c:292:13:SPD_SetElToMecRatio	1

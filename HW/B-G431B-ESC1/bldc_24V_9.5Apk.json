@@ -1,0 +1,22 @@
+{
+    "BEmfConstant": 3.329907178878784,
+    "compatibility": [
+        "FOC",
+        "sixStep"
+    ],
+    "description": "BLDC profiled on 24V and 9.5 Apk",
+    "friction": 2.48,
+    "hardwareFamily": "MOTOR",
+    "id": "bldc_24V_9.5Apk",
+    "inertia": 8.32,
+    "label": "bldc_24V_9.5Apk",
+    "ls": 0.13,
+    "magneticStructure": {
+        "type": "SM-PMSM"
+    },
+    "maxRatedSpeed": 4842,
+    "nominalCurrent": 9.5,
+    "nominalDCVoltage": 23.957611083984375,
+    "polePairs": 8,
+    "rs": 0.30259859561920166
+}

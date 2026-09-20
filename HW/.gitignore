@@ -2,3 +2,5 @@
 debug/
 Debug/
 DEBUG_*/
+build/
+.vscode/

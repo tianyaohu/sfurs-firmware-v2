@@ -277,76 +277,84 @@ class UI:
             self.msg(f"ready: {STATES.get(s['state'], '?')} runs={s['runs']}")
         self.s.nodelay(True)
         last_poll = 0.0
-        while True:
-            now = time.monotonic()
-            try:
-                key = self.s.getch()
-            except curses.error:
-                key = -1
-            while key != -1:
-                ch = chr(key) if 0 <= key < 256 else ""
-                if ch == "q":
-                    if self.running:
-                        self.do_stop("quit")
-                    return
-                elif ch in WHEELS:
-                    if self.running:
-                        self.do_stop("wheel change")
-                    self.wheel, self.wname = WHEELS[ch]
-                    rpm, locked = eff_speed(self.wheel, self.direction,
-                                            self.speed)
-                    self.msg(f"wheel {self.wname} -> {rpm:+d} RPM"
-                             f"{' (locked)' if locked else ''}")
-                elif ch == "f":
-                    self.direction = 1
-                    self.msg("dir +1")
-                elif ch == "r":
-                    self.direction = -1
-                    self.msg("dir -1")
-                elif ch in ("+", "="):
-                    self.set_speed(10)
-                elif ch in ("-", "_"):
-                    self.set_speed(-10)
-                elif ch == " ":
-                    self.last_space = now
-                    if not self.running and not self.latched:
-                        st = self.bench.poll()
-                        self.status = st
-                        if st["state"] == 4:
-                            self.msg("FAULT latched; reset Nucleo first")
-                        elif st["state"] != 0:
-                            self.msg(f"busy ({STATES.get(st['state'], '?')})")
-                        else:
-                            self.do_start()
-                elif ch == "t":
-                    if self.running or self.latched:
-                        self.do_stop("unlatch")
-                    else:
-                        self.latched = True
-                        self.last_space = now
-                        self.do_start()
-                        if self.running:
-                            self.msg("latched: runs until t/s/q")
-                            self.running = False
-                elif ch == "s":
-                    if self.running or self.latched:
-                        self.do_stop("key")
+        try:
+            while True:
+                now = time.monotonic()
                 try:
                     key = self.s.getch()
                 except curses.error:
                     key = -1
-            held = (self.running and not self.latched
-                    and now - self.last_space < 0.8)
-            if self.running and not held and not self.latched:
-                self.do_stop("released")
-            want_poll = (now - last_poll > (0.8 if self.running or
-                                            self.latched else 2.5))
-            if want_poll and not self.busy:
-                last_poll = now
-                self.refresh(True)
-            else:
-                self.refresh(False)
-            time.sleep(0.05)
+                while key != -1:
+                    ch = chr(key) if 0 <= key < 256 else ""
+                    if ch == "q":
+                        if self.running:
+                            self.do_stop("quit")
+                        return
+                    elif ch in WHEELS:
+                        if self.running:
+                            self.do_stop("wheel change")
+                        self.wheel, self.wname = WHEELS[ch]
+                        rpm, locked = eff_speed(self.wheel, self.direction,
+                                                self.speed)
+                        self.msg(f"wheel {self.wname} -> {rpm:+d} RPM"
+                                 f"{' (locked)' if locked else ''}")
+                    elif ch == "f":
+                        self.direction = 1
+                        self.msg("dir +1")
+                    elif ch == "r":
+                        self.direction = -1
+                        self.msg("dir -1")
+                    elif ch in ("+", "="):
+                        self.set_speed(10)
+                    elif ch in ("-", "_"):
+                        self.set_speed(-10)
+                    elif ch == " ":
+                        self.last_space = now
+                        if not self.running and not self.latched:
+                            st = self.bench.poll()
+                            self.status = st
+                            if st["state"] == 4:
+                                self.msg("FAULT latched; reset Nucleo first")
+                            elif st["state"] != 0:
+                                self.msg(f"busy ({STATES.get(st['state'], '?')})")
+                            else:
+                                self.do_start()
+                    elif ch == "t":
+                        if self.running or self.latched:
+                            self.do_stop("unlatch")
+                        else:
+                            self.latched = True
+                            self.last_space = now
+                            self.do_start()
+                            if self.running:
+                                self.msg("latched: runs until t/s/q")
+                                self.running = False
+                    elif ch == "s":
+                        if self.running or self.latched:
+                            self.do_stop("key")
+                    try:
+                        key = self.s.getch()
+                    except curses.error:
+                        key = -1
+                held = (self.running and not self.latched
+                        and now - self.last_space < 0.8)
+                if self.running and not held and not self.latched:
+                    self.do_stop("released")
+                want_poll = (now - last_poll > (0.8 if self.running or
+                                                self.latched else 2.5))
+                if want_poll and not self.busy:
+                    last_poll = now
+                    self.refresh(True)
+                else:
+                    self.refresh(False)
+                time.sleep(0.05)
+        except KeyboardInterrupt:
+            if self.running or self.latched:
+                self.msg("ctrl-c -> STOP")
+                try:
+                    self.do_stop("ctrl-c")
+                except RuntimeError as e:
+                    self.msg(f"STOP on ctrl-c failed: {e}")
 
 
 def self_test():

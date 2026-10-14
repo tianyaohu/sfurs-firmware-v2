@@ -54,21 +54,21 @@ int main(int argc, char **argv) {
     unsigned index=(unsigned)(test-2);
     wheel_bench_wheel=1U << (index/2);
     wheel_bench_direction=(index&1) ? -1 : 1;
-    if (index<=1) {
-      /* NE reverse also transmits CAN ARM (RPM2) on arming. */
-      arm(0); assert(sends==1 && id==0x401 && wheel_bench_state == BENCH_ARMED);
+    if (index<=3) {
+      /* NE/SE transmit CAN ARM (RPM2) on arming: 0x401/0x402. */
+      arm(0); assert(sends==1 && id==(0x400|wheel_bench_wheel) && wheel_bench_state == BENCH_ARMED);
       assert(payload[0]==0x32 && payload[1]==0x4d && payload[2]==0x50 && payload[3]==0x52);
       run(1); assert(sends==2 && id==(0x80|wheel_bench_wheel));
     } else {
       arm(0); assert(!sends && wheel_bench_state == BENCH_ARMED);
       run(1); assert(sends==1 && id==(0x80|wheel_bench_wheel));
     }
-    assert(payload[0]==((index&1) ? ((index<=1) ? 0x9c : 0xe2) : 30));
+    assert(payload[0]==((index&1) ? ((index==1) ? 0x9c : 0xe2) : 30));
     assert(payload[1]==((index&1) ? 0xff : 0));
     assert(payload[2]==0xf4 && payload[3]==1);
     assert(wheel_bench_run_count == 1);
-    run(2); assert(sends==((index<=1) ? 2 : 1)); /* no RUN while RUNNING */
-    if (index<=1) {
+    run(2); assert(sends==((index<=3) ? 2 : 1)); /* no RUN while RUNNING */
+    if (index<=3) {
       wheel_bench_tick(14000); assert(sends==2);
       wheel_bench_tick(15001); assert(sends==3 && id==0x78f);
     } else {
@@ -76,8 +76,8 @@ int main(int argc, char **argv) {
       wheel_bench_tick(1001); assert(sends==2 && id==0x78f);
     }
     assert(!payload[0] && !payload[1] && !payload[2] && !payload[3]);
-    complete_stop((index<=1) ? 15001 : 1001);
-    if (index<=1) {
+    complete_stop((index<=3) ? 15001 : 1001);
+    if (index<=3) {
       assert(sends==5 && wheel_bench_state==BENCH_IDLE && wheel_bench_result==3);
       assert(wheel_bench_tx_count==5 && wheel_bench_tx_ack_count==5);
     } else {
@@ -85,8 +85,8 @@ int main(int argc, char **argv) {
       assert(wheel_bench_tx_count==4 && wheel_bench_tx_ack_count==4);
     }
     arm(4000); assert(wheel_bench_state==BENCH_ARMED && wheel_bench_result==1); /* repeat, no reset */
-    run(4001); assert(sends==((index<=1) ? 7 : 5) && wheel_bench_run_count==2);
-    if (index<=1) {
+    run(4001); assert(sends==((index<=3) ? 7 : 5) && wheel_bench_run_count==2);
+    if (index<=3) {
       wheel_bench_tick(19001); assert(sends==8 && id==0x78f);
       complete_stop(19001); assert(sends==10 && wheel_bench_state==BENCH_IDLE);
       arm(19603); assert(wheel_bench_result==4); /* cooldown */
@@ -219,8 +219,9 @@ int main(int argc, char **argv) {
     /* SE forward follows the configured speed. */
     wheel_bench_speed_rpm = 100;
     wheel_bench_wheel = 2; wheel_bench_direction = 1;
-    arm(0); run(1);
-    assert(sends==1 && id==0x82);
+    arm(0); assert(sends==1 && id==0x402);
+    run(1);
+    assert(sends==2 && id==0x82);
     assert(payload[0]==100 && payload[1]==0 && payload[2]==0xf4 && payload[3]==1);
   } else if (test == 25) {
     /* SW reverse follows the configured speed (signed payload). */
@@ -233,20 +234,22 @@ int main(int argc, char **argv) {
     /* Below-range clamps to 10 RPM. */
     wheel_bench_speed_rpm = 5;
     wheel_bench_wheel = 2; wheel_bench_direction = 1;
-    arm(0); run(1);
-    assert(sends==1 && id==0x82 && payload[0]==10 && payload[1]==0);
+    arm(0); assert(sends==1 && id==0x402);
+    run(1);
+    assert(sends==2 && id==0x82 && payload[0]==10 && payload[1]==0);
   } else if (test == 27) {
     /* Above-range clamps to -300 on NE reverse (0xFED4 little-endian). */
     wheel_bench_speed_rpm = 500;
     wheel_bench_wheel = 2; wheel_bench_direction = 1;
-    arm(0); run(1);
-    assert(sends==1 && id==0x82 && payload[0]==150 && payload[1]==0);
+    arm(0); assert(sends==1 && id==0x402);
+    run(1);
+    assert(sends==2 && id==0x82 && payload[0]==150 && payload[1]==0);
     wheel_bench_request = BENCH_STOP; wheel_bench_tick(2);
     complete_stop(2); wheel_bench_tick(154);
     assert(wheel_bench_state==BENCH_IDLE);
     wheel_bench_wheel = 1; wheel_bench_direction = -1;
     arm(2154); run(2155);
-    assert(sends==6 && id==0x81 && wheel_bench_run_count==2);
+    assert(sends==7 && id==0x81 && wheel_bench_run_count==2);
     assert(payload[0]==0xd4 && payload[1]==0xfe);
   } else if (test == 28) {
     /* Unset speed (0) keeps the -100 NE reverse default. */

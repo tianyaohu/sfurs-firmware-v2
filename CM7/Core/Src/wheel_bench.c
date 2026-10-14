@@ -129,7 +129,8 @@ void wheel_bench_tick(uint32_t now)
   }
 
   if (wheel_bench_state == BENCH_RUNNING &&
-      (uint32_t)(now - started) >= (selected == 1U ? 15000U : 1000U)) stop(now);
+      (uint32_t)(now - started) >=
+      ((selected == 1U || selected == 2U) ? 15000U : 1000U)) stop(now);
   if (wheel_bench_state == BENCH_ARMED &&
       (uint32_t)(now - armed_tick) >= arm_window) {
     wheel_bench_state = BENCH_IDLE;
@@ -146,12 +147,12 @@ void wheel_bench_tick(uint32_t now)
       arm_window = request == BENCH_ARM_BUTTON ? 60000U : 5000U;
       button_permission = request == BENCH_ARM_BUTTON;
       button_released = 0;
-      /* NE targets the guarded RPM2 profile in either direction: transmit
-       * CAN ARM (ID 0x401, RPM2 magic) so a single-cable Nucleo can arm
-       * the ESC. Other selections arm locally with no bus traffic. */
-      if (selected == 1U) {
+      /* NE/SE target guarded RPM2 profiles in either direction: transmit
+       * CAN ARM (ID 0x401/0x403, RPM2 magic) so a single-cable Nucleo can
+       * arm the ESC. Other selections arm locally with no bus traffic. */
+      if (selected == 1U || selected == 2U) {
         const uint8_t arm_data[4] = {0x32U, 0x4DU, 0x50U, 0x52U};
-        if (wheel_bench_send(0x401U, arm_data)) {
+        if (wheel_bench_send(0x400U | selected, arm_data)) {
           ++wheel_bench_tx_count;
           pending = 1;
           pending_arm = 1;

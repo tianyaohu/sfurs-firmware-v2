@@ -163,7 +163,7 @@ class UI:
         self.speed_ok = speed_ok
         self.wheel, self.wname = 1, "NE"
         self.direction = -1
-        self.speed = 0  # 0 = firmware default; +/- makes it explicit
+        self.speed = 200  # session default; +/- makes it explicit
         self.log = []
         self.status = {}
         self.status_age = 9e9
@@ -264,6 +264,12 @@ class UI:
         else:
             self.msg(f"ready: {STATES.get(s.get('state'), '?')} "
                      f"runs={s.get('runs')}")
+        if self.speed_ok:
+            try:
+                self.bench.poke(self.addrs["speed_rpm"], self.speed)
+                self.msg(f"session default speed {self.speed} RPM")
+            except Exception as e:
+                self.msg(f"default speed poke failed: {e}")
         self.s.nodelay(True)
         last_poll = 0.0
         try:

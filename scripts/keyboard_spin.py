@@ -210,6 +210,7 @@ def main():
 
     wheel, wname = 1, "NE"
     direction = -1
+    print("keyboard_spin v2 (effect-verified writes; cooldown-aware).")
     print(f"addrs via {'nm' if via_nm else 'fallback'}; "
           f"wheel={wname} dir={direction:+d} speed={SPEEDS[(wheel, direction)]} RPM")
     print("Hold SPACE to run, release to stop. 1-4 wheel, f/r direction, s stop, q quit.")
@@ -265,10 +266,17 @@ def main():
                             continue
                         print(f"\r\nARM+RUN {wname} {direction:+d} "
                               f"({SPEEDS[(wheel, direction)]} RPM)...")
-                        bench.poke(addrs["wheel"], wheel)
-                        bench.poke(addrs["direction"], direction & 0xFFFFFFFF)
-                        bench.trigger(ARM2, expect=1)
-                        bench.trigger(RUN2, expect=2)
+                        try:
+                            bench.poke(addrs["wheel"], wheel)
+                            bench.poke(addrs["direction"], direction & 0xFFFFFFFF)
+                            bench.trigger(ARM2, expect=1)
+                            bench.trigger(RUN2, expect=2)
+                        except RuntimeError as e:
+                            print(f"\r\nstart rejected: {e}\r\n"
+                                  "Likely the 2 s post-stop cooldown: hold "
+                                  "SPACE again in a couple of seconds. "
+                                  "If FAULT, reset the Nucleo.")
+                            continue
                         running = True
                 elif ch == "s":
                     if running and not released:

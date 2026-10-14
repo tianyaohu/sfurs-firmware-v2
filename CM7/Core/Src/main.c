@@ -313,7 +313,6 @@ Error_Handler();
      * ENTER is retried every 300 ms (up to ~36 s) so the ESC can be reset
      * into its bootloader window after arming. Nothing is ever periodic. */
     static uint32_t fwu_last_try;
-    static uint32_t fwu_tries;
     static int fwu_armed;
     if (!fwu_transport_ready) {
       struct can_fwu_transport t = { fwu_can_send, fwu_can_poll,
@@ -325,7 +324,6 @@ Error_Handler();
       can_fwu_request = 0U;
       if (wheel_bench_state == BENCH_IDLE && fwu_host.state == FWU_H_IDLE) {
         fwu_armed = 1;
-        fwu_tries = 0U;
         fwu_last_try = 0U;
       } else {
         can_fwu_result = 2U;
@@ -346,7 +344,6 @@ Error_Handler();
                    wheel_bench_state == BENCH_IDLE &&
                    fwu_host.state == FWU_H_IDLE && !fwu_armed) {
           fwu_armed = 1;
-          fwu_tries = 0U;
           fwu_last_try = 0U;
           fwu_power_gesture_done = 1;
         }
@@ -358,12 +355,10 @@ Error_Handler();
         (fwu_host.state == FWU_H_IDLE ||
          (fwu_host.state == FWU_H_FAULT && fwu_host.seq_next == 0U)) &&
         (uint32_t)(now - fwu_last_try) >= 300U) {
+      /* ENTER retry is deliberately unbounded: the ESC answers from any
+       * state, so calling forever is safe and removes all timing pressure. */
       fwu_last_try = now;
-      fwu_tries++;
-      if (fwu_tries > 120U) {
-        fwu_armed = 0;
-        can_fwu_result = 2U;
-      } else if (wheel_bench_state == BENCH_IDLE &&
+      if (wheel_bench_state == BENCH_IDLE &&
                  can_fwu_host_begin(&fwu_host, can_fwu_dev, fwu_test_image,
                                     FWU_TEST_IMAGE_SIZE, 1, now)) {
         can_fwu_result = 1U;

@@ -41,11 +41,12 @@ WHEELS = {"1": (1, "NE"), "2": (2, "SE"), "3": (4, "SW"), "4": (8, "NW")}
 SPEED_MIN, SPEED_MAX, SPEED_DEF = 10, 120, 30
 STATES = {0: "IDLE", 1: "ARMED", 2: "RUNNING", 3: "STOPPING", 4: "FAULT"}
 
-FALLBACK = {"request": 0x20000130, "wheel": 0x20000134,
-            "direction": 0x20000138, "state": 0x2000013C,
-            "result": 0x20000140, "run_count": 0x20000144,
-            "tx_count": 0x20000150, "tx_ack": 0x20000154,
-            "first_fault": 0x20000158}
+# Fallback map (refreshed 2026-10-14; prefer nm resolution at runtime).
+FALLBACK = {"request": 0x20000134, "wheel": 0x20000138,
+            "direction": 0x2000013C, "state": 0x20000140,
+            "result": 0x20000144, "run_count": 0x20000148,
+            "tx_count": 0x20000154, "tx_ack": 0x20000158,
+            "first_fault": 0x2000015C, "speed_rpm": None}
 
 
 def find_nm():
@@ -106,14 +107,8 @@ class Bench:
         self.sn = sn
         self.addrs = addrs
 
-    def session(self, ops):
-        """Run several -w32/-r32 ops in ONE probe connection.
-
-        ops: list of ("w", addr, value) / ("r", addr). Returns {addr: value}
-        for reads. Request words may report download failure when the
-        firmware consumes them mid-verify; w-issue is confirmed by the
-        `w @addr` echo instead.
-        """
+    def _call(self, ops):
+        """One probe connection for sticky writes/reads."""
         cmd = [self.cli, "-c", f"port=SWD sn={self.sn} mode=HOTPLUG"]
         for op in ops:
             if op[0] == "w":
@@ -131,6 +126,32 @@ class Bench:
                 raise RuntimeError(f"write not issued @0x{op[1]:08X}:\n"
                                    + out[-500:])
         return parse_reads(out)
+
+    def session(self, ops):
+        """Run ops across minimal probe connections.
+
+        Request words ("W") are consumed by the firmware within milliseconds,
+        which trips the CLI's download-verify and aborts the rest of that
+        call -- so each "W" goes alone in its own call and is confirmed by
+        state effect, never by readback. Sticky writes/reads batch freely.
+        op kinds: "w" sticky write, "r" read, "W" request write.
+        """
+        reads = {}
+        chunk = []
+
+        def flush():
+            if chunk:
+                reads.update(self._call(chunk))
+                del chunk[:]
+
+        for op in ops:
+            if op[0] == "W":
+                flush()
+                self._call([("w", op[1], op[2])])
+            else:
+                chunk.append(op)
+        flush()
+        return reads
 
     def read(self, addr):
         return self.session([("r", addr)]).get(addr)
@@ -150,24 +171,24 @@ class Bench:
                 "ack": r.get(a["tx_ack"]), "fault": r.get(a["first_fault"])}
 
     def start(self, wheel, direction):
-        """ARM+RUN in two sessions; returns poll dict. Raises on rejection."""
+        """ARM+RUN in minimal sessions; returns poll dict. Raises on reject."""
         a = self.addrs
         r = self.session([("w", a["wheel"], wheel),
                           ("w", a["direction"], direction & 0xFFFFFFFF),
-                          ("w", a["request"], ARM2),
+                          ("W", a["request"], ARM2),
                           ("r", a["state"]), ("r", a["result"])])
         if r.get(a["state"]) != 1:
             raise RuntimeError(f"ARM rejected (state={r.get(a['state'])}, "
                                f"result={r.get(a['result'])}); 2 s cooldown? "
                                "hold SPACE again shortly / check FAULT")
-        r = self.session([("w", a["request"], RUN2),
+        r = self.session([("W", a["request"], RUN2),
                           ("r", a["state"])])
         if r.get(a["state"]) != 2:
             raise RuntimeError("RUN rejected after ARM; retry")
         return self.poll()
 
     def stop(self):
-        self.session([("w", self.addrs["request"], STOP)])
+        self.session([("W", self.addrs["request"], STOP)])
 
 
 class UI:
@@ -394,7 +415,7 @@ def self_test():
         b = Bench(str(fake), "sn", addrs)
         r = b.session([("w", addrs["wheel"], 1),
                        ("w", addrs["direction"], 0xFFFFFFFF),
-                       ("w", addrs["request"], ARM2),
+                       ("W", addrs["request"], ARM2),
                        ("r", addrs["state"])])
         assert r[addrs["state"]] == 1, r
         st = b.start(1, -1)

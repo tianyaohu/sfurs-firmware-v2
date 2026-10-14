@@ -18,6 +18,7 @@ void can_fwu_boot_init(struct can_fwu_boot *b, uint32_t dev,
   b->num_pages = 0U;
   b->erased_pages = 0U;
   b->dw_fill = 0U;
+  b->dw_base = 0U;
   b->last_tick = 0U;
   b->fault = 0U;
   if (ops != 0) {
@@ -76,6 +77,7 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
         b->num_pages = can_fwu_pages_for_size(size);
         b->erased_pages = 0U;
         b->dw_fill = 0U;
+        b->dw_base = 0U;
         b->fault = 0U;
         detail = CAN_FWU_BOOT_VERSION;
       }
@@ -134,6 +136,9 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
     take = remaining < CAN_FWU_CHUNK ? remaining : CAN_FWU_CHUNK;
     b->stream_crc = can_fwu_crc32_update(b->stream_crc, &payload[2], take);
     for (i = 0; i < take; i++) {
+      if (b->dw_fill == 0U) {
+        b->dw_base = b->received + i;
+      }
       b->dw_buf[b->dw_fill++] = payload[2 + i];
       if (b->dw_fill == 8U) {
         uint64_t dw = 0U;
@@ -142,7 +147,7 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
           dw |= (uint64_t)b->dw_buf[k] << (8U * k);
         }
         if (b->ops.program_dw == 0 ||
-            b->ops.program_dw(b->received + i - 7U, dw, b->ops.ctx) != 0) {
+            b->ops.program_dw(b->dw_base, dw, b->ops.ctx) != 0) {
           to_fault(b, CAN_FWU_FLASH_ERR);
           can_fwu_ack_pack(ack, CAN_FWU_FLASH_ERR, seq);
           return 1;
@@ -164,7 +169,7 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
         dw |= (uint64_t)b->dw_buf[k] << (8U * k);
       }
       if (b->ops.program_dw == 0 ||
-          b->ops.program_dw(b->received - take, dw, b->ops.ctx) != 0) {
+          b->ops.program_dw(b->dw_base, dw, b->ops.ctx) != 0) {
         to_fault(b, CAN_FWU_FLASH_ERR);
         can_fwu_ack_pack(ack, CAN_FWU_FLASH_ERR, seq);
         return 1;

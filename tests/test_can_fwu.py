@@ -28,6 +28,8 @@ static int fake_erase(uint32_t page, uint32_t n, void *ctx) {
 static int fake_program(uint32_t off, uint64_t dw, void *ctx) {
   unsigned k;
   (void)ctx;
+  /* Mirror HAL double-word rules: 8-aligned offset inside the app region. */
+  assert((off & 7U) == 0U);
   if (off + 8U > CAN_FWU_APP_MAX) return -1;
   for (k = 0; k < 8; k++) flash_img[off + k] = (uint8_t)(dw >> (8U * k));
   return 0;
@@ -73,6 +75,7 @@ static void run_session(uint32_t dev, uint8_t *img, uint32_t size) {
   assert(b.state == FWU_B_VERIFIED || b.state == FWU_B_JUMP_PENDING);
   assert(b.received == size);
   assert(b.stream_crc == can_fwu_crc32(img, size));
+  assert(memcmp(flash_img, img, size) == 0); /* staged bytes land verbatim */
   /* JUMP handshake. */
   if (b.state == FWU_B_VERIFIED) {
     uint8_t p[8];
@@ -169,8 +172,7 @@ int main(int argc, char **argv) {
     assert(!can_fwu_host_begin(&h, 1, img, 0U, 1, 0));
     assert(!can_fwu_host_begin(&h, 1, img, sizeof(img), 0, 0));
     assert(h.state == FWU_H_IDLE);
-  } else if (test == 4) {
-    /* P5: wrong seq rejected; target + host idle timeouts fault. */
+  } else if (test == 4) {    /* P5: wrong seq rejected; target + host idle timeouts fault. */
     struct can_fwu_flash_ops ops = { fake_erase, fake_program, fake_motor, 0 };
     struct can_fwu_transport t = { host_send, host_poll, host_abort };
     struct can_fwu_boot b;
@@ -198,6 +200,25 @@ int main(int argc, char **argv) {
     can_fwu_host_poll(&h, 0);   /* enqueue */
     can_fwu_host_poll(&h, CAN_FWU_HOST_ACK_TIMEOUT_MS + 1U);
     assert(h.state == FWU_H_FAULT);
+  } else if (test == 5) {
+    /* P3: odd sizes exercise the padded final double-word (100 = 12x8 + 4). */
+    static uint8_t img[100];
+    unsigned i;
+    for (i = 0; i < sizeof(img); i++) img[i] = (uint8_t)(i * 13U + 7U);
+    memset(flash_img, 0xFF, sizeof(flash_img));
+    motor_active = 0;
+    run_session(4, img, sizeof(img));
+    assert(flash_img[100] == 0xFF && flash_img[101] == 0xFF);
+    /* 10 bytes: final partial word starts mid-chunk (byte 8), the case
+     * that caught the unaligned program-offset bug. */
+    {
+      static uint8_t tiny[10];
+      for (i = 0; i < sizeof(tiny); i++) tiny[i] = (uint8_t)(i + 41U);
+      memset(flash_img, 0xFF, sizeof(flash_img));
+      motor_active = 0;
+      run_session(2, tiny, sizeof(tiny));
+      assert(flash_img[10] == 0xFF);
+    }
   }
   return 0;
 }
@@ -213,6 +234,6 @@ with tempfile.TemporaryDirectory(prefix='can-fwu-tests-', dir='/tmp/opencode') a
                     str(root / 'Common/Src/can_fwu_boot.c'),
                     str(root / 'CM7/Core/Src/can_fwu_host.c'),
                     '-o', str(tmp / 'test')], check=True)
-    for case in range(5):
+    for case in range(6):
         subprocess.run([str(tmp / 'test'), str(case)], check=True)
 print('PASS: FWU protocol CRC/codec, 10KiB session + jump, corruption/motor/timeout gates')

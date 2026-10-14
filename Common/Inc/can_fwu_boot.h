@@ -38,6 +38,7 @@ struct can_fwu_boot {
   uint64_t erased_pages; /* bit per page, max 56 pages for 112K/2K */
   uint8_t dw_buf[8];
   unsigned dw_fill;
+  uint32_t dw_base;
   uint32_t last_tick;
   uint32_t fault;
   struct can_fwu_flash_ops ops;

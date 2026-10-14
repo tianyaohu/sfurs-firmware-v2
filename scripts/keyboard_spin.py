@@ -452,9 +452,14 @@ def main():
     logging.disable(logging.CRITICAL)
     try:
         session = ConnectHelper.session_with_chosen_probe(
-            unique_id=args.sn, connect_mode="attach", target_override=TARGET)
+            unique_id=args.sn, connect_mode="attach",
+            target_override=TARGET, blocking=False)
+    except KeyboardInterrupt:
+        sys.exit("interrupted while waiting for probe")
     except Exception as e:
-        sys.exit(f"no probe {args.sn}: {e}")
+        sys.exit(f"no probe {args.sn}: {e}\n"
+                 "Check USB, replug the board, and make sure no other "
+                 "TUI/CLI holds it (one session at a time).")
     with session as board:
         bench = Bench(board.target, addrs)
         try:

@@ -235,7 +235,7 @@ int main(int argc, char **argv) {
     arm(0); run(1);
     assert(sends==1 && id==0x82 && payload[0]==10 && payload[1]==0);
   } else if (test == 27) {
-    /* Above-range clamps to 120 RPM; NE reverse stays locked at -100. */
+    /* Above-range clamps to -120 on NE reverse (0xFF88 little-endian). */
     wheel_bench_speed_rpm = 500;
     wheel_bench_wheel = 2; wheel_bench_direction = 1;
     arm(0); run(1);
@@ -246,7 +246,13 @@ int main(int argc, char **argv) {
     wheel_bench_wheel = 1; wheel_bench_direction = -1;
     arm(2154); run(2155);
     assert(sends==6 && id==0x81 && wheel_bench_run_count==2);
-    assert(payload[0]==0x9c && payload[1]==0xff);
+    assert(payload[0]==0x88 && payload[1]==0xff);
+  } else if (test == 28) {
+    /* Unset speed (0) keeps the -100 NE reverse default. */
+    wheel_bench_wheel = 1; wheel_bench_direction = -1;
+    arm(0); run(1);
+    assert(sends==2 && id==0x81 && wheel_bench_run_count==1);
+    assert(payload[0]==0x9c && payload[1]==0xff && payload[2]==0xf4 && payload[3]==1);
   }
   return 0;
 }
@@ -263,6 +269,6 @@ with tempfile.TemporaryDirectory(prefix='wheel-bench-tests-', dir='/tmp/opencode
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-I', str(root / 'CM7/Core/Inc'), str(tmp / 'test.c'),
                     str(root / 'CM7/Core/Src/wheel_bench.c'), '-o', str(tmp / 'test')], check=True)
-    for case in range(28):
+    for case in range(29):
         subprocess.run([str(tmp / 'test'), str(case)], check=True)
-print('PASS: 28 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select')
+print('PASS: 29 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select')

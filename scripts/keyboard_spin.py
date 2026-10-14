@@ -85,13 +85,18 @@ def resolve_addrs():
 
 
 def eff_speed(wheel, direction, setting):
-    """Mirror of the sender: effective RPM for a selection."""
+    """Mirror of the sender. setting 0 = firmware default.
+    Returns (rpm, note) with note in {"", "DEF", "LOCKED"}."""
     if wheel == 1 and direction < 0:
-        return -100, True
+        if not setting:
+            return -100, "DEF"
+        return -max(30, min(120, setting)), ""
     if wheel == 1:
-        return 30, True
+        return 30, "LOCKED"
+    if not setting:
+        return (30 if direction > 0 else -30), "DEF"
     mag = max(SPEED_MIN, min(SPEED_MAX, setting))
-    return (mag if direction > 0 else -mag), False
+    return (mag if direction > 0 else -mag), ""
 
 
 class Bench:
@@ -117,11 +122,9 @@ class Bench:
             time.sleep(0.05)
         raise RuntimeError(f"{what} had no effect; retry / check FAULT")
 
-    def start(self, wheel, direction, speed_addr=None, speed=None):
+    def start(self, wheel, direction):
         """ARM+RUN; returns poll dict. Raises with the reason on rejection."""
         a = self.addrs
-        if speed_addr is not None and speed is not None:
-            self.poke(speed_addr, speed)
         self.poke(a["wheel"], wheel)
         self.poke(a["direction"], direction & 0xFFFFFFFF)
         self.t.write32(a["request"], ARM2)
@@ -158,7 +161,7 @@ class UI:
         self.speed_ok = speed_ok
         self.wheel, self.wname = 1, "NE"
         self.direction = -1
-        self.speed = SPEED_DEF
+        self.speed = 0  # 0 = firmware default; +/- makes it explicit
         self.log = []
         self.status = {}
         self.status_age = 9e9
@@ -181,15 +184,16 @@ class UI:
                 self.msg(f"poll failed: {e}")
         else:
             self.status_age = time.monotonic() - self._poll_t
-        rpm, locked = eff_speed(self.wheel, self.direction, self.speed)
+        rpm, note = eff_speed(self.wheel, self.direction, self.speed)
         st = self.status.get("state")
         h, w = self.s.getmaxyx()
         self.s.erase()
         self.s.addstr(0, 0, (f"WHEEL JOG {VERSION}  pyOCD attach  "
                              f"probe {self.sn[:8]}..")[:w - 1])
+        set_txt = "DEF" if not self.speed else str(self.speed)
         self.s.addstr(1, 0, (f"wheel [{self.wname}]  dir [{self.direction:+d}]  "
-                             f"set [{self.speed if self.speed_ok else '--'}] RPM  "
-                             f"eff [{rpm:+d} RPM{' LOCKED' if locked else ''}]")[:w - 1])
+                             f"set [{set_txt if self.speed_ok else '--'}] RPM  "
+                             f"eff [{rpm:+d} RPM{' '+note if note else ''}]")[:w - 1])
         self.s.addstr(2, 0, (f"bench: {STATES.get(st, '?')} "
                              f"res={self.status.get('result')} "
                              f"runs={self.status.get('runs')} "
@@ -208,23 +212,22 @@ class UI:
         if not self.speed_ok:
             self.msg("speed config n/a; sender defaults apply")
             return
-        self.speed = max(SPEED_MIN, min(SPEED_MAX, self.speed + delta))
+        if self.wheel == 1 and self.direction > 0:
+            self.msg("NE forward is legacy +30 (not settable)")
+            return
+        lo = 30 if self.wheel == 1 else SPEED_MIN
+        base = abs(eff_speed(self.wheel, self.direction, self.speed)[0])
+        self.speed = max(lo, min(SPEED_MAX, base + delta))
         try:
             self.bench.poke(self.addrs["speed_rpm"], self.speed)
             self.msg(f"speed set {self.speed} RPM")
         except Exception as e:
             self.msg(f"speed poke failed: {e}")
 
-    def speed_arg(self):
-        if self.speed_ok and not (self.wheel == 1):
-            return self.addrs["speed_rpm"], self.speed
-        return None, None
-
     def do_start(self):
         try:
-            addr, val = self.speed_arg()
-            self.status = self.bench.start(self.wheel, self.direction,
-                                           addr, val)
+            # Speed setting already poked by +/- and persists in the sender.
+            self.status = self.bench.start(self.wheel, self.direction)
             self._poll_t = time.monotonic()
             self.status_age = 0.0
             rpm, _ = eff_speed(self.wheel, self.direction, self.speed)
@@ -374,11 +377,15 @@ class FakeTarget:
 
 
 def self_test():
-    assert eff_speed(1, -1, 100) == (-100, True)
-    assert eff_speed(1, 1, 100) == (30, True)
-    assert eff_speed(2, 1, 100) == (100, False)
-    assert eff_speed(4, -1, 500) == (-120, False)
-    assert eff_speed(2, 1, 5) == (10, False)
+    assert eff_speed(1, -1, 0) == (-100, "DEF")
+    assert eff_speed(1, -1, 100) == (-100, "")
+    assert eff_speed(1, -1, 500) == (-120, "")
+    assert eff_speed(1, -1, 5) == (-30, "")
+    assert eff_speed(1, 1, 0) == (30, "LOCKED")
+    assert eff_speed(2, 1, 0) == (30, "DEF")
+    assert eff_speed(2, 1, 100) == (100, "")
+    assert eff_speed(4, -1, 500) == (-120, "")
+    assert eff_speed(2, 1, 5) == (10, "")
     b = Bench(FakeTarget(), dict(FALLBACK))
     st = b.start(1, -1)
     assert st["state"] == 2 and st["runs"] == 1, st

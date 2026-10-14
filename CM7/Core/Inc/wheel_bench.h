@@ -23,9 +23,9 @@ extern volatile int32_t wheel_bench_direction;
 extern volatile uint32_t wheel_bench_state, wheel_bench_result;
 extern volatile uint32_t wheel_bench_run_count;
 extern volatile int32_t wheel_bench_speed_rpm;
-/* Signed speed magnitude (RPM) for SE/SW/NW only, default 30, clamped 10..120
- * at RUN time. NE is firmware-locked (reverse -100 exact-match ESC gate,
- * forward legacy +30) and ignores this setting. */
+/* Speed setting (RPM magnitude), 0 = per-selection firmware default.
+ * NE reverse: -120..-30 (0 keeps -100). NE forward: legacy +30, ignores
+ * this. SE/SW/NW: 10..120 (0 keeps 30). Clamped at RUN time. */
 extern volatile uint32_t wheel_bench_last_request, wheel_bench_request_count;
 extern volatile uint32_t wheel_bench_tx_count, wheel_bench_tx_ack_count;
 extern volatile uint32_t wheel_bench_first_fault, wheel_bench_first_fault_tick;

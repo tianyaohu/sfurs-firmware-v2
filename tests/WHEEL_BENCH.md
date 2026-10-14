@@ -381,3 +381,25 @@ very low requested speed; it does not prove the motor or power stage healthy,
 nor rule out friction/wiring/current scaling/commutation problems. No increased
 speed/duration/current command issued. Sender/ESC returned stopped reference;
 physical observation pending. Pause and disconnect battery before next test.
+
+## Build/probe discipline (2026-10-14 incident)
+
+Symptom: TUI showed `?` state with impossible words (ack > tx, fault 19)
+and runs never started. Root causes, both map mismatches:
+
+1. Two builders shared `CM7/build/Debug`: a docker build (CMakeCache
+   `CMAKE_HOME_DIRECTORY=/work/...`) overwrote the host-built ELF. The two
+   toolchains order BSS differently (tx/ack/fault words at -4), so nm of the
+   on-disk ELF no longer described the flashed firmware. Every read/wrote
+   landed on the wrong word.
+2. The resolver silently dropped `tx_ack_count` (key `tx_ack` mismatch),
+   keeping a stale fallback for one word.
+
+Rules: one builder at a time; reflash after ANY rebuild before running the
+jog script (ELF on disk must equal firmware on board); prefer a separate
+docker binary dir (e.g. `build-docker`) instead of sharing `build/Debug`.
+The script now resolves `tx_ack_count` explicitly and refuses implausible
+maps (`state` outside 0..4, `result` outside 0..5, `ack` > `tx`) with a
+rebuild+reflash message instead of driving blind. pyOCD transport uses
+`attach` (no halt/reset); the older CLI path needed HOTPLUG because a
+normal connect resets the target and wipes bench RAM.

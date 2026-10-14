@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "wheel_bench.h"
+#include "can_fwu_host.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -86,6 +87,12 @@ volatile uint32_t wheel_test_request = 0;
 volatile uint32_t wheel_test_result = 0;
 volatile uint32_t wheel_test_last_request = 0;
 volatile uint32_t wheel_test_run_attempted = 0;
+/* P4/P5: CAN-FWU updater state. can_fwu_request is debugger-only and
+ * consumed once; no transfer starts without it AND bench IDLE. Result:
+ * 0=none, 1=session active, 2=rejected (busy/no image), 3=done, 4=failed. */
+volatile uint32_t can_fwu_request = 0;
+volatile uint32_t can_fwu_dev = 1;
+volatile uint32_t can_fwu_result = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -138,6 +145,41 @@ void wheel_bench_abort(void)
   /* A failed cancellation latches transport failure in the bench service;
    * do not enter Error_Handler and strand a potentially running ESC. */
   (void)HAL_FDCAN_AbortTxRequest(&hfdcan1, bench_tx_mask);
+}
+
+/* P4: FWU transport on the same FDCAN1, 8-byte frames. Dormant unless a
+ * session is explicitly requested via can_fwu_request (debugger only). */
+static struct can_fwu_host fwu_host;
+static uint32_t fwu_tx_mask;
+static int fwu_transport_ready;
+
+static int fwu_can_send(uint32_t id, const uint8_t data[8])
+{
+  FDCAN_TxHeaderTypeDef header = {0};
+  header.Identifier = id;
+  header.IdType = FDCAN_STANDARD_ID;
+  header.TxFrameType = FDCAN_DATA_FRAME;
+  header.DataLength = FDCAN_DLC_BYTES_8;
+  header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  header.BitRateSwitch = FDCAN_BRS_OFF;
+  header.FDFormat = FDCAN_FD_CAN;
+  header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+  if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &header, data) != HAL_OK) {
+    return 0;
+  }
+  fwu_tx_mask = HAL_FDCAN_GetLatestTxFifoQRequestBuffer(&hfdcan1);
+  return 1;
+}
+
+static int fwu_can_poll(void)
+{
+  return wheel_bench_tx_status(hfdcan1.Instance->TXBTO,
+                               hfdcan1.Instance->TXBCF, fwu_tx_mask);
+}
+
+static void fwu_can_abort(void)
+{
+  (void)HAL_FDCAN_AbortTxRequest(&hfdcan1, fwu_tx_mask);
 }
 /* USER CODE END 0 */
 
@@ -262,6 +304,29 @@ Error_Handler();
     if (WHEEL_BENCH_MODE != 0U) {
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
       wheel_bench_tick(now);
+    }
+    /* P4/P5: FWU host pump. Transport is bound once; a session starts
+     * only on an explicit debugger request while the bench is IDLE, and
+     * the staged image source (USB-CDC, follow-up) is still empty, so a
+     * request today records rejection and sends nothing. */
+    if (!fwu_transport_ready) {
+      struct can_fwu_transport t = { fwu_can_send, fwu_can_poll,
+                                     fwu_can_abort };
+      can_fwu_host_init(&fwu_host, &t);
+      fwu_transport_ready = 1;
+    }
+    if (can_fwu_request != 0U) {
+      can_fwu_request = 0U;
+      /* No image staged yet: refuse loudly, never auto-send. */
+      can_fwu_result = 2U;
+    }
+    if (fwu_host.state != FWU_H_IDLE && fwu_host.state != FWU_H_DONE &&
+        fwu_host.state != FWU_H_FAULT) {
+      can_fwu_host_poll(&fwu_host, now);
+      can_fwu_result = can_fwu_host_done(&fwu_host) ? 3U : 1U;
+      if (fwu_host.state == FWU_H_FAULT) {
+        can_fwu_result = 4U;
+      }
     }
     /* Alternate speed/current telemetry at 10 Hz each. Drive frames require
      * explicit debugger requests and fresh bench-profile telemetry. */
@@ -423,6 +488,18 @@ Error_Handler();
                              ((uint32_t)can_rx_data[7] << 24);
         esc_ne_last_reply_tick = now;
         ++esc_telemetry_reply_count;
+      }
+      /* P4: FWU target ACKs (0x680|dev). Live dispatch, but the host
+       * session ignores them unless a transfer was explicitly started. */
+      if (can_rx_header.IdType == FDCAN_STANDARD_ID &&
+          can_rx_header.RxFrameType == FDCAN_DATA_FRAME &&
+          can_rx_header.FDFormat == FDCAN_FD_CAN &&
+          can_rx_header.BitRateSwitch == FDCAN_BRS_OFF &&
+          (can_rx_header.Identifier & ~0xFU) == CAN_FWU_ACK_BASE &&
+          can_rx_header.DataLength == FDCAN_DLC_BYTES_8)
+      {
+        can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
+                         can_rx_data, now);
       }
       last_can_rx_tick = now;
       if (can_activity_seen == 0U)

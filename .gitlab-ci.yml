@@ -27,6 +27,7 @@ dev-image:
     - docker run --rm -v "$CI_PROJECT_DIR:/work/sfurs_firmware_v2" -w /work/sfurs_firmware_v2 "$IMAGE:$CI_COMMIT_SHORT_SHA" bash -c "
         python3 tests/test_wheel_bench.py &&
         python3 tests/test_wheel_sender.py &&
+        python3 tests/test_can_fwu.py &&
         rm -rf CM7/build && cd CM7 && cmake --preset Debug && cmake --build --preset Debug"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
     - |

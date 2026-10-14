@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "wheel_bench.h"
 #include "can_fwu_host.h"
+#include "fwu_test_image.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -305,10 +306,13 @@ Error_Handler();
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
       wheel_bench_tick(now);
     }
-    /* P4/P5: FWU host pump. Transport is bound once; a session starts
-     * only on an explicit debugger request while the bench is IDLE, and
-     * the staged image source (USB-CDC, follow-up) is still empty, so a
-     * request today records rejection and sends nothing. */
+    /* First over-CAN update test: embedded NE image, started only by an
+     * explicit debugger write to can_fwu_request while the bench is IDLE.
+     * ENTER is retried every 300 ms (up to ~36 s) so the ESC can be reset
+     * into its bootloader window after arming. Nothing is ever periodic. */
+    static uint32_t fwu_last_try;
+    static uint32_t fwu_tries;
+    static int fwu_armed;
     if (!fwu_transport_ready) {
       struct can_fwu_transport t = { fwu_can_send, fwu_can_poll,
                                      fwu_can_abort };
@@ -317,15 +321,53 @@ Error_Handler();
     }
     if (can_fwu_request != 0U) {
       can_fwu_request = 0U;
-      /* No image staged yet: refuse loudly, never auto-send. */
-      can_fwu_result = 2U;
+      if (wheel_bench_state == BENCH_IDLE && fwu_host.state == FWU_H_IDLE) {
+        fwu_armed = 1;
+        fwu_tries = 0U;
+        fwu_last_try = 0U;
+      } else {
+        can_fwu_result = 2U;
+      }
+    }
+    if (fwu_armed &&
+        (fwu_host.state == FWU_H_IDLE ||
+         (fwu_host.state == FWU_H_FAULT && fwu_host.seq_next == 0U)) &&
+        (uint32_t)(now - fwu_last_try) >= 300U) {
+      fwu_last_try = now;
+      fwu_tries++;
+      if (fwu_tries > 120U) {
+        fwu_armed = 0;
+        can_fwu_result = 2U;
+      } else if (wheel_bench_state == BENCH_IDLE &&
+                 can_fwu_host_begin(&fwu_host, can_fwu_dev, fwu_test_image,
+                                    FWU_TEST_IMAGE_SIZE, 1, now)) {
+        can_fwu_result = 1U;
+      } else {
+        fwu_armed = 0;
+        can_fwu_result = 2U;
+      }
+    }
+    if (fwu_armed && fwu_host.state == FWU_H_FAULT &&
+        fwu_host.seq_next > 0U) {
+      /* Progress was made then lost: latch, needs a fresh arm. */
+      fwu_armed = 0;
+      can_fwu_result = 4U;
     }
     if (fwu_host.state != FWU_H_IDLE && fwu_host.state != FWU_H_DONE &&
         fwu_host.state != FWU_H_FAULT) {
       can_fwu_host_poll(&fwu_host, now);
       can_fwu_result = can_fwu_host_done(&fwu_host) ? 3U : 1U;
       if (fwu_host.state == FWU_H_FAULT) {
-        can_fwu_result = 4U;
+        if (fwu_host.seq_next == 0U) {
+          /* ENTER never acked: keep armed, retry above. */
+          can_fwu_result = 1U;
+        } else {
+          fwu_armed = 0;
+          can_fwu_result = 4U;
+        }
+      }
+      if (can_fwu_host_done(&fwu_host)) {
+        fwu_armed = 0;
       }
     }
     /* Alternate speed/current telemetry at 10 Hz each. Drive frames require
@@ -529,6 +571,14 @@ Error_Handler();
                        wheel_bench_state == BENCH_ARMED ? GPIO_PIN_SET : GPIO_PIN_RESET);
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14,
                        wheel_bench_state == BENCH_FAULT ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    }
+    /* FWU session LEDs take precedence while active: LD2 lit, LD3 on fault. */
+    if (fwu_host.state != FWU_H_IDLE && fwu_host.state != FWU_H_DONE &&
+        fwu_host.state != FWU_H_FAULT) {
+      HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_SET);
+    }
+    if (fwu_host.state == FWU_H_FAULT) {
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
     }
   }
   /* USER CODE END 3 */

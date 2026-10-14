@@ -212,7 +212,8 @@ wheel `0x2000011C`, direction `0x20000120`, state `0x20000124`, result
 - `wheel_bench_result`: 0 none, 1 armed, 2 run queued, 3 stop frames ACKed,
   4 rejected, 5 transport fault. ACK is not proof any particular ESC stopped.
 - `wheel_bench_run_count`: completed RUNs, diagnostics only. Repeats need a
-  fresh ARM after the 2 s cooldown; no per-boot one-shot latch.
+  fresh ARM after the 0.5 s cooldown (operator confirms the wheel stopped);
+  no per-boot one-shot latch.
 
 In the initial CLI-only build, no frame is transmitted at startup, by button or
 solely by selecting a wheel. The gated button extension below supersedes only

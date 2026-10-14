@@ -139,7 +139,7 @@ void wheel_bench_tick(uint32_t now)
   if (request == BENCH_ARM || request == BENCH_ARM_BUTTON) {
     uint32_t bit = selection_bit(wheel_bench_wheel, wheel_bench_direction);
     if (wheel_bench_state == BENCH_IDLE && !pending && !faulted && bit &&
-        (!quiet || (uint32_t)(now - quiet_tick) >= 2000U)) {
+        (!quiet || (uint32_t)(now - quiet_tick) >= 500U)) {
       selected = wheel_bench_wheel;
       direction = wheel_bench_direction;
       armed_tick = now;

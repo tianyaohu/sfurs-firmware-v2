@@ -211,7 +211,8 @@ wheel `0x2000011C`, direction `0x20000120`, state `0x20000124`, result
 - `wheel_bench_state`: 0 idle, 1 armed, 2 running, 3 stopping, 4 latched fault.
 - `wheel_bench_result`: 0 none, 1 armed, 2 run queued, 3 stop frames ACKed,
   4 rejected, 5 transport fault. ACK is not proof any particular ESC stopped.
-- `wheel_bench_used_mask`: each wheel/sign may run once per Nucleo boot.
+- `wheel_bench_run_count`: completed RUNs, diagnostics only. Repeats need a
+  fresh ARM after the 2 s cooldown; no per-boot one-shot latch.
 
 In the initial CLI-only build, no frame is transmitted at startup, by button or
 solely by selecting a wheel. The gated button extension below supersedes only
@@ -255,7 +256,7 @@ within 60 seconds. Ordinary ARM retains its 5-second window and does not enable
 button starts. Nucleo USER B1=PC13, active high, confirmed from official ST H7
 Nucleo BSP; polled with 50 ms debounce. Requires stable release after arming,
 then stable press. Held-at-arm/bouncing button cannot start; holding/repressing
-cannot repeat/advance a test. Existing used-mask/fault gates/1000 ms STOP unchanged.
+cannot repeat/advance a test. Existing run-counter/fault gates/1000 ms STOP unchanged.
 Yellow LED steady=armed; red steady=latched sender fault; green=heartbeat.
 No ESC modification or increased speed/current/run duration.
 
@@ -295,8 +296,8 @@ only). Yellow LED steady indicates armed. Release, then one separate debounced
 press generates RUN2. Startup-held button never arms, short triple presses do
 nothing while unarmed, and holding the arm gesture never generates RUN.
 Arming expires in 60 seconds. Physical gesture is fixed to front-right NE/+30
-motor RPM, 500 ms ramp, 1000 ms sender stop deadline. NE+ used-mask prevents
-retries until a battery-off reset. No boot/power-restoration automatic arming.
+motor RPM, 500 ms ramp, 1000 ms sender stop deadline. Physical repeats need the
+full gesture again after the cooldown. No boot/power-restoration automatic arming.
 Existing fault lockout and three all-wheel STOP attempts unchanged. No increased
 speed/duration/current cap or ESC modification. Host tests: all 24 scenarios pass.
 

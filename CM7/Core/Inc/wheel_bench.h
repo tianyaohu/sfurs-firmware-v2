@@ -21,14 +21,15 @@ static inline int wheel_bench_tx_status(uint32_t occurred, uint32_t canceled,
 extern volatile uint32_t wheel_bench_request, wheel_bench_wheel;
 extern volatile int32_t wheel_bench_direction;
 extern volatile uint32_t wheel_bench_state, wheel_bench_result;
-extern volatile uint32_t wheel_bench_used_mask;
+extern volatile uint32_t wheel_bench_run_count;
 extern volatile uint32_t wheel_bench_last_request, wheel_bench_request_count;
 extern volatile uint32_t wheel_bench_tx_count, wheel_bench_tx_ack_count;
 extern volatile uint32_t wheel_bench_first_fault, wheel_bench_first_fault_tick;
 /* First fault: 1=enqueue failed, 2=TX canceled/failed, 3=100 ms timeout.
  * Diagnostics only; fault remains latched and blocks drive commands. */
 /* result: 0=none, 1=armed, 2=run queued, 3=STOP frames ACKed (not stopped
- * feedback), 4=rejected, 5=transport fault. Used bits: NE+/-, SE+/-, SW+/-, NW+/-. */
+ * feedback), 4=rejected, 5=transport fault. run_count: completed RUNs, no
+ * latch — repeats need a fresh ARM after the cooldown. */
 void wheel_bench_tick(uint32_t now);
 void wheel_bench_button(uint32_t now, uint8_t pressed);
 /* Implemented by the Nucleo adapter; host tests substitute a fake transport. */

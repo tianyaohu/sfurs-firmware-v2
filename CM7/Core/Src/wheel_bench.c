@@ -5,11 +5,11 @@ volatile uint32_t wheel_bench_wheel = 0;
 volatile int32_t wheel_bench_direction = 0;
 volatile uint32_t wheel_bench_state = BENCH_IDLE;
 volatile uint32_t wheel_bench_result = 0;
-volatile uint32_t wheel_bench_used_mask = 0;
+volatile uint32_t wheel_bench_run_count = 0; /* Completed RUNs, diagnostics only. */
 volatile uint32_t wheel_bench_last_request = 0, wheel_bench_request_count = 0;
 volatile uint32_t wheel_bench_tx_count = 0, wheel_bench_tx_ack_count = 0;
 volatile uint32_t wheel_bench_first_fault = 0, wheel_bench_first_fault_tick = 0;
-static uint32_t selected, attempt_bit, started, armed_tick, pending_tick;
+static uint32_t selected, started, armed_tick, pending_tick;
 static uint32_t last_stop, quiet_tick, stop_count;
 static int32_t direction;
 static uint8_t pending, pending_stop, pending_arm, faulted, quiet;
@@ -25,11 +25,12 @@ void wheel_bench_button(uint32_t now, uint8_t pressed)
   }
   /* Fixed NE/+30 diagnostic gesture, usable after USB/power-bank transfer.
    * Boot must first see a stable release. Hold >=2 s only ARMS; it never runs.
-   * After a run, used-mask bit 0 prevents another physical NE/+ attempt. */
+   * Repeats need the full gesture again after the cooldown; every RUN still
+   * needs a fresh ARM. */
   if ((uint32_t)(now - button_changed) >= 50U && !pressed) manual_ready = 1;
   if (pressed && manual_ready && (uint32_t)(now - button_changed) >= 2000U &&
       wheel_bench_state == BENCH_IDLE && !faulted &&
-      (wheel_bench_used_mask & 1U) == 0U && wheel_bench_request == 0U) {
+      wheel_bench_request == 0U) {
     manual_ready = 0;
     wheel_bench_wheel = 1U;
     wheel_bench_direction = 1;
@@ -137,11 +138,9 @@ void wheel_bench_tick(uint32_t now)
   if (request == BENCH_ARM || request == BENCH_ARM_BUTTON) {
     uint32_t bit = selection_bit(wheel_bench_wheel, wheel_bench_direction);
     if (wheel_bench_state == BENCH_IDLE && !pending && !faulted && bit &&
-        !(wheel_bench_used_mask & bit) &&
         (!quiet || (uint32_t)(now - quiet_tick) >= 2000U)) {
       selected = wheel_bench_wheel;
       direction = wheel_bench_direction;
-      attempt_bit = bit;
       armed_tick = now;
       arm_window = request == BENCH_ARM_BUTTON ? 60000U : 5000U;
       button_permission = request == BENCH_ARM_BUTTON;
@@ -170,11 +169,11 @@ void wheel_bench_tick(uint32_t now)
   } else if (request == BENCH_RUN) {
     if (wheel_bench_state == BENCH_ARMED && !pending && !faulted &&
         wheel_bench_wheel == selected && wheel_bench_direction == direction) {
-      /* Mark used before enqueue: even a failed write may have reached the ESC. */
-      wheel_bench_used_mask |= attempt_bit;
-      /* NE reverse targets the guarded -60 RPM reverse profile; other
+      /* Count the RUN before enqueue: even a failed write may have reached the ESC. */
+      ++wheel_bench_run_count;
+      /* NE reverse targets the guarded -100 RPM reverse profile; other
        * wheels retain legacy +/-30 for existing tests. */
-      int16_t rpm = direction > 0 ? 30 : (selected == 1U ? -60 : -30);
+      int16_t rpm = direction > 0 ? 30 : (selected == 1U ? -100 : -30);
       uint16_t bits = (uint16_t)rpm;
       uint8_t data[4] = {(uint8_t)bits, (uint8_t)(bits >> 8), 0xF4, 0x01};
       started = now;

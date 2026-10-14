@@ -1,0 +1,39 @@
+# CI: build dev image, validate, publish to the project registry.
+#
+# Requires this repo to exist as a GitLab project (provides $CI_REGISTRY_*).
+# Once pushed, the image is at $CI_REGISTRY_IMAGE/dev:<tag>, e.g.
+#   docker pull registry.gitlab.com/<group>/<project>/dev:latest
+# Needs a runner with privileged docker:dind (gitlab.com shared runners OK).
+stages:
+  - build
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE/dev
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+
+dev-image:
+  stage: build
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+      alias: docker
+  before_script:
+    - docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
+  script:
+    # Reproducible UID/GID don't matter for CI; defaults keep the image lean.
+    - docker build -f docker/Dockerfile -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
+    # Validate inside the image before publishing: host suites + CM7 build.
+    - docker run --rm -v "$CI_PROJECT_DIR:/work/sfurs_firmware_v2" -w /work/sfurs_firmware_v2 "$IMAGE:$CI_COMMIT_SHORT_SHA" bash -c "
+        python3 tests/test_wheel_bench.py &&
+        python3 tests/test_wheel_sender.py &&
+        rm -rf CM7/build && cd CM7 && cmake --preset Debug && cmake --build --preset Debug"
+    - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        docker tag "$IMAGE:$CI_COMMIT_SHORT_SHA" "$IMAGE:latest"
+        docker push "$IMAGE:latest"
+      fi
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH

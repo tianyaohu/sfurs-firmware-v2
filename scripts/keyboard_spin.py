@@ -67,11 +67,14 @@ def resolve_addrs():
     except (OSError, subprocess.SubprocessError):
         return addrs, False, False
     found = speed = 0
+    # nm suffix -> Bench key. Symbols like tx_ack_count/request_count/
+    # first_fault_tick must not collide with the shorter keys.
+    aliases = {"tx_ack_count": "tx_ack"}
     for line in out.splitlines():
         m = re.match(r"([0-9a-fA-F]+)\s+\w\s+wheel_bench_(\w+)$", line.strip())
         if not m:
             continue
-        name = m.group(2)
+        name = aliases.get(m.group(2), m.group(2))
         if name in addrs:
             addrs[name] = int(m.group(1), 16)
             found += 1

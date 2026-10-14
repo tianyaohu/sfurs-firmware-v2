@@ -94,6 +94,8 @@ volatile uint32_t wheel_test_run_attempted = 0;
 volatile uint32_t can_fwu_request = 0;
 volatile uint32_t can_fwu_dev = 1;
 volatile uint32_t can_fwu_result = 0;
+/* Counts received FWU ACK frames (0x680|dev) for LED + SWD diagnosis. */
+volatile uint32_t can_fwu_rx_cnt = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -563,6 +565,7 @@ Error_Handler();
           (can_rx_header.Identifier & ~0xFU) == CAN_FWU_ACK_BASE &&
           can_rx_header.DataLength == FDCAN_DLC_BYTES_8)
       {
+        ++can_fwu_rx_cnt;
         can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
                          can_rx_data, now);
       }
@@ -595,10 +598,16 @@ Error_Handler();
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14,
                        wheel_bench_state == BENCH_FAULT ? GPIO_PIN_SET : GPIO_PIN_RESET);
     }
-    /* FWU session LEDs take precedence while active: LD2 lit, LD3 on fault. */
+    /* FWU session LEDs take precedence while active: LD2 tracks received
+     * FWU ACKs (parity blink ~4 Hz when they arrive, solid when none yet),
+     * LD3 on fault. */
     if (fwu_host.state != FWU_H_IDLE && fwu_host.state != FWU_H_DONE &&
         fwu_host.state != FWU_H_FAULT) {
-      HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1,
+                        (can_fwu_rx_cnt == 0U ||
+                         (can_fwu_rx_cnt & 1U) != 0U)
+                            ? GPIO_PIN_SET
+                            : GPIO_PIN_RESET);
     }
     if (fwu_host.state == FWU_H_FAULT) {
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);

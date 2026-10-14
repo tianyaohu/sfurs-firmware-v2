@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "wheel_bench.h"
 #include "can_fwu_host.h"
+#include "can_cal_sender.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -181,6 +182,24 @@ static void fwu_can_abort(void)
 {
   (void)HAL_FDCAN_AbortTxRequest(&hfdcan1, fwu_tx_mask);
 }
+
+/* CAL1 sender transport: reuse the bench FDCAN trio (4-byte frames).
+ * Dormant unless the debugger writes can_cal_request; see can_cal_tick. */
+int can_cal_send(uint32_t id, const uint8_t data[4])
+{
+  return wheel_bench_send(id, data);
+}
+
+int can_cal_poll(void)
+{
+  /* CAN_CAL_TX_* codes match BENCH_TX_* by design. */
+  return wheel_bench_poll();
+}
+
+void can_cal_abort(void)
+{
+  wheel_bench_abort();
+}
 /* USER CODE END 0 */
 
 /**
@@ -305,6 +324,10 @@ Error_Handler();
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
       wheel_bench_tick(now);
     }
+    /* CAL1 sender pump. can_cal_request boots 0 (debugger-only, consumed
+     * once inside); refused unless the bench is IDLE, so this sends
+     * nothing by default. */
+    can_cal_tick(now, wheel_bench_state == BENCH_IDLE);
     /* P4/P5: FWU host pump. Transport is bound once; a session starts
      * only on an explicit debugger request while the bench is IDLE, and
      * the staged image source (USB-CDC, follow-up) is still empty, so a

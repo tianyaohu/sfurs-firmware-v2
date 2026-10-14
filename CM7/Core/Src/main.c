@@ -329,6 +329,29 @@ Error_Handler();
         can_fwu_result = 2U;
       }
     }
+    /* Cable-free arm: B1 held continuously since power-up for 3 s arms the
+     * update (bench ignores startup-held buttons, so no conflict). Either
+     * a release or a completed 3 s hold ends the gesture for this boot. */
+    static uint32_t fwu_hold_start;
+    static int fwu_hold_timing;
+    static int fwu_power_gesture_done;
+    if (!fwu_power_gesture_done) {
+      if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET) {
+        if (!fwu_hold_timing) {
+          fwu_hold_timing = 1;
+          fwu_hold_start = now;
+        } else if ((uint32_t)(now - fwu_hold_start) >= 3000U &&
+                   wheel_bench_state == BENCH_IDLE &&
+                   fwu_host.state == FWU_H_IDLE && !fwu_armed) {
+          fwu_armed = 1;
+          fwu_tries = 0U;
+          fwu_last_try = 0U;
+          fwu_power_gesture_done = 1;
+        }
+      } else {
+        fwu_power_gesture_done = 1;
+      }
+    }
     if (fwu_armed &&
         (fwu_host.state == FWU_H_IDLE ||
          (fwu_host.state == FWU_H_FAULT && fwu_host.seq_next == 0U)) &&

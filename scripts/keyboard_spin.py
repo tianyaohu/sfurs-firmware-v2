@@ -147,9 +147,10 @@ class Bench:
 
 
 class UI:
-    def __init__(self, stdscr, bench, addrs, speed_ok):
+    def __init__(self, stdscr, bench, sn, addrs, speed_ok):
         self.s = stdscr
         self.bench = bench
+        self.sn = sn
         self.addrs = addrs
         self.speed_ok = speed_ok
         self.wheel, self.wname = 1, "NE"
@@ -182,7 +183,7 @@ class UI:
         h, w = self.s.getmaxyx()
         self.s.erase()
         self.s.addstr(0, 0, (f"WHEEL JOG {VERSION}  pyOCD attach  "
-                             f"probe {self.bench.sn[:8]}..")[:w - 1])
+                             f"probe {self.sn[:8]}..")[:w - 1])
         self.s.addstr(1, 0, (f"wheel [{self.wname}]  dir [{self.direction:+d}]  "
                              f"set [{self.speed if self.speed_ok else '--'}] RPM  "
                              f"eff [{rpm:+d} RPM{' LOCKED' if locked else ''}]")[:w - 1])
@@ -383,7 +384,40 @@ def self_test():
     assert b.read(FALLBACK["state"]) == 0
     b.poke(FALLBACK["wheel"], 2)
     assert b.read(FALLBACK["wheel"]) == 2
+    # UI smoke: stub screen exercises refresh paths (caught a .sn bug).
+    ui_addrs = dict(FALLBACK)
+    ui = UI(StubScreen(), Bench(FakeTarget(), ui_addrs), "0022sn",
+            ui_addrs, True)
+    ui.msg("hello")
+    ui.set_speed(10)
+    ui.refresh(True)
+    ui.refresh(False)
     print("SELF-TEST OK")
+
+
+class StubScreen:
+    """Minimal curses stand-in for UI smoke testing."""
+
+    def __init__(self):
+        self.cells = {}
+
+    def getmaxyx(self):
+        return 24, 80
+
+    def erase(self):
+        pass
+
+    def addstr(self, y, x, text):
+        self.cells[(y, x)] = text
+
+    def refresh(self):
+        pass
+
+    def nodelay(self, flag):
+        pass
+
+    def getch(self):
+        return ord("q")
 
 
 def main():
@@ -412,7 +446,13 @@ def main():
         print(f"bench: {STATES.get(s['state'], '?')} runs={s['runs']} "
               f"tx/ack={s['tx']}/{s['ack']} fault={s['fault']} "
               f"(addrs via {'nm' if via_nm else 'fallback'})")
-        curses.wrapper(lambda scr: UI(scr, bench, addrs, speed_ok).run())
+        if (s.get("state") not in STATES or s.get("result") not in range(6)
+                or (s.get("ack") or 0) > (s.get("tx") or 0)):
+            sys.exit("implausible bench words: address map does not match "
+                     "flashed firmware. Rebuild CM7, reflash, and rerun "
+                     "(nm must resolve the flashed ELF).")
+        curses.wrapper(lambda scr: UI(scr, bench, args.sn, addrs,
+                                         speed_ok).run())
     print("quit (probe released).")
 
 

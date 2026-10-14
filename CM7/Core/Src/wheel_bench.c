@@ -174,7 +174,7 @@ void wheel_bench_tick(uint32_t now)
       ++wheel_bench_run_count;
       /* NE follows the speed setting over the ESC +-300 RPM range
        * (0 keeps direction defaults: -100 reverse, +30 forward).
-       * SE/SW/NW use the setting over 10..120 (0 keeps +30/-30). */
+       * SE/SW/NW use the setting over 10..150 (0 keeps +30/-30). */
       int16_t rpm;
       if (selected == 1U)
       {
@@ -189,7 +189,7 @@ void wheel_bench_tick(uint32_t now)
       {
         int32_t mag = wheel_bench_speed_rpm == 0 ? 30 : wheel_bench_speed_rpm;
         if (mag < 10) mag = 10;
-        if (mag > 120) mag = 120;
+        if (mag > 150) mag = 150;
         rpm = direction > 0 ? (int16_t)mag : (int16_t)-mag;
       }
       uint16_t bits = (uint16_t)rpm;

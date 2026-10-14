@@ -6,7 +6,7 @@ so reads/writes take milliseconds -- no CLI subprocesses, no verify races.
 
   1/2/3/4  select NE / SE / SW / NW
   f / r    direction forward (+) / reverse (-)
-  + / -    speed setting 10..120 RPM (SE/SW/NW only)
+  + / -    speed setting 10..150 RPM (SE/SW/NW only)
   SPACE    hold to run, release to stop
   t        toggle run latch (for long runs)
   s        stop now
@@ -36,7 +36,7 @@ RUN2 = 0x52554E32
 STOP = 0x53544F50
 
 WHEELS = {"1": (1, "NE"), "2": (2, "SE"), "3": (4, "SW"), "4": (8, "NW")}
-SPEED_MIN, SPEED_MAX, SPEED_DEF = 10, 120, 30
+SPEED_MIN, SPEED_MAX, SPEED_DEF = 10, 150, 30
 STATES = {0: "IDLE", 1: "ARMED", 2: "RUNNING", 3: "STOPPING", 4: "FAULT"}
 
 FALLBACK = {"request": 0x20000134, "wheel": 0x20000138,
@@ -386,7 +386,7 @@ def self_test():
     assert eff_speed(1, 1, 500) == (300, "")
     assert eff_speed(2, 1, 0) == (30, "DEF")
     assert eff_speed(2, 1, 100) == (100, "")
-    assert eff_speed(4, -1, 500) == (-120, "")
+    assert eff_speed(4, -1, 500) == (-150, "")
     assert eff_speed(2, 1, 5) == (10, "")
     b = Bench(FakeTarget(), dict(FALLBACK))
     st = b.start(1, -1)

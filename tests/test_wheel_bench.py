@@ -240,7 +240,7 @@ int main(int argc, char **argv) {
     wheel_bench_speed_rpm = 500;
     wheel_bench_wheel = 2; wheel_bench_direction = 1;
     arm(0); run(1);
-    assert(sends==1 && id==0x82 && payload[0]==120 && payload[1]==0);
+    assert(sends==1 && id==0x82 && payload[0]==150 && payload[1]==0);
     wheel_bench_request = BENCH_STOP; wheel_bench_tick(2);
     complete_stop(2); wheel_bench_tick(154);
     assert(wheel_bench_state==BENCH_IDLE);

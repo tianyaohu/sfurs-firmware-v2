@@ -86,13 +86,15 @@ def resolve_addrs():
 
 def eff_speed(wheel, direction, setting):
     """Mirror of the sender. setting 0 = firmware default.
-    Returns (rpm, note) with note in {"", "DEF", "LOCKED"}."""
-    if wheel == 1 and direction < 0:
-        if not setting:
-            return -100, "DEF"
-        return -max(30, min(120, setting)), ""
+    Returns (rpm, note) with note in {"", "DEF"}."""
     if wheel == 1:
-        return 30, "LOCKED"
+        if direction < 0:
+            if not setting:
+                return -100, "DEF"
+            return -max(30, min(300, setting)), ""
+        if not setting:
+            return 30, "DEF"
+        return max(30, min(300, setting)), ""
     if not setting:
         return (30 if direction > 0 else -30), "DEF"
     mag = max(SPEED_MIN, min(SPEED_MAX, setting))
@@ -212,12 +214,10 @@ class UI:
         if not self.speed_ok:
             self.msg("speed config n/a; sender defaults apply")
             return
-        if self.wheel == 1 and self.direction > 0:
-            self.msg("NE forward is legacy +30 (not settable)")
-            return
         lo = 30 if self.wheel == 1 else SPEED_MIN
+        hi = 300 if self.wheel == 1 else SPEED_MAX
         base = abs(eff_speed(self.wheel, self.direction, self.speed)[0])
-        self.speed = max(lo, min(SPEED_MAX, base + delta))
+        self.speed = max(lo, min(hi, base + delta))
         try:
             self.bench.poke(self.addrs["speed_rpm"], self.speed)
             self.msg(f"speed set {self.speed} RPM")
@@ -379,9 +379,11 @@ class FakeTarget:
 def self_test():
     assert eff_speed(1, -1, 0) == (-100, "DEF")
     assert eff_speed(1, -1, 100) == (-100, "")
-    assert eff_speed(1, -1, 500) == (-120, "")
+    assert eff_speed(1, -1, 500) == (-300, "")
     assert eff_speed(1, -1, 5) == (-30, "")
-    assert eff_speed(1, 1, 0) == (30, "LOCKED")
+    assert eff_speed(1, 1, 0) == (30, "DEF")
+    assert eff_speed(1, 1, 200) == (200, "")
+    assert eff_speed(1, 1, 500) == (300, "")
     assert eff_speed(2, 1, 0) == (30, "DEF")
     assert eff_speed(2, 1, 100) == (100, "")
     assert eff_speed(4, -1, 500) == (-120, "")

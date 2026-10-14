@@ -129,7 +129,7 @@ void wheel_bench_tick(uint32_t now)
   }
 
   if (wheel_bench_state == BENCH_RUNNING &&
-      (uint32_t)(now - started) >= ((selected == 1U && direction < 0) ? 15000U : 1000U)) stop(now);
+      (uint32_t)(now - started) >= (selected == 1U ? 15000U : 1000U)) stop(now);
   if (wheel_bench_state == BENCH_ARMED &&
       (uint32_t)(now - armed_tick) >= arm_window) {
     wheel_bench_state = BENCH_IDLE;
@@ -146,10 +146,10 @@ void wheel_bench_tick(uint32_t now)
       arm_window = request == BENCH_ARM_BUTTON ? 60000U : 5000U;
       button_permission = request == BENCH_ARM_BUTTON;
       button_released = 0;
-      /* NE reverse targets the guarded RPM2 profile: transmit CAN ARM
-       * (ID 0x401, RPM2 magic) so a single-cable Nucleo can arm the ESC.
-       * Other selections arm locally with no bus traffic, as before. */
-      if (selected == 1U && direction < 0) {
+      /* NE targets the guarded RPM2 profile in either direction: transmit
+       * CAN ARM (ID 0x401, RPM2 magic) so a single-cable Nucleo can arm
+       * the ESC. Other selections arm locally with no bus traffic. */
+      if (selected == 1U) {
         const uint8_t arm_data[4] = {0x32U, 0x4DU, 0x50U, 0x52U};
         if (wheel_bench_send(0x401U, arm_data)) {
           ++wheel_bench_tx_count;
@@ -172,18 +172,19 @@ void wheel_bench_tick(uint32_t now)
         wheel_bench_wheel == selected && wheel_bench_direction == direction) {
       /* Count the RUN before enqueue: even a failed write may have reached the ESC. */
       ++wheel_bench_run_count;
-      /* NE reverse follows the speed setting over the ESC's -120..-30 range
-       * (0 keeps the -100 default); NE forward keeps legacy +30;
+      /* NE follows the speed setting over the ESC +-300 RPM range
+       * (0 keeps direction defaults: -100 reverse, +30 forward).
        * SE/SW/NW use the setting over 10..120 (0 keeps +30/-30). */
       int16_t rpm;
-      if (selected == 1U && direction < 0)
+      if (selected == 1U)
       {
-        int32_t mag = wheel_bench_speed_rpm == 0 ? 100 : wheel_bench_speed_rpm;
+        int32_t mag = wheel_bench_speed_rpm;
+        if (direction < 0) mag = mag == 0 ? 100 : mag;
+        else mag = mag == 0 ? 30 : mag;
         if (mag < 30) mag = 30;
-        if (mag > 120) mag = 120;
-        rpm = (int16_t)-mag;
+        if (mag > 300) mag = 300;
+        rpm = direction > 0 ? (int16_t)mag : (int16_t)-mag;
       }
-      else if (selected == 1U) rpm = 30;
       else
       {
         int32_t mag = wheel_bench_speed_rpm == 0 ? 30 : wheel_bench_speed_rpm;

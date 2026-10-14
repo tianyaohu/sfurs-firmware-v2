@@ -24,8 +24,8 @@ extern volatile uint32_t wheel_bench_state, wheel_bench_result;
 extern volatile uint32_t wheel_bench_run_count;
 extern volatile int32_t wheel_bench_speed_rpm;
 /* Speed setting (RPM magnitude), 0 = per-selection firmware default.
- * NE reverse: -120..-30 (0 keeps -100). NE forward: legacy +30, ignores
- * this. SE/SW/NW: 10..120 (0 keeps 30). Clamped at RUN time. */
+ * NE: +-300 (0 keeps -100 reverse / +30 forward). SE/SW/NW: 10..120
+ * (0 keeps 30). Clamped at RUN time. */
 extern volatile uint32_t wheel_bench_last_request, wheel_bench_request_count;
 extern volatile uint32_t wheel_bench_tx_count, wheel_bench_tx_ack_count;
 extern volatile uint32_t wheel_bench_first_fault, wheel_bench_first_fault_tick;

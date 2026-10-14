@@ -214,6 +214,39 @@ int main(int argc, char **argv) {
     wheel_bench_button(200,0); wheel_bench_button(250,0);
     wheel_bench_button(300,1); wheel_bench_button(2300,1); wheel_bench_tick(2300);
     assert(wheel_bench_state==BENCH_FAULT && sends==3);
+  } else if (test == 24) {
+    /* SE forward follows the configured speed. */
+    wheel_bench_speed_rpm = 100;
+    wheel_bench_wheel = 2; wheel_bench_direction = 1;
+    arm(0); run(1);
+    assert(sends==1 && id==0x82);
+    assert(payload[0]==100 && payload[1]==0 && payload[2]==0xf4 && payload[3]==1);
+  } else if (test == 25) {
+    /* SW reverse follows the configured speed (signed payload). */
+    wheel_bench_speed_rpm = 100;
+    wheel_bench_wheel = 4; wheel_bench_direction = -1;
+    arm(0); run(1);
+    assert(sends==1 && id==0x84);
+    assert(payload[0]==0x9c && payload[1]==0xff && payload[2]==0xf4 && payload[3]==1);
+  } else if (test == 26) {
+    /* Below-range clamps to 10 RPM. */
+    wheel_bench_speed_rpm = 5;
+    wheel_bench_wheel = 2; wheel_bench_direction = 1;
+    arm(0); run(1);
+    assert(sends==1 && id==0x82 && payload[0]==10 && payload[1]==0);
+  } else if (test == 27) {
+    /* Above-range clamps to 120 RPM; NE reverse stays locked at -100. */
+    wheel_bench_speed_rpm = 500;
+    wheel_bench_wheel = 2; wheel_bench_direction = 1;
+    arm(0); run(1);
+    assert(sends==1 && id==0x82 && payload[0]==120 && payload[1]==0);
+    wheel_bench_request = BENCH_STOP; wheel_bench_tick(2);
+    complete_stop(2); wheel_bench_tick(154);
+    assert(wheel_bench_state==BENCH_IDLE);
+    wheel_bench_wheel = 1; wheel_bench_direction = -1;
+    arm(2154); run(2155);
+    assert(sends==6 && id==0x81 && wheel_bench_run_count==2);
+    assert(payload[0]==0x9c && payload[1]==0xff);
   }
   return 0;
 }
@@ -230,6 +263,6 @@ with tempfile.TemporaryDirectory(prefix='wheel-bench-tests-', dir='/tmp/opencode
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-I', str(root / 'CM7/Core/Inc'), str(tmp / 'test.c'),
                     str(root / 'CM7/Core/Src/wheel_bench.c'), '-o', str(tmp / 'test')], check=True)
-    for case in range(24):
+    for case in range(28):
         subprocess.run([str(tmp / 'test'), str(case)], check=True)
-print('PASS: 24 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates')
+print('PASS: 28 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select')

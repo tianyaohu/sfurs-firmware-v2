@@ -6,6 +6,7 @@ volatile int32_t wheel_bench_direction = 0;
 volatile uint32_t wheel_bench_state = BENCH_IDLE;
 volatile uint32_t wheel_bench_result = 0;
 volatile uint32_t wheel_bench_run_count = 0; /* Completed RUNs, diagnostics only. */
+volatile int32_t wheel_bench_speed_rpm = 30;
 volatile uint32_t wheel_bench_last_request = 0, wheel_bench_request_count = 0;
 volatile uint32_t wheel_bench_tx_count = 0, wheel_bench_tx_ack_count = 0;
 volatile uint32_t wheel_bench_first_fault = 0, wheel_bench_first_fault_tick = 0;
@@ -171,9 +172,19 @@ void wheel_bench_tick(uint32_t now)
         wheel_bench_wheel == selected && wheel_bench_direction == direction) {
       /* Count the RUN before enqueue: even a failed write may have reached the ESC. */
       ++wheel_bench_run_count;
-      /* NE reverse targets the guarded -100 RPM reverse profile; other
-       * wheels retain legacy +/-30 for existing tests. */
-      int16_t rpm = direction > 0 ? 30 : (selected == 1U ? -100 : -30);
+      /* NE reverse is locked to the guarded -100 RPM profile (ESC exact-match
+       * gate); NE forward keeps legacy +30. SE/SW/NW use the configured
+       * magnitude, clamped to the validated 10..120 RPM window. */
+      int16_t rpm;
+      if (selected == 1U && direction < 0) rpm = -100;
+      else if (selected == 1U) rpm = 30;
+      else
+      {
+        int32_t mag = wheel_bench_speed_rpm;
+        if (mag < 10) mag = 10;
+        if (mag > 120) mag = 120;
+        rpm = direction > 0 ? (int16_t)mag : (int16_t)-mag;
+      }
       uint16_t bits = (uint16_t)rpm;
       uint8_t data[4] = {(uint8_t)bits, (uint8_t)(bits >> 8), 0xF4, 0x01};
       started = now;

@@ -1,51 +1,46 @@
 #!/usr/bin/env python3
-"""Hold-to-run keyboard control of one wheel through the Nucleo CAN sender.
+"""Curses TUI hold-to-run control of one wheel via the Nucleo CAN sender.
 
-Hold SPACE (with terminal key-repeat on) to run the selected wheel/direction;
-release to STOP. No dependencies beyond Python 3 and STM32CubeProgrammer CLI.
+Hold SPACE (terminal key-repeat on) to run; release to STOP. All probe I/O
+is batched into single CLI sessions (~0.1 s), so the UI stays responsive.
 
-  1/2/3/4  select NE / SE / SW / NW (front-right / rear-right / rear-left / front-left)
+  1/2/3/4  select NE / SE / SW / NW
   f / r    direction forward (+) / reverse (-)
+  + / -    speed setting 10..120 RPM (SE/SW/NW only)
   SPACE    hold to run, release to stop
+  t        toggle run latch (for long runs)
   s        stop now
   q        stop and quit
 
-Speeds are firmware-fixed, not chosen here: NE reverse -100 RPM, everything
-else +/-30 RPM, 500 ms ramp. Single wheel at a time (sender limit).
-The ESC must already be calibrated (result 2 / valid 1) over its own cable;
-this script only drives the Nucleo side. All Nucleo RAM access uses HOTPLUG:
-a normal connect would reset the target and wipe bench state.
-
-Each CLI call costs ~1-3 s (probe connect overhead), so press-to-motion is
-several seconds and release-to-stop ~2 s. This is a bench jog tool, not a
-real-time drive. Keep the motor battery ON and the wheel clear at all times.
+Speeds: NE reverse is firmware-locked to -100 RPM (ESC exact-match gate);
+NE forward is legacy +30. The +/- setting applies to SE/SW/NW (stock ESC
+firmware, 500 ms ramp, sender STOP window 1000 ms). Single wheel at a time.
+The ESC must already be calibrated; this tool only drives the Nucleo side.
+All RAM access uses HOTPLUG (a normal connect would reset the target).
 """
 import argparse
+import curses
 import os
 import pathlib
 import re
-import select
 import subprocess
 import sys
-import termios
 import time
-import tty
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_SN = "002200364142500620353451"
 DEFAULT_CLI = (pathlib.Path.home() / "STMicroelectronics/STM32Cube"
                / "STM32CubeProgrammer/bin/STM32_Programmer_CLI")
+VERSION = "v3"
 
 ARM2 = 0x41524D32
 RUN2 = 0x52554E32
 STOP = 0x53544F50
 
 WHEELS = {"1": (1, "NE"), "2": (2, "SE"), "3": (4, "SW"), "4": (8, "NW")}
-SPEEDS = {(1, 1): "+30", (1, -1): "-100", (2, 1): "+30", (2, -1): "-30",
-          (4, 1): "+30", (4, -1): "-30", (8, 1): "+30", (8, -1): "-30"}
+SPEED_MIN, SPEED_MAX, SPEED_DEF = 10, 120, 30
 STATES = {0: "IDLE", 1: "ARMED", 2: "RUNNING", 3: "STOPPING", 4: "FAULT"}
 
-# Fallback map (verified against ELF via nm at startup when available).
 FALLBACK = {"request": 0x20000130, "wheel": 0x20000134,
             "direction": 0x20000138, "state": 0x2000013C,
             "result": 0x20000140, "run_count": 0x20000144,
@@ -67,255 +62,361 @@ def resolve_addrs():
     elf = ROOT / "CM7/build/Debug/sfurs_firmware_v2_CM7.elf"
     nm = find_nm()
     if nm is None or not elf.exists():
-        return addrs, False
+        return addrs, False, False
     try:
         out = subprocess.run([nm, str(elf)], capture_output=True, text=True,
                              timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
-        return addrs, False
-    found = 0
+        return addrs, False, False
+    found = speed = 0
     for line in out.splitlines():
         m = re.match(r"([0-9a-fA-F]+)\s+\w\s+wheel_bench_(\w+)$", line.strip())
-        if m and m.group(2) in addrs:
-            addrs[m.group(2)] = int(m.group(1), 16)
+        if not m:
+            continue
+        name = m.group(2)
+        if name in addrs:
+            addrs[name] = int(m.group(1), 16)
             found += 1
-    return addrs, found > 0
+        if name == "speed_rpm":
+            addrs["speed_rpm"] = int(m.group(1), 16)
+            speed += 1
+    return addrs, found > 0, speed > 0
 
 
-def parse_u32(output):
-    """Extract the last 32-bit hex word from CLI readback text."""
-    words = re.findall(r":\s*([0-9A-Fa-f]{8})\b", output)
-    if not words:
-        raise RuntimeError("no hex word in CLI output:\n" + output[-500:])
-    return int(words[-1], 16)
+def parse_reads(output):
+    """Map every 'addr : WORD' readback in CLI output."""
+    return {int(a, 16): int(w, 16)
+            for a, w in re.findall(r"(0x[0-9A-Fa-f]+)\s*:\s*([0-9A-Fa-f]{8})",
+                                   output)}
+
+
+def eff_speed(wheel, direction, setting):
+    """Mirror of the sender: effective RPM for a selection."""
+    if wheel == 1 and direction < 0:
+        return -100, True
+    if wheel == 1:
+        return 30, True
+    mag = max(SPEED_MIN, min(SPEED_MAX, setting))
+    return (mag if direction > 0 else -mag), False
 
 
 class Bench:
     def __init__(self, cli, sn, addrs):
         self.cli = str(cli)
         self.sn = sn
-        self._addrs = addrs
+        self.addrs = addrs
 
-    def _run(self, *args):
-        cmd = [self.cli, "-c", f"port=SWD sn={self.sn} mode=HOTPLUG", *args]
+    def session(self, ops):
+        """Run several -w32/-r32 ops in ONE probe connection.
+
+        ops: list of ("w", addr, value) / ("r", addr). Returns {addr: value}
+        for reads. Request words may report download failure when the
+        firmware consumes them mid-verify; w-issue is confirmed by the
+        `w @addr` echo instead.
+        """
+        cmd = [self.cli, "-c", f"port=SWD sn={self.sn} mode=HOTPLUG"]
+        for op in ops:
+            if op[0] == "w":
+                cmd += ["-w32", f"0x{op[1]:08X}", f"0x{op[2]:08X}"]
+            else:
+                cmd += ["-r32", f"0x{op[1]:08X}", "0x4"]
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         except subprocess.SubprocessError as e:
             raise RuntimeError(f"CLI call failed: {e}")
-        return p.stdout + p.stderr
+        out = p.stdout + p.stderr
+        low = out.lower().replace(" ", "")
+        for op in ops:
+            if op[0] == "w" and f"w@0x{op[1]:08x}" not in low:
+                raise RuntimeError(f"write not issued @0x{op[1]:08X}:\n"
+                                   + out[-500:])
+        return parse_reads(out)
 
     def read(self, addr):
-        return parse_u32(self._run("-r32", f"0x{addr:08X}", "0x4"))
-
-    def write(self, addr, value):
-        out = self._run("-w32", f"0x{addr:08X}", f"0x{value:08X}")
-        low = out.lower().replace(" ", "")
-        if f"w@0x{addr:08x}" not in low:
-            raise RuntimeError("write not issued:\n" + out[-500:])
-        return out
+        return self.session([("r", addr)]).get(addr)
 
     def poke(self, addr, value):
-        """Write a sticky word and confirm by readback."""
-        self.write(addr, value)
-        got = self.read(addr)
-        if got != value:
-            raise RuntimeError(f"readback mismatch @0x{addr:08X}: "
-                               f"wrote 0x{value:08X}, read 0x{got:08X}")
+        self.session([("w", addr, value)])
+        if self.read(addr) != value & 0xFFFFFFFF:
+            raise RuntimeError(f"readback mismatch @0x{addr:08X}")
 
-    def trigger(self, value, expect, timeout_s=8.0):
-        """Write a consumed request word, confirm by state effect.
+    def poll(self):
+        a = self.addrs
+        r = self.session([("r", a[k]) for k in
+                          ("state", "result", "run_count",
+                           "tx_count", "tx_ack", "first_fault")])
+        return {"state": r.get(a["state"]), "result": r.get(a["result"]),
+                "runs": r.get(a["run_count"]), "tx": r.get(a["tx_count"]),
+                "ack": r.get(a["tx_ack"]), "fault": r.get(a["first_fault"])}
 
-        The firmware clears request words within milliseconds, so the CLI's
-        own download-verify can report failure even when the write landed.
-        State is the ground truth.
-        """
-        self.write(self._addrs["request"], value)
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            if self.read(self._addrs["state"]) == expect:
-                return
-            time.sleep(0.5)
-        raise RuntimeError(f"request 0x{value:08X} had no effect "
-                           f"(state != {expect})")
+    def start(self, wheel, direction):
+        """ARM+RUN in two sessions; returns poll dict. Raises on rejection."""
+        a = self.addrs
+        r = self.session([("w", a["wheel"], wheel),
+                          ("w", a["direction"], direction & 0xFFFFFFFF),
+                          ("w", a["request"], ARM2),
+                          ("r", a["state"]), ("r", a["result"])])
+        if r.get(a["state"]) != 1:
+            raise RuntimeError(f"ARM rejected (state={r.get(a['state'])}, "
+                               f"result={r.get(a['result'])}); 2 s cooldown? "
+                               "hold SPACE again shortly / check FAULT")
+        r = self.session([("w", a["request"], RUN2),
+                          ("r", a["state"])])
+        if r.get(a["state"]) != 2:
+            raise RuntimeError("RUN rejected after ARM; retry")
+        return self.poll()
 
-    def state(self, a=None):
-        a = a or self._addrs
-        return {k: self.read(v) for k, v in
-                (("state", a["state"]), ("result", a["result"]),
-                 ("runs", a["run_count"]), ("tx", a["tx_count"]),
-                 ("ack", a["tx_ack"]), ("fault", a["first_fault"]))}
+    def stop(self):
+        self.session([("w", self.addrs["request"], STOP)])
 
 
-def drain_keys():
-    """Return bytes currently waiting on stdin (non-blocking)."""
-    data = b""
-    while select.select([sys.stdin], [], [], 0)[0]:
-        chunk = os.read(sys.stdin.fileno(), 64)
-        if not chunk:
-            break
-        data += chunk
-    return data
+class UI:
+    def __init__(self, stdscr, bench, addrs, speed_ok):
+        self.s = stdscr
+        self.bench = bench
+        self.addrs = addrs
+        self.speed_ok = speed_ok
+        self.wheel, self.wname = 1, "NE"
+        self.direction = -1
+        self.speed = SPEED_DEF
+        self.log = []
+        self.status = {}
+        self.status_age = 9e9
+        self.running = False
+        self.latched = False
+        self.last_space = 0.0
+        self.busy = ""
+
+    def msg(self, text):
+        self.log.append(f"{time.strftime('%H:%M:%S')} {text}")
+        del self.log[:-200]
+
+    def refresh(self, poll):
+        if poll:
+            t0 = time.monotonic()
+            try:
+                self.status = self.bench.poll()
+                self.status_age = 0.0
+                self._poll_t = t0
+            except RuntimeError as e:
+                self.msg(f"poll failed: {e}")
+        else:
+            self.status_age = time.monotonic() - getattr(self, "_poll_t",
+                                                          1e9) + 0.0 \
+                if hasattr(self, "_poll_t") else 9e9
+        rpm, locked = eff_speed(self.wheel, self.direction, self.speed)
+        st = self.status.get("state")
+        lines = [
+            f"WHEEL JOG {VERSION}  probe {self.bench.sn[:8]}..  "
+            f"ESC calibrated? (separate cable)  {self.busy}",
+            f"wheel [{self.wname}]  dir [{self.direction:+d}]  "
+            f"set [{self.speed if self.speed_ok else '--'}] RPM  "
+            f"eff [{rpm:+d} RPM{' LOCKED' if locked else ''}]",
+            f"bench: {STATES.get(st, '?')} res={self.status.get('result')} "
+            f"runs={self.status.get('runs')} "
+            f"tx/ack={self.status.get('tx')}/{self.status.get('ack')} "
+            f"fault={self.status.get('fault')} "
+            f"({self.status_age:.1f}s ago){'  HELD' if self.running else ''}"
+            f"{' LATCH' if self.latched else ''}",
+            "",
+        ]
+        h, w = self.s.getmaxyx()
+        self.s.erase()
+        for i, ln in enumerate(lines[:4]):
+            self.s.addstr(i, 0, ln[:w - 1])
+        for i, ln in enumerate(self.log[-(h - 7):]):
+            self.s.addstr(4 + i, 0, ln[:w - 1])
+        self.s.addstr(h - 2, 0, ("1-4 wheel  f/r dir  +/- speed  "
+                                 "SPACE hold-run  t latch  s stop  q quit")[:w - 1])
+        self.s.refresh()
+
+    def set_speed(self, delta):
+        if not self.speed_ok:
+            self.msg("speed config n/a (nm failed); sender defaults apply")
+            return
+        self.speed = max(SPEED_MIN, min(SPEED_MAX, self.speed + delta))
+        try:
+            self.bench.poke(self.addrs["speed_rpm"], self.speed)
+            self.msg(f"speed set {self.speed} RPM")
+        except RuntimeError as e:
+            self.msg(f"speed poke failed: {e}")
+
+    def do_start(self):
+        self.busy = "ARM+RUN..."
+        self.refresh(False)
+        try:
+            self.status = self.bench.start(self.wheel, self.direction)
+            self._poll_t = time.monotonic()
+            self.status_age = 0.0
+            rpm, _ = eff_speed(self.wheel, self.direction, self.speed)
+            self.msg(f"RUNNING {self.wname} {self.direction:+d} ({rpm:+d} RPM)")
+            self.running = True
+        except RuntimeError as e:
+            self.msg(f"start rejected: {e}")
+        finally:
+            self.busy = ""
+
+    def do_stop(self, why):
+        try:
+            self.bench.stop()
+            self.msg(f"STOP ({why})")
+        except RuntimeError as e:
+            self.msg(f"STOP failed: {e}")
+        self.running = False
+        self.latched = False
+
+    def run(self):
+        s = self.bench.poll()
+        self.status, self._poll_t, self.status_age = s, time.monotonic(), 0.0
+        if s["state"] == 4:
+            self.msg(f"FAULT latched ({s['fault']}); reset Nucleo first")
+        elif s["state"] == 1:
+            self.bench.stop()
+            self.msg("leftover ARM disarmed")
+        else:
+            self.msg(f"ready: {STATES.get(s['state'], '?')} runs={s['runs']}")
+        self.s.nodelay(True)
+        last_poll = 0.0
+        while True:
+            now = time.monotonic()
+            try:
+                key = self.s.getch()
+            except curses.error:
+                key = -1
+            while key != -1:
+                ch = chr(key) if 0 <= key < 256 else ""
+                if ch == "q":
+                    if self.running:
+                        self.do_stop("quit")
+                    return
+                elif ch in WHEELS:
+                    if self.running:
+                        self.do_stop("wheel change")
+                    self.wheel, self.wname = WHEELS[ch]
+                    rpm, locked = eff_speed(self.wheel, self.direction,
+                                            self.speed)
+                    self.msg(f"wheel {self.wname} -> {rpm:+d} RPM"
+                             f"{' (locked)' if locked else ''}")
+                elif ch == "f":
+                    self.direction = 1
+                    self.msg("dir +1")
+                elif ch == "r":
+                    self.direction = -1
+                    self.msg("dir -1")
+                elif ch in ("+", "="):
+                    self.set_speed(10)
+                elif ch in ("-", "_"):
+                    self.set_speed(-10)
+                elif ch == " ":
+                    self.last_space = now
+                    if not self.running and not self.latched:
+                        st = self.bench.poll()
+                        self.status = st
+                        if st["state"] == 4:
+                            self.msg("FAULT latched; reset Nucleo first")
+                        elif st["state"] != 0:
+                            self.msg(f"busy ({STATES.get(st['state'], '?')})")
+                        else:
+                            self.do_start()
+                elif ch == "t":
+                    if self.running or self.latched:
+                        self.do_stop("unlatch")
+                    else:
+                        self.latched = True
+                        self.last_space = now
+                        self.do_start()
+                        if self.running:
+                            self.msg("latched: runs until t/s/q")
+                            self.running = False
+                elif ch == "s":
+                    if self.running or self.latched:
+                        self.do_stop("key")
+                try:
+                    key = self.s.getch()
+                except curses.error:
+                    key = -1
+            held = (self.running and not self.latched
+                    and now - self.last_space < 0.8)
+            if self.running and not held and not self.latched:
+                self.do_stop("released")
+            want_poll = (now - last_poll > (0.8 if self.running or
+                                            self.latched else 2.5))
+            if want_poll and not self.busy:
+                last_poll = now
+                self.refresh(True)
+            else:
+                self.refresh(False)
+            time.sleep(0.05)
+
+
+def self_test():
+    assert parse_reads("0x2000013C : 00000002") == {0x2000013C: 2}
+    assert eff_speed(1, -1, 100) == (-100, True)
+    assert eff_speed(1, 1, 100) == (30, True)
+    assert eff_speed(2, 1, 100) == (100, False)
+    assert eff_speed(4, -1, 500) == (-120, False)
+    assert eff_speed(2, 1, 5) == (10, False)
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as tmp:
+        stfile = pathlib.Path(tmp) / "state"
+        stfile.write_text("0")
+        fake = pathlib.Path(tmp) / "fakecli"
+        fake.write_text(
+            "#!/usr/bin/env python3\nimport pathlib, sys\n"
+            f"st = pathlib.Path({str(stfile)!r})\n"
+            "s = int(st.read_text())\n"
+            "a = sys.argv[1:]\n"
+            "i = 0\nout = []\n"
+            "while i < len(a):\n"
+            "    if a[i] == '-w32':\n"
+            "        addr, val = a[i+1], int(a[i+2], 16)\n"
+            "        out.append(f'w @{addr}: 0x{val:08x} [===] 100%')\n"
+            "        out.append('Error: Failed to download data!')\n"
+            "        if val == 0x41524D32: s = 1\n"
+            "        elif val == 0x52554E32 and s == 1: s = 2\n"
+            "        elif val == 0x53544F50: s = 0\n"
+            "        i += 3\n"
+            "    elif a[i] == '-r32':\n"
+            "        out.append(f'{a[i+1]} : {s:08X}')\n"
+            "        i += 3\n"
+            "    else: i += 1\n"
+            "st.write_text(str(s))\nprint('\\n'.join(out))\n")
+        fake.chmod(0o755)
+        addrs = dict(FALLBACK)
+        b = Bench(str(fake), "sn", addrs)
+        r = b.session([("w", addrs["wheel"], 1),
+                       ("w", addrs["direction"], 0xFFFFFFFF),
+                       ("w", addrs["request"], ARM2),
+                       ("r", addrs["state"])])
+        assert r[addrs["state"]] == 1, r
+        st = b.start(1, -1)
+        assert st["state"] == 2, st
+        b.stop()
+    print("SELF-TEST OK")
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description="curses wheel jog TUI")
     ap.add_argument("--sn", default=DEFAULT_SN)
     ap.add_argument("--cli", default=str(DEFAULT_CLI))
-    ap.add_argument("--self-test", action="store_true",
-                    help="check key map, parser and address resolution only")
+    ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
-
     if args.self_test:
-        assert parse_u32("0x2000013C : 00000002") == 2
-        assert parse_u32("noise : DEADBEEF trailing") == 0xDEADBEEF
-        assert SPEEDS[(1, -1)] == "-100" and SPEEDS[(8, 1)] == "+30"
-        assert WHEELS["1"] == (1, "NE") and WHEELS["4"] == (8, "NW")
-        addrs, via_nm = resolve_addrs()
-        assert addrs["request"] == 0x20000130 and addrs["state"] == 0x2000013C
-        # Fake probe: write-then-verify races the firmware, so confirm the
-        # Bench verifies sticky words by readback and requests by effect.
-        import tempfile as _tf
-        with _tf.TemporaryDirectory() as tmp:
-            st = pathlib.Path(tmp) / "st"
-            st.write_text("0")
-            fake = pathlib.Path(tmp) / "fakecli"
-            fake.write_text(
-                "#!/usr/bin/env python3\n"
-                "import pathlib, sys\n"
-                f"st = pathlib.Path({str(st)!r})\n"
-                "a = sys.argv\n"
-                "if '-w32' in a:\n"
-                "    i = a.index('-w32'); addr, val = a[i+1], int(a[i+2], 16)\n"
-                "    print(f'w @{addr}: 0x{val:08x}\\nDownloading...\\n"
-                "[===========] 100%\\nError: Failed to download data!')\n"
-                "    if val == 0x41524D32: st.write_text('1')\n"
-                "    elif val == 0x52554E32: st.write_text('2')\n"
-                "    elif val == 0x53544F50: st.write_text('0')\n"
-                "elif '-r32' in a:\n"
-                "    print(f\"{a[a.index('-r32')+1]} : {int(st.read_text()):08X}\")\n")
-            fake.chmod(0o755)
-            b = Bench(str(fake), "sn", dict(addrs))
-            b.trigger(ARM2, expect=1, timeout_s=5.0)
-            assert b.read(addrs["state"]) == 1
-            b.trigger(RUN2, expect=2, timeout_s=5.0)
-            b.write(addrs["request"], STOP)
-            assert b.read(addrs["state"]) == 0
-        print(f"SELF-TEST OK (addrs via {'nm' if via_nm else 'fallback'})")
+        self_test()
         return
-
     if not os.path.exists(args.cli):
         sys.exit(f"CLI not found: {args.cli}")
-    addrs, via_nm = resolve_addrs()
+    addrs, via_nm, speed_ok = resolve_addrs()
     bench = Bench(args.cli, args.sn, addrs)
-
-    wheel, wname = 1, "NE"
-    direction = -1
-    print("keyboard_spin v2 (effect-verified writes; cooldown-aware).")
-    print(f"addrs via {'nm' if via_nm else 'fallback'}; "
-          f"wheel={wname} dir={direction:+d} speed={SPEEDS[(wheel, direction)]} RPM")
-    print("Hold SPACE to run, release to stop. 1-4 wheel, f/r direction, s stop, q quit.")
     try:
-        s = bench.state(addrs)
-        print(f"bench: {STATES.get(s['state'], '?')} result={s['result']} "
-              f"runs={s['runs']} tx/ack={s['tx']}/{s['ack']} fault={s['fault']}")
-        if s["state"] == 4:
-            print("FAULT latched (fault=%d). Reset the Nucleo (normal-mode "
-                  "connect) before running." % s["fault"])
-        elif s["state"] == 1:
-            print("Leftover ARM from an earlier attempt; disarming to IDLE.")
-            bench.write(addrs["request"], STOP)
+        s = bench.poll()
     except RuntimeError as e:
         sys.exit(f"probe read failed: {e}\nIs cable on Nucleo {args.sn}?")
-
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    running = False
-    released = False
-    stop_sent = 0.0
-    last_space = 0.0
-    try:
-        tty.setraw(fd)
-        while True:
-            for ch in drain_keys().decode("utf-8", "ignore"):
-                if ch == "q":
-                    raise KeyboardInterrupt
-                elif ch in WHEELS:
-                    if running and not released:
-                        bench.write(addrs["request"], STOP)
-                        released = True
-                        stop_sent = time.monotonic()
-                    wheel, wname = WHEELS[ch]
-                    print(f"\r\nwheel={wname} speed={SPEEDS[(wheel, direction)]} RPM")
-                elif ch == "f":
-                    direction = 1
-                    print(f"\r\ndir=+1 speed={SPEEDS[(wheel, direction)]} RPM")
-                elif ch == "r":
-                    direction = -1
-                    print(f"\r\ndir=-1 speed={SPEEDS[(wheel, direction)]} RPM")
-                elif ch == " ":
-                    last_space = time.monotonic()
-                    released = False
-                    if not running:
-                        s = bench.state(addrs)
-                        if s["state"] == 4:
-                            print("\r\nFAULT latched; reset Nucleo first.")
-                            continue
-                        if s["state"] not in (0,):
-                            print(f"\r\nbusy ({STATES.get(s['state'], '?')}); "
-                                  "wait for IDLE.")
-                            continue
-                        print(f"\r\nARM+RUN {wname} {direction:+d} "
-                              f"({SPEEDS[(wheel, direction)]} RPM)...")
-                        try:
-                            bench.poke(addrs["wheel"], wheel)
-                            bench.poke(addrs["direction"], direction & 0xFFFFFFFF)
-                            bench.trigger(ARM2, expect=1)
-                            bench.trigger(RUN2, expect=2)
-                        except RuntimeError as e:
-                            print(f"\r\nstart rejected: {e}\r\n"
-                                  "Likely the 2 s post-stop cooldown: hold "
-                                  "SPACE again in a couple of seconds. "
-                                  "If FAULT, reset the Nucleo.")
-                            continue
-                        running = True
-                elif ch == "s":
-                    if running and not released:
-                        bench.write(addrs["request"], STOP)
-                        released = True
-                        stop_sent = time.monotonic()
-                        print("\r\nSTOP sent.")
-            if running and not released and time.monotonic() - last_space > 0.8:
-                bench.write(addrs["request"], STOP)
-                released = True
-                stop_sent = time.monotonic()
-                print("\r\nspace released -> STOP sent.")
-            if running:
-                try:
-                    s = bench.state(addrs)
-                    print(f"\r{STATES.get(s['state'], '?')} res={s['result']} "
-                          f"runs={s['runs']} tx/ack={s['tx']}/{s['ack']}   ",
-                          end="", flush=True)
-                    if s["state"] == 0:
-                        running = False
-                        released = False
-                        print("\r\nback to IDLE.")
-                    elif released and time.monotonic() - stop_sent > 4.0:
-                        bench.write(addrs["request"], STOP)
-                        stop_sent = time.monotonic()
-                except RuntimeError as e:
-                    print(f"\r\npoll failed: {e}")
-                    running = False
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("\r\nquit.")
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        if running:
-            try:
-                bench.write(addrs["request"], STOP)
-                print("STOP sent on exit.")
-            except RuntimeError:
-                print("STOP on exit FAILED; STOP the bench manually.")
+    print(f"bench: {STATES.get(s['state'], '?')} runs={s['runs']} "
+          f"tx/ack={s['tx']}/{s['ack']} fault={s['fault']} "
+          f"(addrs via {'nm' if via_nm else 'fallback'})")
+    curses.wrapper(lambda scr: UI(scr, bench, addrs, speed_ok).run())
+    print("quit.")
 
 
 if __name__ == "__main__":

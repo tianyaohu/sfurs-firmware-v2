@@ -192,10 +192,10 @@ void wheel_bench_tick(uint32_t now)
       arm_window = request == BENCH_ARM_BUTTON ? 60000U : 5000U;
       button_permission = request == BENCH_ARM_BUTTON;
       button_released = 0;
-      /* NE/SE target guarded RPM2 profiles in either direction: transmit
-       * CAN ARM (ID 0x401/0x403, RPM2 magic) so a single-cable Nucleo can
-       * arm the ESC. Other selections arm locally with no bus traffic. */
-      if (selected == 1U || selected == 2U) {
+      /* All wheels target guarded RPM2 profiles in either direction: transmit
+       * CAN ARM (ID 0x401/0x402/0x404/0x408, RPM2 magic) so a single-cable
+       * Nucleo can arm the ESC. Selections are pre-gated by selection_bit. */
+      {
         const uint8_t arm_data[4] = {0x32U, 0x4DU, 0x50U, 0x52U};
         if (wheel_bench_send(0x400U | selected, arm_data)) {
           ++wheel_bench_tx_count;
@@ -208,9 +208,6 @@ void wheel_bench_tick(uint32_t now)
         } else {
           wheel_bench_result = 4;
         }
-      } else {
-        wheel_bench_state = BENCH_ARMED;
-        wheel_bench_result = 1;
       }
     } else wheel_bench_result = 4;
   } else if (request == BENCH_RUN) {
@@ -238,6 +235,13 @@ void wheel_bench_tick(uint32_t now)
         if (mag > 150) mag = 150;
         rpm = direction > 0 ? (int16_t)mag : (int16_t)-mag;
       }
+      /* Rover-frame convention: + means rover-forward on every wheel. The
+       * left-side wheels (SW/NW, mirrored mounts) spin the same shaft
+       * direction as the right side for a given command, which rolls the
+       * rover the opposite way — so mirror their command sign here. ESC
+       * images stay identical across wheels; direct (STLINK) pulses remain
+       * shaft-frame and are NOT mirrored. */
+      if (selected == 4U || selected == 8U) rpm = (int16_t)-rpm;
       uint16_t bits = (uint16_t)rpm;
       uint8_t data[4] = {(uint8_t)bits, (uint8_t)(bits >> 8), 0xF4, 0x01};
       started = now;

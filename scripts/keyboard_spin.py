@@ -109,9 +109,14 @@ def eff_speed(wheel, direction, setting):
             return 30, "DEF"
         return max(30, min(300, setting)), ""
     if not setting:
-        return (30 if direction > 0 else -30), "DEF"
-    mag = max(SPEED_MIN, min(SPEED_MAX, setting))
-    return (mag if direction > 0 else -mag), ""
+        rpm, note = (30 if direction > 0 else -30), "DEF"
+    else:
+        mag = max(SPEED_MIN, min(SPEED_MAX, setting))
+        rpm, note = (mag if direction > 0 else -mag), ""
+    # Rover-frame mirror, must track wheel_bench.c: SW/NW transmit negated.
+    if wheel in (4, 8):
+        rpm = -rpm
+    return rpm, note
 
 
 class Bench:

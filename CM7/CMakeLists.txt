@@ -58,7 +58,20 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add sources to executable
+option(NUCLEO_MOTOR_ENABLED "Enable explicit wheel bench ARM/RUN commands" OFF)
+if(NUCLEO_MOTOR_ENABLED)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE FWU_BLINK_BENCH_ONLY=0U)
+else()
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE FWU_BLINK_BENCH_ONLY=1U)
+endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(FWU_IMAGE_FILE "" CACHE FILEPATH "Generated FWU payload C file (empty selects blink test)")
+if(FWU_IMAGE_FILE)
+    get_filename_component(FWU_PAYLOAD "${FWU_IMAGE_FILE}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(NOT EXISTS "${FWU_PAYLOAD}")
+        message(FATAL_ERROR "FWU payload does not exist: ${FWU_PAYLOAD}")
+    endif()
+else()
 set(FWU_BLINK_DIR "${CMAKE_CURRENT_BINARY_DIR}/esc-blink")
 add_custom_command(
     OUTPUT "${FWU_BLINK_DIR}/fwu_blink_image.c"
@@ -70,12 +83,15 @@ add_custom_command(
         ../tests/esc_blink/can_boot.h ../Common/Inc/boot_entry.h
     VERBATIM
 )
+set(FWU_PAYLOAD "${FWU_BLINK_DIR}/fwu_blink_image.c")
+endif()
+message(STATUS "FWU payload: ${FWU_PAYLOAD}")
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/wheel_bench.c
     Core/Src/can_cal_sender.c
     Core/Src/can_fwu_host.c
-    "${FWU_BLINK_DIR}/fwu_blink_image.c"
+    "${FWU_PAYLOAD}"
     ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_protocol.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_boot.c
 )
@@ -97,8 +113,6 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))
     message(ERROR "Generated code requires C11 or higher")
 endif()
-
-
 
 
 

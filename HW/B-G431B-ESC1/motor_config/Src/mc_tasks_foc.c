@@ -36,6 +36,7 @@
 #include "mc_app_hooks.h"
 
 /* USER CODE BEGIN Includes */
+#include "test_profile.h"
 
 /* USER CODE END Includes */
 
@@ -129,8 +130,13 @@ __weak void FOC_Init(void)
     FOCVars[M1].Iqdref = STC_GetDefaultIqdref(pSTC[M1]);
     FOCVars[M1].UserIdref = STC_GetDefaultIqdref(pSTC[M1]).d;
 
+    /* Guarded diagnostics set their reference only in TestDriveStart().
+     * Do not queue an implicit drive command at boot: it would also prevent
+     * safe remote FWU entry before the first operator-requested run. */
+#if !ESC_TEST_GUARDED_MOTION
     MCI_ExecSpeedRamp(&Mci[M1],
     STC_GetMecSpeedRefUnitDefault(pSTC[M1]),0); /* First command to STC */
+#endif
 
     /* USER CODE BEGIN MCboot 2 */
 

@@ -37,7 +37,9 @@
 /* USER CODE BEGIN PD */
 #define WHEEL_BENCH_MODE 1U
 #define FWU_RX_DIAGNOSTIC 0U
-#define FWU_BLINK_BENCH_ONLY 1U /* Never emit motor ARM/RUN from this test build. */
+#ifndef FWU_BLINK_BENCH_ONLY
+#define FWU_BLINK_BENCH_ONLY 1U /* Safe default; CMake motor option explicitly enables ARM/RUN. */
+#endif
 
 /* DUAL_CORE_BOOT_SYNC_SEQUENCE: Define for dual core boot synchronization    */
 /*                             demonstration code based on hardware semaphore */
@@ -66,6 +68,8 @@
 FDCAN_HandleTypeDef hfdcan1;
 
 /* USER CODE BEGIN PV */
+/* Build identity only; changing this word does not enable motor control. */
+volatile const uint32_t wheel_bench_motor_enabled = (FWU_BLINK_BENCH_ONLY == 0U);
 /* Debugger-visible receive count and latest periodic transmit result.
  * TX status: 0 = waiting, 1 = pending, 2 = acknowledged, 3 = failed. */
 volatile uint32_t can_rx_frame_count = 0;
@@ -342,6 +346,7 @@ Error_Handler();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    (void)wheel_bench_motor_enabled; /* Retain debugger-visible build identity. */
     uint32_t now = HAL_GetTick();
     if (WHEEL_BENCH_MODE != 0U && FWU_BLINK_BENCH_ONLY == 0U) {
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);

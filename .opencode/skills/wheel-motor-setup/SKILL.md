@@ -5,22 +5,26 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
 
 # Wheel motor setup (living doc — update as the codebase moves)
 
-## Run duration caps
+## Run duration and motor-enabled build
 
-RUN auto-stops after 15 s (NE/SE) or 1 s (SW/NW) by firmware design
-(`wheel_bench_tick`: `started` timestamp → `stop()`). A TUI hold therefore
-produces at most ~1 revolution on SW/NW regardless of hold length; release,
-`s`, or `q` sends STOP sooner. An unbounded-hold variant was tried and
-reverted to keep the dead-man's switch: if the probe session dies mid-run,
-nothing else stops the wheel short of Nucleo reset or power cut.
+The operator requested removal of the Nucleo's 15 s / 1 s RUN caps.
+There is now no host duration cap; release, `s`, or `q` sends STOP.
+Do not rely on the host to stop a motor if the TUI/probe disconnects.
+ESC timeout/count stops and fault/current guards remain unchanged: removing
+the host cap does NOT remove those independent ESC limits.
+
+Explicitly configure CM7 with `-DNUCLEO_MOTOR_ENABLED=ON` for TUI motion;
+the default OFF builds update-only firmware. `wheel_bench_motor_enabled`
+reports the flashed build identity (1=motor-enabled), not target readiness.
+Never use the TUI concurrently with FWU or another probe owner.
 
 ## Topology
 
 - 4x B-G431B-ESC1 (STM32G431, 128 KiB flash), one per wheel, shared CAN bus.
 - Nucleo H755ZI-Q CAN sender (`CM7/Core/Src/wheel_bench.c`), driven by
   `scripts/keyboard_spin.py` TUI (pyOCD attach to the Nucleo probe).
-- ESC firmware source: `firmware-v2/HW/B-G431B-ESC1/motor_config/`
-  (built by `build_cli.py`); this repo holds the Nucleo sender + TUI.
+- ESC firmware source: `HW/B-G431B-ESC1/motor_config/` in this checkout
+  (built by `build_cli.py`); the old `firmware-v2` clone is reference only.
 - ESC application updates go over CAN, not SWD: see the `can-fwu-update`
   skill (protocol v2, 16 KiB boot + 110 KiB app + validity page).
 
@@ -104,11 +108,21 @@ nothing else stops the wheel short of Nucleo reset or power cut.
 
 - STLINK: `test_drive_measured_rpm` (`nm` the flashed ELF for the address).
 - CAN: `SPEED_READ | ID` (4-byte request) → reply `0x280|ID`, 8 bytes:
-  RPM `i16` LE, state, Hall bits, Hall-change count. (Sender/TUI do not yet
-  listen for replies — visual + RAM checks are the current path.)
+  RPM `i16` LE, state, Hall bits, Hall-change count. The sender/TUI mirror
+  reports RPM/state and reply age; a host RUNNING state alone is not proof
+  that the ESC accepted ARM or started.
 
 ## Known RCAs
 
+- **NE/SE no motion after all-wheel FWU rollout:** NE flash was correct and
+  CAN polling worked, but RAM CAL was `0/0`. CAN ARM-only restored `2/1`;
+  a second ARM was accepted, then STOP disarmed (no RUN sent). SE answered
+  fresh IDLE telemetry, but its current CAL was not independently confirmed.
+  All four now have auto-CAL; the remaining TUI gap is `Bench.start()` sending
+  RUN after host ARMED without target CAL/ARM confirmation. Prior RAM-CAL-loss
+  RCAs below recur under this asynchronous contract. Permanent handshake fix
+  remains open. Evidence, history and separate manual-CAL byte-order finding:
+  `docs/NE_SE_POST_ROLLOUT_RCA.md`.
 - **SE CAN silence (2026-10-14):** Nucleo sender predated SE CAN-ARM support —
   armed locally, speed frames hit an unarmed ESC, declined silently with
   healthy ACKs. Fix was reflashing the Nucleo; SE ELF disassembly had already

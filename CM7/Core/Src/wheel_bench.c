@@ -10,6 +10,11 @@ volatile int32_t wheel_bench_speed_rpm = 0; /* 0 = per-selection default. */
 volatile uint32_t wheel_bench_last_request = 0, wheel_bench_request_count = 0;
 volatile uint32_t wheel_bench_tx_count = 0, wheel_bench_tx_ack_count = 0;
 volatile uint32_t wheel_bench_first_fault = 0, wheel_bench_first_fault_tick = 0;
+/* Tier-1 ESC mirror. See header. 0xFFFFFFFF age = no reply stored yet. */
+volatile int32_t wheel_bench_esc_rpm = 0;
+volatile uint32_t wheel_bench_esc_state = 0, wheel_bench_esc_age_ms = 0xFFFFFFFFU;
+static uint32_t esc_last_tick, esc_poll_tick;
+static uint8_t esc_valid;
 static uint32_t selected, started, armed_tick, pending_tick;
 static uint32_t last_stop, quiet_tick, stop_count;
 static int32_t direction;
@@ -86,9 +91,46 @@ static void stop(uint32_t now)
   wheel_bench_state = BENCH_STOPPING;
 }
 
+void wheel_bench_esc_rx(uint32_t id, const uint8_t data[8], uint32_t now)
+{
+  uint32_t wheel = id & 0x0FU;
+  uint16_t bits;
+  /* Only the RPM2-profile wheels answer today; store only the currently
+   * selected wheel so the single slot never shows another wheel's data.
+   * The TUI displays this slot only for the selected wheel. */
+  if ((wheel != 1U && wheel != 2U) || wheel != wheel_bench_wheel) return;
+  bits = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+  wheel_bench_esc_rpm = (bits & 0x8000U) != 0U ? (int32_t)bits - 65536 : (int32_t)bits;
+  wheel_bench_esc_state = data[2];
+  esc_last_tick = now;
+  esc_valid = 1;
+  wheel_bench_esc_age_ms = 0;
+}
+
+uint32_t wheel_bench_esc_poll_due(uint32_t now)
+{
+  uint32_t wheel = wheel_bench_wheel;
+  if (wheel != 1U && wheel != 2U) return 0;
+  /* Never during STOPPING: the STOP broadcast owns the bus then. FAULT is
+   * fine (no drive TX can be in flight that a poll could delay). */
+  if (wheel_bench_state == BENCH_STOPPING) return 0;
+  if (pending) return 0;
+  if (esc_poll_tick != 0U) {
+    if ((uint32_t)(now - esc_poll_tick) < 500U) return 0;
+  } else if (now < 500U) return 0; /* First poll 500 ms after boot. */
+  esc_poll_tick = now;
+  return 0x100U | wheel;
+}
+
 void wheel_bench_tick(uint32_t now)
 {
   uint32_t request = wheel_bench_request;
+  /* Age the ESC mirror every pass, including STOPPING/FAULT drains. */
+  if (!esc_valid) wheel_bench_esc_age_ms = 0xFFFFFFFFU;
+  else {
+    uint32_t age = now - esc_last_tick;
+    wheel_bench_esc_age_ms = age > 0xFFFFFFFEU ? 0xFFFFFFFEU : age;
+  }
   wheel_bench_request = 0; /* Consume each trigger once, never retry a RUN. */
   if (request != 0U) {
     wheel_bench_last_request = request;

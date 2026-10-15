@@ -272,6 +272,54 @@ int main(int argc, char **argv) {
     run(1);
     assert(sends==2 && id==0x81 && wheel_bench_run_count==1);
     assert(payload[0]==0xc8 && payload[1]==0 && payload[2]==0xf4 && payload[3]==1);
+  } else if (test == 31) {
+    /* Tier-1 ESC mirror: parse/store selected NE/SE replies, ignore others. */
+    uint8_t d[8] = {0xC9, 0x00, 0x06, 0x05, 0x01, 0, 0, 0};
+    wheel_bench_tick(0);
+    assert(wheel_bench_esc_age_ms == 0xFFFFFFFFU); /* never */
+    wheel_bench_wheel = 1;
+    wheel_bench_esc_rx(0x281U, d, 100);
+    assert(wheel_bench_esc_rpm == 201 && wheel_bench_esc_state == 6);
+    assert(wheel_bench_esc_age_ms == 0);
+    wheel_bench_tick(700);
+    assert(wheel_bench_esc_age_ms == 600);
+    d[0] = 0x1E; d[2] = 0;
+    wheel_bench_esc_rx(0x282U, d, 800); /* SE while NE selected */
+    assert(wheel_bench_esc_rpm == 201);
+    wheel_bench_wheel = 2;
+    wheel_bench_esc_rx(0x282U, d, 900);
+    assert(wheel_bench_esc_rpm == 30 && wheel_bench_esc_state == 0);
+    wheel_bench_wheel = 4;
+    wheel_bench_esc_rx(0x284U, d, 1000); /* SW never stored */
+    assert(wheel_bench_esc_rpm == 30);
+    assert(sends == 0); /* RX never transmits */
+  } else if (test == 32) {
+    /* poll_due: NE/SE only, 500 ms rate, never while STOPPING/pending. */
+    assert(wheel_bench_esc_poll_due(1000) == 0); /* wheel=4 default */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    assert(wheel_bench_esc_poll_due(0) == 0); /* boot guard */
+    assert(wheel_bench_esc_poll_due(499) == 0);
+    assert(wheel_bench_esc_poll_due(500) == 0x101);
+    assert(wheel_bench_esc_poll_due(600) == 0); /* 500 ms rate */
+    assert(wheel_bench_esc_poll_due(1000) == 0x101);
+    assert(sends == 0); /* poll_due never transmits itself */
+    arm(1100); /* pending ARM blocks polling */
+    assert(wheel_bench_esc_poll_due(2000) == 0);
+    wheel_bench_tick(2100); /* completes ARM */
+    assert(wheel_bench_state == BENCH_ARMED);
+    assert(wheel_bench_esc_poll_due(2100) == 0x101);
+    wheel_bench_request = BENCH_STOP; wheel_bench_tick(2200);
+    assert(wheel_bench_state == BENCH_STOPPING);
+    assert(wheel_bench_esc_poll_due(5000) == 0); /* STOP owns the bus */
+  } else if (test == 33) {
+    /* Faulted bench still mirrors (no drive TX to delay); silence != zero. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    fail_send = 1;
+    wheel_bench_request = BENCH_STOP; wheel_bench_tick(0);
+    wheel_bench_tick(50); wheel_bench_tick(100);
+    assert(wheel_bench_state == BENCH_FAULT);
+    assert(wheel_bench_esc_poll_due(1000) == 0x101);
+    assert(wheel_bench_esc_age_ms == 0xFFFFFFFFU);
   }
   return 0;
 }
@@ -288,6 +336,6 @@ with tempfile.TemporaryDirectory(prefix='wheel-bench-tests-', dir='/tmp/opencode
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-I', str(root / 'CM7/Core/Inc'), str(tmp / 'test.c'),
                     str(root / 'CM7/Core/Src/wheel_bench.c'), '-o', str(tmp / 'test')], check=True)
-    for case in range(31):
+    for case in range(34):
         subprocess.run([str(tmp / 'test'), str(case)], check=True)
-print('PASS: 31 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select')
+print('PASS: 34 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select, ESC mirror')

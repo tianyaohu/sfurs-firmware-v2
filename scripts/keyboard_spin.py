@@ -38,12 +38,23 @@ STOP = 0x53544F50
 WHEELS = {"1": (1, "NE"), "2": (2, "SE"), "3": (4, "SW"), "4": (8, "NW")}
 SPEED_MIN, SPEED_MAX, SPEED_DEF = 10, 150, 30
 STATES = {0: "IDLE", 1: "ARMED", 2: "RUNNING", 3: "STOPPING", 4: "FAULT"}
+# ESC motor states, copied from firmware-v2
+# HW/B-G431B-ESC1/motor_config/Inc/mc_interface.h MCI_State_t.
+ESC_STATES = {0: "IDLE", 12: "ICLWAIT", 16: "CHARGE_BOOT_CAP",
+              17: "OFFSET_CALIB", 2: "ALIGNMENT", 4: "START",
+              19: "SWITCH_OVER", 6: "RUN", 8: "STOP", 10: "FAULT_NOW",
+              11: "FAULT_OVER", 20: "WAIT_STOP_MOTOR",
+              21: "OTF_DETECTION", 22: "OTF_BRAKE"}
+ESC_STALE_MS = 3000
+ESC_NEVER = 0xFFFFFFFF
 
 FALLBACK = {"request": 0x20000134, "wheel": 0x20000138,
             "direction": 0x2000013C, "state": 0x20000140,
             "result": 0x20000144, "run_count": 0x20000148,
             "tx_count": 0x20000154, "tx_ack": 0x20000158,
-            "first_fault": 0x2000015C, "speed_rpm": None}
+            "first_fault": 0x2000015C, "speed_rpm": None,
+            "esc_rpm": 0x20000160, "esc_state": 0x20000164,
+            "esc_age_ms": 0x20000168}
 
 
 def find_nm():
@@ -60,13 +71,13 @@ def resolve_addrs():
     elf = ROOT / "CM7/build/Debug/sfurs_firmware_v2_CM7.elf"
     nm = find_nm()
     if nm is None or not elf.exists():
-        return addrs, False, addrs.get("speed_rpm") is not None
+        return addrs, False, addrs.get("speed_rpm") is not None, False
     try:
         out = subprocess.run([nm, str(elf)], capture_output=True, text=True,
                              timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
-        return addrs, False, False
-    found = speed = 0
+        return addrs, False, False, False
+    found = speed = esc = 0
     # nm suffix -> Bench key. Symbols like tx_ack_count/request_count/
     # first_fault_tick must not collide with the shorter keys.
     aliases = {"tx_ack_count": "tx_ack"}
@@ -81,7 +92,9 @@ def resolve_addrs():
         if name == "speed_rpm":
             addrs["speed_rpm"] = int(m.group(1), 16)
             speed += 1
-    return addrs, found > 0, speed > 0
+        if name in ("esc_rpm", "esc_state", "esc_age_ms"):
+            esc += 1
+    return addrs, found > 0, speed > 0, esc == 3
 
 
 def eff_speed(wheel, direction, setting):
@@ -146,21 +159,48 @@ class Bench:
 
     def poll(self):
         a = self.addrs
-        return {"state": self.read(a["state"]),
-                "result": self.read(a["result"]),
-                "runs": self.read(a["run_count"]),
-                "tx": self.read(a["tx_count"]),
-                "ack": self.read(a["tx_ack"]),
-                "fault": self.read(a["first_fault"])}
+        d = {"state": self.read(a["state"]),
+             "result": self.read(a["result"]),
+             "runs": self.read(a["run_count"]),
+             "tx": self.read(a["tx_count"]),
+             "ack": self.read(a["tx_ack"]),
+             "fault": self.read(a["first_fault"])}
+        if a.get("esc_rpm") is None or a.get("esc_state") is None \
+                or a.get("esc_age_ms") is None:
+            d.update({"esc_rpm": None, "esc_state": None, "esc_age": None})
+        else:
+            raw = self.read(a["esc_rpm"]) & 0xFFFF
+            d.update({"esc_rpm": raw - 0x10000 if raw & 0x8000 else raw,
+                      "esc_state": self.read(a["esc_state"]) & 0xFF,
+                      "esc_age": self.read(a["esc_age_ms"])})
+        return d
+
+    def esc_line(self, poll, wheel):
+        """Tier-1 ESC status line. Display only; selection-gated."""
+        if poll.get("esc_age") is None:
+            return "esc: n/a (addrs unresolved)"
+        if wheel not in (1, 2):
+            return "esc: -- (NE/SE only)"
+        age = poll["esc_age"]
+        if age == ESC_NEVER:
+            return "esc: no-reply"
+        name = ESC_STATES.get(poll["esc_state"],
+                              f"S{poll['esc_state']}")
+        rpm = poll["esc_rpm"]
+        if age > ESC_STALE_MS:
+            return (f"esc: STALE {name} rpm={rpm:+d} "
+                    f"({age / 1000:.1f}s ago)")
+        return f"esc: {name} rpm={rpm:+d} ({age / 1000:.1f}s ago)"
 
 
 class UI:
-    def __init__(self, stdscr, bench, sn, addrs, speed_ok):
+    def __init__(self, stdscr, bench, sn, addrs, speed_ok, esc_ok=True):
         self.s = stdscr
         self.bench = bench
         self.sn = sn
         self.addrs = addrs
         self.speed_ok = speed_ok
+        self.esc_ok = esc_ok
         self.wheel, self.wname = 1, "NE"
         self.direction = -1
         self.speed = 200  # session default; +/- makes it explicit
@@ -204,8 +244,11 @@ class UI:
                              f"({self.status_age:.1f}s ago)"
                              f"{'  HELD' if self.running else ''}"
                              f"{' LATCH' if self.latched else ''}")[:w - 1])
-        for i, ln in enumerate(self.log[-(h - 6):]):
-            self.s.addstr(4 + i, 0, ln[:w - 1])
+        esc_txt = ("esc: n/a (addrs unresolved)" if not self.esc_ok
+                   else self.bench.esc_line(self.status, self.wheel))
+        self.s.addstr(3, 0, esc_txt[:w - 1])
+        for i, ln in enumerate(self.log[-(h - 7):]):
+            self.s.addstr(5 + i, 0, ln[:w - 1])
         self.s.addstr(h - 2, 0, ("1-4 wheel  f/r dir  +/- speed  SPACE hold-run  "
                                  "t latch  s stop  q quit")[:w - 1])
         self.s.refresh()
@@ -361,6 +404,7 @@ class FakeTarget:
 
     def __init__(self):
         self.mem = {v: 0 for v in FALLBACK.values() if v is not None}
+        self.mem[FALLBACK["esc_age_ms"]] = ESC_NEVER  # no reply yet
 
     def read32(self, addr):
         return self.mem.get(addr, 0)
@@ -380,6 +424,13 @@ class FakeTarget:
                 self.mem[a["result"]] = 3
             else:
                 self.mem[a["result"]] = 4
+
+    def inject_esc(self, rpm, state, age_ms):
+        """Fake a 0x280|ID reply landing in the sender mirror words."""
+        a = FALLBACK
+        self.mem[a["esc_rpm"]] = rpm & 0xFFFF
+        self.mem[a["esc_state"]] = state & 0xFF
+        self.mem[a["esc_age_ms"]] = age_ms & 0xFFFFFFFF
 
 
 def self_test():
@@ -402,13 +453,41 @@ def self_test():
     assert b.read(FALLBACK["state"]) == 0
     b.poke(FALLBACK["wheel"], 2)
     assert b.read(FALLBACK["wheel"]) == 2
+    # Tier-1 ESC mirror: injection path, signed rpm, names, stale/no-reply.
+    ft = FakeTarget()
+    eb = Bench(ft, dict(FALLBACK))
+    p = eb.poll()
+    assert p["esc_age"] == ESC_NEVER, p
+    assert eb.esc_line(p, 1) == "esc: no-reply"
+    assert eb.esc_line(p, 4) == "esc: -- (NE/SE only)"
+    ft.inject_esc(201, 0, 600)
+    p = eb.poll()
+    assert (p["esc_rpm"], p["esc_state"], p["esc_age"]) == (201, 0, 600), p
+    assert eb.esc_line(p, 1) == "esc: IDLE rpm=+201 (0.6s ago)", \
+        eb.esc_line(p, 1)
+    ft.inject_esc(-30, 6, 0)
+    p = eb.poll()
+    assert eb.esc_line(p, 2) == "esc: RUN rpm=-30 (0.0s ago)"
+    ft.inject_esc(0, 10, 4200)
+    p = eb.poll()
+    assert eb.esc_line(p, 1) == \
+        "esc: STALE FAULT_NOW rpm=+0 (4.2s ago)", eb.esc_line(p, 1)
+    ft.inject_esc(0, 99, 100)
+    assert eb.esc_line(eb.poll(), 1) == "esc: S99 rpm=+0 (0.1s ago)"
+    ft.inject_esc(-1, 11, 3100)
+    p = eb.poll()
+    assert p["esc_rpm"] == -1 and p["esc_state"] == 11, p
+    assert eb.esc_line(p, 1) == \
+        "esc: STALE FAULT_OVER rpm=-1 (3.1s ago)", eb.esc_line(p, 1)
     # UI smoke: stub screen exercises refresh paths (caught a .sn bug).
     ui_addrs = dict(FALLBACK)
-    ui = UI(StubScreen(), Bench(FakeTarget(), ui_addrs), "0022sn",
+    scr = StubScreen()
+    ui = UI(scr, Bench(FakeTarget(), ui_addrs), "0022sn",
             ui_addrs, True)
     ui.msg("hello")
     ui.set_speed(10)
     ui.refresh(True)
+    assert scr.cells[(3, 0)] == "esc: no-reply", scr.cells[(3, 0)]
     ui.refresh(False)
     print("SELF-TEST OK")
 
@@ -446,7 +525,7 @@ def main():
     if args.self_test:
         self_test()
         return
-    addrs, via_nm, speed_ok = resolve_addrs()
+    addrs, via_nm, speed_ok, esc_ok = resolve_addrs()
     from pyocd.core.helpers import ConnectHelper
     import logging
     logging.disable(logging.CRITICAL)
@@ -475,7 +554,7 @@ def main():
                      "flashed firmware. Rebuild CM7, reflash, and rerun "
                      "(nm must resolve the flashed ELF).")
         curses.wrapper(lambda scr: UI(scr, bench, args.sn, addrs,
-                                         speed_ok).run())
+                                         speed_ok, esc_ok).run())
     print("quit (probe released).")
 
 

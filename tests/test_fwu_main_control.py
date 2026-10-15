@@ -38,6 +38,11 @@ static uint32_t HAL_GetTick(void) { return tick; }
 static unsigned HAL_GPIO_ReadPin(unsigned port, unsigned pin) {
   (void)port; (void)pin; return 0;
 }
+static int can_cal_calls;
+static void can_cal_tick(uint32_t now, int bench_idle) {
+  (void)now;
+  can_cal_calls |= bench_idle ? 1 : 2;
+}
 static int fwu_can_send(uint32_t id, const uint8_t data[8]) {
   sent_id = id;
   for (unsigned i = 0; i < 8; ++i) sent_data[i] = data[i];

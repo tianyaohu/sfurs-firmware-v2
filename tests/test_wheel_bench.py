@@ -60,20 +60,24 @@ int main(int argc, char **argv) {
       assert(payload[0]==0x32 && payload[1]==0x4d && payload[2]==0x50 && payload[3]==0x52);
       run(1); assert(sends==2 && id==(0x80|wheel_bench_wheel));
     } else {
-      arm(0); assert(!sends && wheel_bench_state == BENCH_ARMED);
-      run(1); assert(sends==1 && id==(0x80|wheel_bench_wheel));
+      /* SW/NW transmit CAN ARM (RPM2) on arming: 0x404/0x408. */
+      arm(0); assert(sends==1 && id==(0x400|wheel_bench_wheel) && wheel_bench_state == BENCH_ARMED);
+      assert(payload[0]==0x32 && payload[1]==0x4d && payload[2]==0x50 && payload[3]==0x52);
+      run(1); assert(sends==2 && id==(0x80|wheel_bench_wheel));
     }
-    assert(payload[0]==((index&1) ? ((index==1) ? 0x9c : 0xe2) : 30));
-    assert(payload[1]==((index&1) ? 0xff : 0));
+    /* Rover-frame mirror: SW/NW (index>=4) send negated signs, so TUI +
+     * means rover-forward on every wheel. */
+    assert(payload[0]==((index==1) ? 0x9c : ((index==3||index==4||index==6) ? 0xe2 : 30)));
+    assert(payload[1]==((index==1||index==3||index==4||index==6) ? 0xff : 0));
     assert(payload[2]==0xf4 && payload[3]==1);
     assert(wheel_bench_run_count == 1);
-    run(2); assert(sends==((index<=3) ? 2 : 1)); /* no RUN while RUNNING */
+    run(2); assert(sends==2); /* no RUN while RUNNING */
     if (index<=3) {
       wheel_bench_tick(14000); assert(sends==2);
       wheel_bench_tick(15001); assert(sends==3 && id==0x78f);
     } else {
-      wheel_bench_tick(1000); assert(sends==1);
-      wheel_bench_tick(1001); assert(sends==2 && id==0x78f);
+      wheel_bench_tick(1000); assert(sends==2);
+      wheel_bench_tick(1001); assert(sends==3 && id==0x78f);
     }
     assert(!payload[0] && !payload[1] && !payload[2] && !payload[3]);
     complete_stop((index<=3) ? 15001 : 1001);
@@ -81,37 +85,40 @@ int main(int argc, char **argv) {
       assert(sends==5 && wheel_bench_state==BENCH_IDLE && wheel_bench_result==3);
       assert(wheel_bench_tx_count==5 && wheel_bench_tx_ack_count==5);
     } else {
-      assert(sends==4 && wheel_bench_state==BENCH_IDLE && wheel_bench_result==3);
-      assert(wheel_bench_tx_count==4 && wheel_bench_tx_ack_count==4);
+      assert(sends==5 && wheel_bench_state==BENCH_IDLE && wheel_bench_result==3);
+      assert(wheel_bench_tx_count==5 && wheel_bench_tx_ack_count==5);
     }
     arm(4000); assert(wheel_bench_state==BENCH_ARMED && wheel_bench_result==1); /* repeat, no reset */
-    run(4001); assert(sends==((index<=3) ? 7 : 5) && wheel_bench_run_count==2);
+    run(4001); assert(sends==7 && wheel_bench_run_count==2);
     if (index<=3) {
       wheel_bench_tick(19001); assert(sends==8 && id==0x78f);
       complete_stop(19001); assert(sends==10 && wheel_bench_state==BENCH_IDLE);
-      arm(19603); assert(wheel_bench_result==4); /* cooldown */
-      arm(19604); assert(wheel_bench_state==BENCH_ARMED);
+      arm(19353); assert(wheel_bench_result==4); /* cooldown */
+      arm(19354); assert(wheel_bench_state==BENCH_ARMED);
     } else {
-      wheel_bench_tick(5001); assert(sends==6 && id==0x78f);
-      complete_stop(5001); assert(sends==8 && wheel_bench_state==BENCH_IDLE);
-      arm(5603); assert(wheel_bench_result==4); /* cooldown */
-      arm(5604); assert(wheel_bench_state==BENCH_ARMED);
+      wheel_bench_tick(5001); assert(sends==8 && id==0x78f);
+      complete_stop(5001); assert(sends==10 && wheel_bench_state==BENCH_IDLE);
+      arm(5353); assert(wheel_bench_result==4); /* cooldown */
+      arm(5354); assert(wheel_bench_state==BENCH_ARMED);
     }
   } else if (test == 10) {
-    arm(0); wheel_bench_tick(5000); run(5001);
-    assert(!sends && wheel_bench_state==BENCH_IDLE);
-    arm(6000); wheel_bench_wheel=8; run(6001);
-    assert(!sends && wheel_bench_state==BENCH_IDLE);
+    arm(0); assert(sends==1 && id==0x404 && wheel_bench_state==BENCH_ARMED);
+    wheel_bench_tick(5000); assert(wheel_bench_state==BENCH_IDLE);
+    run(5001); assert(sends==1 && wheel_bench_state==BENCH_IDLE);
+    arm(6000); assert(sends==2 && wheel_bench_state==BENCH_ARMED);
+    wheel_bench_wheel=8; run(6001);
+    assert(sends==2 && wheel_bench_state==BENCH_IDLE);
   } else if (test == 11) {
-    arm(0); status=BENCH_TX_PENDING; run(1);
-    wheel_bench_request=BENCH_STOP; wheel_bench_tick(2);
-    assert(aborts==1 && sends==2 && id==0x78f);
-    status=BENCH_TX_OK; complete_stop(2);
+    arm(0); wheel_bench_tick(1); /* ARM TX completes */
+    status=BENCH_TX_PENDING; run(2);
+    wheel_bench_request=BENCH_STOP; wheel_bench_tick(3);
+    assert(aborts==1 && sends==3 && id==0x78f);
+    status=BENCH_TX_OK; complete_stop(3);
     assert(wheel_bench_state==BENCH_IDLE);
   } else if (test == 12) {
     arm(0); fail_send=1; run(1);
     wheel_bench_tick(51); wheel_bench_tick(101);
-    assert(sends==4 && wheel_bench_state==BENCH_FAULT);
+    assert(sends==5 && wheel_bench_state==BENCH_FAULT);
     assert(wheel_bench_first_fault==1 && wheel_bench_first_fault_tick==1);
     fail_send=0; arm(10000); assert(wheel_bench_state==BENCH_FAULT);
   } else if (test == 13) {
@@ -146,35 +153,35 @@ int main(int argc, char **argv) {
     assert(!sends && !wheel_bench_request_count);
     arm(300); wheel_bench_button(400,0); wheel_bench_button(450,0);
     wheel_bench_button(500,1); wheel_bench_button(550,1); wheel_bench_tick(550);
-    assert(!sends && wheel_bench_state==BENCH_ARMED); /* normal ARM no button */
+    assert(sends==1 && wheel_bench_state==BENCH_ARMED); /* normal ARM no button */
   } else if (test == 18) {
     wheel_bench_button(0,1); wheel_bench_button(50,1);
     wheel_bench_request=BENCH_ARM_BUTTON; wheel_bench_tick(100);
-    wheel_bench_button(200,1); wheel_bench_tick(200); assert(!sends);
+    wheel_bench_button(200,1); wheel_bench_tick(200); assert(sends==1);
     wheel_bench_button(300,0); wheel_bench_button(350,0);
     wheel_bench_button(400,1); wheel_bench_button(449,1); wheel_bench_tick(449);
-    assert(!sends);
+    assert(sends==1);
     wheel_bench_button(450,1); wheel_bench_tick(450);
-    assert(sends==1 && id==0x84 && wheel_bench_state==BENCH_RUNNING);
-    wheel_bench_button(500,1); wheel_bench_tick(500); assert(sends==1);
+    assert(sends==2 && id==0x84 && wheel_bench_state==BENCH_RUNNING);
+    wheel_bench_button(500,1); wheel_bench_tick(500); assert(sends==2);
     wheel_bench_tick(1450); complete_stop(1450);
     wheel_bench_button(2000,0); wheel_bench_button(2050,0);
     wheel_bench_button(2100,1); wheel_bench_button(2150,1); wheel_bench_tick(2150);
-    assert(sends==4 && wheel_bench_state==BENCH_IDLE); /* no repeat */
+    assert(sends==5 && wheel_bench_state==BENCH_IDLE); /* no repeat */
   } else if (test == 19) {
     wheel_bench_request=BENCH_ARM_BUTTON; wheel_bench_tick(0);
     wheel_bench_tick(59999); assert(wheel_bench_state==BENCH_ARMED);
     wheel_bench_tick(60000); assert(wheel_bench_state==BENCH_IDLE);
     wheel_bench_button(60001,0); wheel_bench_button(60100,1);
-    wheel_bench_button(60150,1); wheel_bench_tick(60150); assert(!sends);
+    wheel_bench_button(60150,1); wheel_bench_tick(60150); assert(sends==1);
   } else if (test == 20) {
     wheel_bench_request=BENCH_ARM_BUTTON; wheel_bench_tick(0);
     wheel_bench_button(100,0);
     wheel_bench_button(110,1); wheel_bench_button(120,0); /* bounce */
     wheel_bench_button(130,1); wheel_bench_button(179,1);
-    wheel_bench_tick(179); assert(!sends);
+    wheel_bench_tick(179); assert(sends==1);
     wheel_bench_wheel=8; wheel_bench_button(180,1); wheel_bench_tick(180);
-    assert(!sends && wheel_bench_state==BENCH_IDLE && wheel_bench_result==4);
+    assert(sends==1 && wheel_bench_state==BENCH_IDLE && wheel_bench_result==4);
   } else if (test == 21) {
     /* Startup-held button must not arm, regardless of duration. */
     wheel_bench_button(0,1); wheel_bench_button(5000,1); wheel_bench_tick(5000);
@@ -224,12 +231,13 @@ int main(int argc, char **argv) {
     assert(sends==2 && id==0x82);
     assert(payload[0]==100 && payload[1]==0 && payload[2]==0xf4 && payload[3]==1);
   } else if (test == 25) {
-    /* SW reverse follows the configured speed (signed payload). */
+    /* SW reverse follows the configured speed, rover-frame mirrored to +100. */
     wheel_bench_speed_rpm = 100;
     wheel_bench_wheel = 4; wheel_bench_direction = -1;
-    arm(0); run(1);
-    assert(sends==1 && id==0x84);
-    assert(payload[0]==0x9c && payload[1]==0xff && payload[2]==0xf4 && payload[3]==1);
+    arm(0); assert(sends==1 && id==0x404);
+    run(1);
+    assert(sends==2 && id==0x84);
+    assert(payload[0]==100 && payload[1]==0 && payload[2]==0xf4 && payload[3]==1);
   } else if (test == 26) {
     /* Below-range clamps to 10 RPM. */
     wheel_bench_speed_rpm = 5;
@@ -272,6 +280,54 @@ int main(int argc, char **argv) {
     run(1);
     assert(sends==2 && id==0x81 && wheel_bench_run_count==1);
     assert(payload[0]==0xc8 && payload[1]==0 && payload[2]==0xf4 && payload[3]==1);
+  } else if (test == 31) {
+    /* Tier-1 ESC mirror: parse/store selected NE/SE replies, ignore others. */
+    uint8_t d[8] = {0xC9, 0x00, 0x06, 0x05, 0x01, 0, 0, 0};
+    wheel_bench_tick(0);
+    assert(wheel_bench_esc_age_ms == 0xFFFFFFFFU); /* never */
+    wheel_bench_wheel = 1;
+    wheel_bench_esc_rx(0x281U, d, 100);
+    assert(wheel_bench_esc_rpm == 201 && wheel_bench_esc_state == 6);
+    assert(wheel_bench_esc_age_ms == 0);
+    wheel_bench_tick(700);
+    assert(wheel_bench_esc_age_ms == 600);
+    d[0] = 0x1E; d[2] = 0;
+    wheel_bench_esc_rx(0x282U, d, 800); /* SE while NE selected */
+    assert(wheel_bench_esc_rpm == 201);
+    wheel_bench_wheel = 2;
+    wheel_bench_esc_rx(0x282U, d, 900);
+    assert(wheel_bench_esc_rpm == 30 && wheel_bench_esc_state == 0);
+    wheel_bench_wheel = 4;
+    wheel_bench_esc_rx(0x284U, d, 1000); /* SW never stored */
+    assert(wheel_bench_esc_rpm == 30);
+    assert(sends == 0); /* RX never transmits */
+  } else if (test == 32) {
+    /* poll_due: NE/SE only, 500 ms rate, never while STOPPING/pending. */
+    assert(wheel_bench_esc_poll_due(1000) == 0); /* wheel=4 default */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    assert(wheel_bench_esc_poll_due(0) == 0); /* boot guard */
+    assert(wheel_bench_esc_poll_due(499) == 0);
+    assert(wheel_bench_esc_poll_due(500) == 0x101);
+    assert(wheel_bench_esc_poll_due(600) == 0); /* 500 ms rate */
+    assert(wheel_bench_esc_poll_due(1000) == 0x101);
+    assert(sends == 0); /* poll_due never transmits itself */
+    arm(1100); /* pending ARM blocks polling */
+    assert(wheel_bench_esc_poll_due(2000) == 0);
+    wheel_bench_tick(2100); /* completes ARM */
+    assert(wheel_bench_state == BENCH_ARMED);
+    assert(wheel_bench_esc_poll_due(2100) == 0x101);
+    wheel_bench_request = BENCH_STOP; wheel_bench_tick(2200);
+    assert(wheel_bench_state == BENCH_STOPPING);
+    assert(wheel_bench_esc_poll_due(5000) == 0); /* STOP owns the bus */
+  } else if (test == 33) {
+    /* Faulted bench still mirrors (no drive TX to delay); silence != zero. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    fail_send = 1;
+    wheel_bench_request = BENCH_STOP; wheel_bench_tick(0);
+    wheel_bench_tick(50); wheel_bench_tick(100);
+    assert(wheel_bench_state == BENCH_FAULT);
+    assert(wheel_bench_esc_poll_due(1000) == 0x101);
+    assert(wheel_bench_esc_age_ms == 0xFFFFFFFFU);
   }
   return 0;
 }
@@ -288,6 +344,6 @@ with tempfile.TemporaryDirectory(prefix='wheel-bench-tests-', dir='/tmp/opencode
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-I', str(root / 'CM7/Core/Inc'), str(tmp / 'test.c'),
                     str(root / 'CM7/Core/Src/wheel_bench.c'), '-o', str(tmp / 'test')], check=True)
-    for case in range(31):
+    for case in range(34):
         subprocess.run([str(tmp / 'test'), str(case)], check=True)
-print('PASS: 31 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select')
+print('PASS: 34 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select, ESC mirror')

@@ -10,6 +10,11 @@ volatile int32_t wheel_bench_speed_rpm = 0; /* 0 = per-selection default. */
 volatile uint32_t wheel_bench_last_request = 0, wheel_bench_request_count = 0;
 volatile uint32_t wheel_bench_tx_count = 0, wheel_bench_tx_ack_count = 0;
 volatile uint32_t wheel_bench_first_fault = 0, wheel_bench_first_fault_tick = 0;
+/* Tier-1 ESC mirror. See header. 0xFFFFFFFF age = no reply stored yet. */
+volatile int32_t wheel_bench_esc_rpm = 0;
+volatile uint32_t wheel_bench_esc_state = 0, wheel_bench_esc_age_ms = 0xFFFFFFFFU;
+static uint32_t esc_last_tick, esc_poll_tick;
+static uint8_t esc_valid;
 static uint32_t selected, started, armed_tick, pending_tick;
 static uint32_t last_stop, quiet_tick, stop_count;
 static int32_t direction;
@@ -86,9 +91,46 @@ static void stop(uint32_t now)
   wheel_bench_state = BENCH_STOPPING;
 }
 
+void wheel_bench_esc_rx(uint32_t id, const uint8_t data[8], uint32_t now)
+{
+  uint32_t wheel = id & 0x0FU;
+  uint16_t bits;
+  /* Only the RPM2-profile wheels answer today; store only the currently
+   * selected wheel so the single slot never shows another wheel's data.
+   * The TUI displays this slot only for the selected wheel. */
+  if ((wheel != 1U && wheel != 2U) || wheel != wheel_bench_wheel) return;
+  bits = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+  wheel_bench_esc_rpm = (bits & 0x8000U) != 0U ? (int32_t)bits - 65536 : (int32_t)bits;
+  wheel_bench_esc_state = data[2];
+  esc_last_tick = now;
+  esc_valid = 1;
+  wheel_bench_esc_age_ms = 0;
+}
+
+uint32_t wheel_bench_esc_poll_due(uint32_t now)
+{
+  uint32_t wheel = wheel_bench_wheel;
+  if (wheel != 1U && wheel != 2U) return 0;
+  /* Never during STOPPING: the STOP broadcast owns the bus then. FAULT is
+   * fine (no drive TX can be in flight that a poll could delay). */
+  if (wheel_bench_state == BENCH_STOPPING) return 0;
+  if (pending) return 0;
+  if (esc_poll_tick != 0U) {
+    if ((uint32_t)(now - esc_poll_tick) < 500U) return 0;
+  } else if (now < 500U) return 0; /* First poll 500 ms after boot. */
+  esc_poll_tick = now;
+  return 0x100U | wheel;
+}
+
 void wheel_bench_tick(uint32_t now)
 {
   uint32_t request = wheel_bench_request;
+  /* Age the ESC mirror every pass, including STOPPING/FAULT drains. */
+  if (!esc_valid) wheel_bench_esc_age_ms = 0xFFFFFFFFU;
+  else {
+    uint32_t age = now - esc_last_tick;
+    wheel_bench_esc_age_ms = age > 0xFFFFFFFEU ? 0xFFFFFFFEU : age;
+  }
   wheel_bench_request = 0; /* Consume each trigger once, never retry a RUN. */
   if (request != 0U) {
     wheel_bench_last_request = request;
@@ -140,17 +182,20 @@ void wheel_bench_tick(uint32_t now)
   if (request == BENCH_ARM || request == BENCH_ARM_BUTTON) {
     uint32_t bit = selection_bit(wheel_bench_wheel, wheel_bench_direction);
     if (wheel_bench_state == BENCH_IDLE && !pending && !faulted && bit &&
-        (!quiet || (uint32_t)(now - quiet_tick) >= 500U)) {
+        /* 250 ms re-ARM quiet (was 500). The 3-frame STOP drain (~150 ms)
+         * completes before quiet starts, so no ARM/STOP race; the ESC still
+         * demands standstill/IDLE before RUN, now visible in the esc row. */
+        (!quiet || (uint32_t)(now - quiet_tick) >= 250U)) {
       selected = wheel_bench_wheel;
       direction = wheel_bench_direction;
       armed_tick = now;
       arm_window = request == BENCH_ARM_BUTTON ? 60000U : 5000U;
       button_permission = request == BENCH_ARM_BUTTON;
       button_released = 0;
-      /* NE/SE target guarded RPM2 profiles in either direction: transmit
-       * CAN ARM (ID 0x401/0x403, RPM2 magic) so a single-cable Nucleo can
-       * arm the ESC. Other selections arm locally with no bus traffic. */
-      if (selected == 1U || selected == 2U) {
+      /* All wheels target guarded RPM2 profiles in either direction: transmit
+       * CAN ARM (ID 0x401/0x402/0x404/0x408, RPM2 magic) so a single-cable
+       * Nucleo can arm the ESC. Selections are pre-gated by selection_bit. */
+      {
         const uint8_t arm_data[4] = {0x32U, 0x4DU, 0x50U, 0x52U};
         if (wheel_bench_send(0x400U | selected, arm_data)) {
           ++wheel_bench_tx_count;
@@ -163,9 +208,6 @@ void wheel_bench_tick(uint32_t now)
         } else {
           wheel_bench_result = 4;
         }
-      } else {
-        wheel_bench_state = BENCH_ARMED;
-        wheel_bench_result = 1;
       }
     } else wheel_bench_result = 4;
   } else if (request == BENCH_RUN) {
@@ -193,6 +235,13 @@ void wheel_bench_tick(uint32_t now)
         if (mag > 150) mag = 150;
         rpm = direction > 0 ? (int16_t)mag : (int16_t)-mag;
       }
+      /* Rover-frame convention: + means rover-forward on every wheel. The
+       * left-side wheels (SW/NW, mirrored mounts) spin the same shaft
+       * direction as the right side for a given command, which rolls the
+       * rover the opposite way — so mirror their command sign here. ESC
+       * images stay identical across wheels; direct (STLINK) pulses remain
+       * shaft-frame and are NOT mirrored. */
+      if (selected == 4U || selected == 8U) rpm = (int16_t)-rpm;
       uint16_t bits = (uint16_t)rpm;
       uint8_t data[4] = {(uint8_t)bits, (uint8_t)(bits >> 8), 0xF4, 0x01};
       started = now;

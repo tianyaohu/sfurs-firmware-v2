@@ -346,6 +346,26 @@ Error_Handler();
     if (WHEEL_BENCH_MODE != 0U && FWU_BLINK_BENCH_ONLY == 0U) {
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
       wheel_bench_tick(now);
+      /* Tier-1 ESC state poll: one 4-byte SPEED_READ every 500 ms, only when
+       * the bench owns no TX (poll_due checks selection/state/pending) and
+       * never via wheel_bench_send, so ARM/RUN/STOP tracking is untouched.
+       * Fire-and-forget: no retry, no counters, never delays STOP. */
+      {
+        uint32_t esc_poll_id = wheel_bench_esc_poll_due(now);
+        if (esc_poll_id != 0U) {
+          FDCAN_TxHeaderTypeDef esc_header = {0};
+          uint8_t esc_data[4] = {0};
+          esc_header.Identifier = esc_poll_id;
+          esc_header.IdType = FDCAN_STANDARD_ID;
+          esc_header.TxFrameType = FDCAN_DATA_FRAME;
+          esc_header.DataLength = FDCAN_DLC_BYTES_4;
+          esc_header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+          esc_header.BitRateSwitch = FDCAN_BRS_OFF;
+          esc_header.FDFormat = FDCAN_FD_CAN;
+          esc_header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+          (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &esc_header, esc_data);
+        }
+      }
     }
     /* CAL1 sender pump. can_cal_request boots 0 (debugger-only, consumed
      * once inside); refused unless the bench is IDLE, so this sends
@@ -656,6 +676,10 @@ Error_Handler();
       }
       /* P4: FWU target ACKs (0x680|dev). Live dispatch, but the host
        * session ignores them unless a transfer was explicitly started. */
+      /* Tier-1 ESC mirror: no new filter needed (global filter already
+       * accepts all standard IDs into FIFO0) and no interrupts; the reply
+       * is captured in the same bounded polling pass. Only NE/SE (the
+       * RPM2-profile wheels) are stored, gated on the current selection. */
       if (can_rx_header.IdType == FDCAN_STANDARD_ID &&
           can_rx_header.RxFrameType == FDCAN_DATA_FRAME &&
           can_rx_header.FDFormat == FDCAN_FD_CAN &&
@@ -686,6 +710,16 @@ Error_Handler();
           can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
                            can_rx_data, now);
         }
+      }
+      if (can_rx_header.IdType == FDCAN_STANDARD_ID &&
+          can_rx_header.RxFrameType == FDCAN_DATA_FRAME &&
+          can_rx_header.FDFormat == FDCAN_FD_CAN &&
+          can_rx_header.BitRateSwitch == FDCAN_BRS_OFF &&
+          (can_rx_header.Identifier == 0x281U ||
+           can_rx_header.Identifier == 0x282U) &&
+          can_rx_header.DataLength == FDCAN_DLC_BYTES_8)
+      {
+        wheel_bench_esc_rx(can_rx_header.Identifier, can_rx_data, now);
       }
       last_can_rx_tick = now;
       if (can_activity_seen == 0U)

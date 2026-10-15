@@ -108,8 +108,46 @@ static void send(uint32_t id, int16_t rpm, uint16_t ms) {
   command();
 }
 int main(void) {
+#if ESC_TEST_AUTO_CAL_ON_ARM
   reset(); test_calibration_valid = 0; test_calibration_result = 0; offsets_ready = false;
-  send(TEST_ARM | 1, 0x5354, 0x5445); assert(!test_drive_armed);
+  tick = 23; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && test_calibration_result == 1 && calibrations == 1 && !starts);
+  assert(state == OFFSET_CALIB);
+  send(SPEED_WRITE | 1, 60, 1000); assert(!starts && !test_drive_active);
+  test_direct_request = 0x4452554E; TestDirectService(); assert(!starts && test_direct_result == 2);
+  send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && calibrations == 1 && test_calibration_result == 1);
+  current_faults = 4; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && calibrations == 1 && test_calibration_result == 1);
+  current_faults = 0;
+  test_drive_active = 1; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && calibrations == 1 && test_calibration_result == 1);
+  test_drive_active = 0;
+  state = 1; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && calibrations == 1 && test_calibration_result == 1);
+  reset(); test_calibration_valid = 0; test_calibration_result = 0; offsets_ready = false;
+  current_faults = 4; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && calibrations == 0 && test_calibration_result == 0);
+  current_faults = 0;
+  test_drive_active = 1; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && calibrations == 0 && test_calibration_result == 0);
+  test_drive_active = 0; state = 1; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && calibrations == 0 && test_calibration_result == 0);
+  state = IDLE;
+  reset(); test_calibration_valid = 0; test_calibration_result = 0; offsets_ready = false;
+  tick = 40; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(test_calibration_result == 1 && !test_drive_armed);
+  state = IDLE; offsets_ready = true;
+  TestDriveSafetyTick(); TestCalibrationService();
+  assert(test_calibration_valid && test_calibration_result == 2 && !starts && !test_drive_active);
+  tick = 41; send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(test_drive_armed == 0x54455354U && test_drive_arm_tick == 41);
+#else
+  reset(); test_calibration_valid = 0; test_calibration_result = 0; offsets_ready = false;
+  send(TEST_ARM | 1, 0x5354, 0x5445);
+  assert(!test_drive_armed && test_calibration_result == 0 && calibrations == 0 && !starts);
+#endif
+  reset(); test_calibration_valid = 0; test_calibration_result = 0; offsets_ready = false;
   test_drive_armed = 0x54455354U;
   send(SPEED_WRITE | 1, 60, 1000); assert(!starts);
   test_drive_armed = 0;
@@ -187,10 +225,12 @@ with tempfile.TemporaryDirectory(prefix='esc-guard-tests-', dir='/tmp/opencode')
     folder = pathlib.Path(folder)
     c_file = folder / 'test.c'
     c_file.write_text(harness)
-    binary = folder / 'test'
-    subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
-                    '-I' + str(root.parent.parent / 'common/CAN'),
-                    '-I' + str(root / 'Inc'),
-                    str(c_file), '-o', str(binary)], check=True)
-    subprocess.run([str(binary)], check=True)
-print('PASS: explicit arming, fault gates, command bounds, run counter, stop, current guard and tick wrap')
+    for extra in ([], ['-DESC_TEST_AUTO_CAL_ON_ARM=0']):
+        binary = folder / ('test-optout' if extra else 'test')
+        subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+                        *extra,
+                        '-I' + str(root.parent.parent / 'common/CAN'),
+                        '-I' + str(root / 'Inc'),
+                        str(c_file), '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+print('PASS: explicit arming, auto-CAL pending/done + opt-out hard-reject, fault gates, command bounds, run counter, stop, current guard and tick wrap')

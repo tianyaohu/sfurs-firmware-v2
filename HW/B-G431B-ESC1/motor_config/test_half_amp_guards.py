@@ -62,14 +62,36 @@ int main(void) {
   tick=ESC_TEST_TIMEOUT_MS-501; TestDriveSafetyTick(); assert(!stops);
   tick=ESC_TEST_TIMEOUT_MS-500; TestDriveSafetyTick(); assert(stops==1);
   reset(); arm(); tick=5000; TestDriveSafetyTick(); assert(!test_drive_armed);
+#if ESC_TEST_AUTO_CAL_ON_ARM
+  reset(); test_calibration_valid=0; test_calibration_result=0; offsets_ready=false;
+  arm(); assert(!test_drive_armed && !starts && test_calibration_result==1 && calibrations==1);
+  send(ESC_TEST_TORQUE_COMMAND | 1, 272, 200); assert(!starts && !test_drive_active);
+  test_direct_request=0x4452554E; TestDirectService(); assert(!starts && test_direct_result==2);
+  current_faults=4; arm(); assert(!test_drive_armed && calibrations==1); current_faults=0;
+  test_drive_active=1; arm(); assert(!test_drive_armed && calibrations==1); test_drive_active=0;
+  state=1; arm(); assert(!test_drive_armed && calibrations==1 && test_calibration_result==1);
+  state=IDLE; offsets_ready=true; TestDriveSafetyTick(); TestCalibrationService();
+  assert(test_calibration_valid && test_calibration_result==2 && !starts);
+  arm(); assert(test_drive_armed==ESC_TEST_ARM_MAGIC);
+  reset();
+#else
   reset(); test_calibration_valid=0; test_calibration_result=0;
-  arm(); assert(!test_drive_armed && !starts);
+  arm(); assert(!test_drive_armed && !starts && test_calibration_result==0 && calibrations==0);
+#endif
   reset(); TestDirectService(); assert(!starts && !test_drive_armed);
   test_direct_request=0x4452554E; TestDirectService();
   assert(!starts && test_direct_result==2 && !test_drive_run_count);
   test_direct_request=0x12345678; TestDirectService(); assert(!starts && test_direct_result==2);
+#if ESC_TEST_AUTO_CAL_ON_ARM
+  test_calibration_valid=0; offsets_ready=false;
+  test_direct_request=0x4441524D; TestDirectService();
+  assert(!test_drive_armed && test_direct_result==2 && test_calibration_result==1);
+  state=IDLE; offsets_ready=true; TestDriveSafetyTick(); TestCalibrationService();
+  assert(test_calibration_valid && test_calibration_result==2 && !starts);
+#else
   test_calibration_valid=0; test_direct_request=0x4441524D; TestDirectService();
   assert(!test_drive_armed && test_direct_result==2);
+#endif
   test_calibration_valid=1; current_faults=4;
   test_direct_request=0x4441524D; TestDirectService(); assert(!test_drive_armed);
   current_faults=0; test_direct_request=0x4441524D; TestDirectService();
@@ -92,9 +114,11 @@ int main(void) {
 with tempfile.TemporaryDirectory(prefix='half-amp-tests-', dir='/tmp/opencode') as tmp:
     tmp = pathlib.Path(tmp)
     (tmp / 'test.c').write_text(harness)
-    subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
-                    '-DESC_HALF_AMP_DIAGNOSTIC', '-I' + str(root / 'Inc'),
-                    '-I' + str(root.parent.parent / 'common/CAN'),
-                    str(tmp / 'test.c'), '-o', str(tmp / 'test')], check=True)
-    subprocess.run([str(tmp / 'test')], check=True)
-print('PASS: half-amp torque bounds, legacy rejection, run counter, calibration/fault/current/speed/time guards')
+    for extra in ([], ['-DESC_TEST_AUTO_CAL_ON_ARM=0']):
+        binary = tmp / ('test-optout' if extra else 'test')
+        subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+                        '-DESC_HALF_AMP_DIAGNOSTIC', *extra, '-I' + str(root / 'Inc'),
+                        '-I' + str(root.parent.parent / 'common/CAN'),
+                        str(tmp / 'test.c'), '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+print('PASS: half-amp torque bounds, auto-CAL pending/done + opt-out hard-reject, legacy rejection, run counter, calibration/fault/current/speed/time guards')

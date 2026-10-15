@@ -27,7 +27,24 @@ int main(void) {
   send(ESC_TEST_TORQUE_COMMAND | 1, 816, 200); assert(!starts);
   reset(); direct(0x4452554e); assert(!starts && test_direct_result == 2);
   direct(0x12345678); assert(!starts && test_direct_result == 2);
-  test_calibration_valid = 0; direct(0x4441524d); assert(!test_drive_armed);
+#if ESC_TEST_AUTO_CAL_ON_ARM
+  reset(); test_calibration_valid=0; test_calibration_result=0; offsets_ready=false;
+  direct(0x4441524d);
+  assert(!test_drive_armed && test_direct_result==2 && test_calibration_result==1 && calibrations==1 && !starts);
+  direct(0x4452554e); assert(!starts && !test_drive_active);
+  current_faults=4; direct(0x4441524d); assert(!test_drive_armed && calibrations==1); current_faults=0;
+  test_drive_active=1; direct(0x4441524d); assert(!test_drive_armed && calibrations==1); test_drive_active=0;
+  state=1; direct(0x4441524d); assert(!test_drive_armed && calibrations==1 && test_calibration_result==1);
+  state=IDLE; offsets_ready=true; TestDriveSafetyTick(); TestCalibrationService();
+  assert(test_calibration_valid && test_calibration_result==2 && !starts);
+  direct(0x4441524d); assert(test_drive_armed==ESC_TEST_ARM_MAGIC && test_direct_result==1);
+  reset();
+#else
+  reset(); test_calibration_valid=0; test_calibration_result=0; offsets_ready=false;
+  direct(0x4441524d);
+  assert(!test_drive_armed && test_direct_result==2 && test_calibration_result==0 && calibrations==0);
+  reset();
+#endif
   test_calibration_valid = 1; current_faults = 4;
   direct(0x4441524d); assert(!test_drive_armed);
   current_faults = 0; start(); direct(0x4452554e); assert(starts == 1);
@@ -83,9 +100,11 @@ int main(void) {
 with tempfile.TemporaryDirectory(prefix='rpm-tests-', dir='/tmp/opencode') as tmp:
     tmp = pathlib.Path(tmp)
     (tmp / 'test.c').write_text(harness)
-    subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
-                    '-DESC_RPM_DIAGNOSTIC', '-I' + str(root / 'Inc'),
-                    '-I' + str(root.parent.parent / 'common/CAN'),
-                    str(tmp / 'test.c'), '-o', str(tmp / 'test')], check=True)
-    subprocess.run([str(tmp / 'test')], check=True)
-print('PASS: fixed 60 RPM, 3 A reference, 10-second timeout, Hall counts/stall/invalid transitions, run counter and safety gates')
+    for extra in ([], ['-DESC_TEST_AUTO_CAL_ON_ARM=0']):
+        binary = tmp / ('test-optout' if extra else 'test')
+        subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+                        '-DESC_RPM_DIAGNOSTIC', *extra, '-I' + str(root / 'Inc'),
+                        '-I' + str(root.parent.parent / 'common/CAN'),
+                        str(tmp / 'test.c'), '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+print('PASS: fixed 60 RPM, auto-CAL pending/done + opt-out hard-reject, 3 A reference, 10-second timeout, Hall counts/stall/invalid transitions, run counter and safety gates')

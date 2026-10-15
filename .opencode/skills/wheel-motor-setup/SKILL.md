@@ -49,6 +49,21 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
 7. **Reload the Nucleo sender after any sender change** before blaming an ESC
    (see RCA below). Keep ESC `esc-backups/` dumps + JSON sidecars before
    overwriting any unknown flash (full 128 KiB via CLI `-u ADDR SIZE FILE`).
+8. **No per-wheel special cases in shared paths — audit all layers per wheel.**
+   Proving wheel X works proves nothing about wheel Y: shared code with
+   per-wheel gates fails per-wheel, silently (good ACKs, no motion). When
+   enabling a wheel, adding a command, or touching anything addressed per
+   wheel, grep every layer for existing wheel IDs and confirm each handles
+   the new one: sender TX (`wheel_bench.c` ARM/RUN/STOP construction),
+   sender RX/mirror gates, TUI wheel map + display gates
+   (`keyboard_spin.py`), host-test coverage (`tests/test_wheel_bench.py`
+   must exercise all 4 wheels for every sender behavior), ESC CAN ID +
+   filter (`motor_controller_can.h`, `MOTOR_<WHEEL>_CAN_ID`). After ANY
+   sender change affecting addressing, re-prove motion on ALL commissioned
+   wheels, not just the one under test. A gate with no else-alarm
+   (e.g. `if wheel==1||wheel==2` silently skipping) is a bug — prefer
+   unconditional shared paths, pre-gated once by a validator
+   (`selection_bit`).
 
 ## Per-wheel bring-up playbook
 
@@ -59,6 +74,8 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
    flash, CAL, direct -100 stability check (count-stop, no runaway).
 5. Cable to Nucleo (battery ON). TUI wheel key, hold SPACE: motion = CAN OK.
 6. Log the run in `REVERSE_SPEED_VALIDATION.md` (firmware-v2, motor-testing).
+7. After any sender/TUI change: re-prove motion on ALL commissioned wheels
+   (rule 8) — never just the wheel under test.
 
 ## Reading RPM
 
@@ -73,6 +90,18 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
   armed locally, speed frames hit an unarmed ESC, declined silently with
   healthy ACKs. Fix was reflashing the Nucleo; SE ELF disassembly had already
   proven its ID2 constants correct. Lesson: suspect the sender first.
+- **SW CAN silence (2026-10-15):** SAME pattern, one wheel later. Sender
+  transmitted CAN ARM only for wheels 1/2 (`if selected==1||selected==2`,
+  else "arm locally"); SW speed frames (`0x084`) hit an unarmed ESC while
+  the TUI showed `RUNNING` on good `tx/ack`. Direct DARM→DRUN worked, which
+  isolated it to the CAN ARM path. Fix: unconditional CAN ARM for all
+  selections (pre-gated by `selection_bit`), host tests extended to assert
+  ARM+RUN frames for all 4 wheels, Nucleo reflashed. Lesson: the SE fix
+  covered the instance, not the pattern — see rule 8.
+- **NW near-miss (2026-10-15):** same gate would have dropped NW (`0x408`)
+  identically; caught by auditing all layers for wheel-ID gates instead of
+  waiting for hardware symptoms. NW still needs full bring-up (unknown
+  flash), but the sender path is proven by host tests for wheel 8.
 - **Ghost no-motion after cable moves:** CAL wiped by replug (all-zero
   gate words). Recalibrate; do not re-tune.
 - **First-after-power-on CAL transient:** retry works; persistent reject →

@@ -68,15 +68,13 @@ int main(int argc, char **argv) {
     assert(payload[2]==0xf4 && payload[3]==1);
     assert(wheel_bench_run_count == 1);
     run(2); assert(sends==((index<=3) ? 2 : 1)); /* no RUN while RUNNING */
-    if (index<=3) {
-      wheel_bench_tick(14000); assert(sends==2);
-      wheel_bench_tick(15001); assert(sends==3 && id==0x78f);
-    } else {
-      wheel_bench_tick(1000); assert(sends==1);
-      wheel_bench_tick(1001); assert(sends==2 && id==0x78f);
-    }
+    /* No auto-stop: RUNNING persists until an explicit BENCH_STOP. */
+    wheel_bench_tick(30000);
+    assert(sends==((index<=3) ? 2 : 1) && wheel_bench_state==BENCH_RUNNING);
+    wheel_bench_request=BENCH_STOP; wheel_bench_tick(30001);
+    assert(id==0x78f);
     assert(!payload[0] && !payload[1] && !payload[2] && !payload[3]);
-    complete_stop((index<=3) ? 15001 : 1001);
+    complete_stop(30001);
     if (index<=3) {
       assert(sends==5 && wheel_bench_state==BENCH_IDLE && wheel_bench_result==3);
       assert(wheel_bench_tx_count==5 && wheel_bench_tx_ack_count==5);
@@ -84,19 +82,17 @@ int main(int argc, char **argv) {
       assert(sends==4 && wheel_bench_state==BENCH_IDLE && wheel_bench_result==3);
       assert(wheel_bench_tx_count==4 && wheel_bench_tx_ack_count==4);
     }
-    arm(4000); assert(wheel_bench_state==BENCH_ARMED && wheel_bench_result==1); /* repeat, no reset */
-    run(4001); assert(sends==((index<=3) ? 7 : 5) && wheel_bench_run_count==2);
+    arm(31000); assert(wheel_bench_state==BENCH_ARMED && wheel_bench_result==1); /* repeat, no reset */
+    run(31001); assert(sends==((index<=3) ? 7 : 5) && wheel_bench_run_count==2);
+    wheel_bench_request=BENCH_STOP; wheel_bench_tick(31002);
+    complete_stop(31002);
     if (index<=3) {
-      wheel_bench_tick(19001); assert(sends==8 && id==0x78f);
-      complete_stop(19001); assert(sends==10 && wheel_bench_state==BENCH_IDLE);
-      arm(19603); assert(wheel_bench_result==4); /* cooldown */
-      arm(19604); assert(wheel_bench_state==BENCH_ARMED);
+      assert(sends==10 && wheel_bench_state==BENCH_IDLE);
     } else {
-      wheel_bench_tick(5001); assert(sends==6 && id==0x78f);
-      complete_stop(5001); assert(sends==8 && wheel_bench_state==BENCH_IDLE);
-      arm(5603); assert(wheel_bench_result==4); /* cooldown */
-      arm(5604); assert(wheel_bench_state==BENCH_ARMED);
+      assert(sends==8 && wheel_bench_state==BENCH_IDLE);
     }
+    arm(31604); assert(wheel_bench_result==4); /* cooldown */
+    arm(31605); assert(wheel_bench_state==BENCH_ARMED);
   } else if (test == 10) {
     arm(0); wheel_bench_tick(5000); run(5001);
     assert(!sends && wheel_bench_state==BENCH_IDLE);
@@ -123,7 +119,15 @@ int main(int argc, char **argv) {
   } else if (test == 14) {
     arm(0xfffffff0U); run(0xfffffff1U);
     wheel_bench_tick(984); assert(id==(0x80|4));
-    wheel_bench_tick(985); assert(id==0x78f);
+    /* No auto-stop across the 32-bit wrap; explicit BENCH_STOP ends it. */
+    wheel_bench_tick(0xFFFFFFFFU);
+    assert(sends==1 && wheel_bench_state==BENCH_RUNNING);
+    wheel_bench_tick(0U);
+    assert(sends==1 && wheel_bench_state==BENCH_RUNNING);
+    wheel_bench_request=BENCH_STOP; wheel_bench_tick(1);
+    assert(id==0x78f);
+    complete_stop(1);
+    assert(sends==4 && wheel_bench_state==BENCH_IDLE);
   } else if (test == 15) {
     wheel_bench_request=BENCH_STOP; wheel_bench_tick(0);
     complete_stop(0); assert(sends==3 && wheel_bench_state==BENCH_IDLE);
@@ -157,7 +161,11 @@ int main(int argc, char **argv) {
     wheel_bench_button(450,1); wheel_bench_tick(450);
     assert(sends==1 && id==0x84 && wheel_bench_state==BENCH_RUNNING);
     wheel_bench_button(500,1); wheel_bench_tick(500); assert(sends==1);
-    wheel_bench_tick(1450); complete_stop(1450);
+    /* Hold does not auto-stop; release path sends STOP explicitly below. */
+    wheel_bench_tick(1450);
+    assert(sends==1 && wheel_bench_state==BENCH_RUNNING);
+    wheel_bench_request=BENCH_STOP; wheel_bench_tick(1451);
+    complete_stop(1451);
     wheel_bench_button(2000,0); wheel_bench_button(2050,0);
     wheel_bench_button(2100,1); wheel_bench_button(2150,1); wheel_bench_tick(2150);
     assert(sends==4 && wheel_bench_state==BENCH_IDLE); /* no repeat */
@@ -189,7 +197,10 @@ int main(int argc, char **argv) {
     wheel_bench_button(8100,0); wheel_bench_button(8150,0);
     wheel_bench_button(8200,1); wheel_bench_button(8250,1); wheel_bench_tick(8250);
     assert(sends==2 && id==0x81 && payload[0]==30 && wheel_bench_run_count==1);
-    wheel_bench_tick(23250); complete_stop(23250);
+    wheel_bench_tick(23250);
+    assert(sends==2 && wheel_bench_state==BENCH_RUNNING);
+    wheel_bench_request=BENCH_STOP; wheel_bench_tick(23251);
+    complete_stop(23251);
     assert(sends==5 && wheel_bench_state==BENCH_IDLE);
     wheel_bench_button(24000,0); wheel_bench_button(24050,0);
     wheel_bench_button(24100,1); wheel_bench_button(26100,1); wheel_bench_tick(26100);
@@ -197,7 +208,8 @@ int main(int argc, char **argv) {
     wheel_bench_button(26200,0); wheel_bench_button(26250,0);
     wheel_bench_button(26300,1); wheel_bench_button(26350,1); wheel_bench_tick(26350);
     assert(sends==7 && id==0x81 && wheel_bench_run_count==2);
-    wheel_bench_tick(41350); complete_stop(41350);
+    wheel_bench_request=BENCH_STOP; wheel_bench_tick(41351);
+    complete_stop(41351);
     assert(sends==10 && wheel_bench_state==BENCH_IDLE);
   } else if (test == 22) {
     /* Three short presses are neither arming nor RUN. */

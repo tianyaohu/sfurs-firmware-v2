@@ -10,7 +10,7 @@ volatile int32_t wheel_bench_speed_rpm = 0; /* 0 = per-selection default. */
 volatile uint32_t wheel_bench_last_request = 0, wheel_bench_request_count = 0;
 volatile uint32_t wheel_bench_tx_count = 0, wheel_bench_tx_ack_count = 0;
 volatile uint32_t wheel_bench_first_fault = 0, wheel_bench_first_fault_tick = 0;
-static uint32_t selected, started, armed_tick, pending_tick;
+static uint32_t selected, armed_tick, pending_tick;
 static uint32_t last_stop, quiet_tick, stop_count;
 static int32_t direction;
 static uint8_t pending, pending_stop, pending_arm, faulted, quiet;
@@ -128,9 +128,6 @@ void wheel_bench_tick(uint32_t now)
     }
   }
 
-  if (wheel_bench_state == BENCH_RUNNING &&
-      (uint32_t)(now - started) >=
-      ((selected == 1U || selected == 2U) ? 15000U : 1000U)) stop(now);
   if (wheel_bench_state == BENCH_ARMED &&
       (uint32_t)(now - armed_tick) >= arm_window) {
     wheel_bench_state = BENCH_IDLE;
@@ -195,7 +192,6 @@ void wheel_bench_tick(uint32_t now)
       }
       uint16_t bits = (uint16_t)rpm;
       uint8_t data[4] = {(uint8_t)bits, (uint8_t)(bits >> 8), 0xF4, 0x01};
-      started = now;
       if (wheel_bench_send(0x080U | selected, data)) {
         ++wheel_bench_tx_count;
         pending = 1;

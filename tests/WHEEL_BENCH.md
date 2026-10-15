@@ -1,5 +1,13 @@
 # Original-firmware wheel bench sender
 
+## Run-duration cap removed
+
+RUN no longer auto-stops after 15 s (NE/SE) or 1 s (others); a run holds
+until explicit BENCH_STOP, release-STOP, fault, or reset. Reason: holds in
+the TUI only ever produced ~1 revolution. STOP path (3 attempts ≥50 ms),
+fault latching, one-shot mask, and cooldowns unchanged. Earlier log entries
+below describe behavior with the cap in place.
+
 Prepared offline; installing this ELF does not authorize powering or driving.
 Subsequently flashed to Nucleo `002200364142500620353451` with user-confirmed
 battery disconnected. Download, verification and reset succeeded. HOTPLUG reads

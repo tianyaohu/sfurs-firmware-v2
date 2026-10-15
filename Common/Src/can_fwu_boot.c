@@ -98,7 +98,9 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
     } else {
       page = can_fwu_get_u32(payload, 0);
       n = can_fwu_get_u32(payload, 1);
-      if (n == 0U || page + n > 64U || page + n > b->num_pages + 1U ||
+      /* This protocol erases the complete declared image in one request.
+       * Partial/overflowing ranges must never permit subsequent writes. */
+      if (page != 0U || n != b->num_pages || n == 0U ||
           b->ops.erase == 0) {
         st = CAN_FWU_REJECT;
       } else if (b->ops.erase(page, n, b->ops.ctx) != 0) {
@@ -128,7 +130,7 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
       can_fwu_ack_pack(ack, CAN_FWU_BAD_SEQ, b->expect_seq);
       return 1;
     }
-    if (b->erased_pages == 0U) {
+    if (b->erased_pages == 0U || b->received >= b->img_size) {
       can_fwu_ack_pack(ack, CAN_FWU_REJECT, 0U);
       return 1;
     }

@@ -1,7 +1,9 @@
 #ifndef FWU_TEST_IMAGE_H
 #define FWU_TEST_IMAGE_H
 #include <stdint.h>
-#define FWU_TEST_IMAGE_SIZE 43896U
-#define FWU_TEST_IMAGE_CRC 0x4337AF04U
-extern const uint8_t fwu_test_image[FWU_TEST_IMAGE_SIZE];
+extern const uint32_t fwu_test_image_size;
+extern const uint32_t fwu_test_image_crc;
+#define FWU_TEST_IMAGE_SIZE fwu_test_image_size
+#define FWU_TEST_IMAGE_CRC fwu_test_image_crc
+extern const uint8_t fwu_test_image[];
 #endif

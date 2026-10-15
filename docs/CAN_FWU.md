@@ -1,5 +1,10 @@
 # Over-the-CAN Firmware Update (P2–P6)
 
+**Current bench procedure:** see [CAN_FWU_BLINK_TEST.md](CAN_FWU_BLINK_TEST.md).
+It supersedes the initial layout below: app capacity is now 110KiB with
+one 2KiB validity page, and the embedded test payload is a motor-disabled
+blinker rather than the motor app. Power-loss recovery is not hardware-tested yet.
+
 Host: `NUCLEO-H755ZI-Q` (`sfurs_firmware_v2`, CM7). Target: `B-G431B-ESC1`
 (`STM32G431CB`, 128K flash) in `firmware-v2/.../motor_config` (port pending).
 

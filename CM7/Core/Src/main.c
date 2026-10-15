@@ -34,6 +34,8 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define WHEEL_BENCH_MODE 1U
+#define FWU_RX_DIAGNOSTIC 0U
+#define FWU_BLINK_BENCH_ONLY 1U /* Never emit motor ARM/RUN from this test build. */
 
 /* DUAL_CORE_BOOT_SYNC_SEQUENCE: Define for dual core boot synchronization    */
 /*                             demonstration code based on hardware semaphore */
@@ -96,6 +98,14 @@ volatile uint32_t can_fwu_dev = 1;
 volatile uint32_t can_fwu_result = 0;
 /* Counts received FWU ACK frames (0x680|dev) for LED + SWD diagnosis. */
 volatile uint32_t can_fwu_rx_cnt = 0;
+/* Raw receive snapshot BEFORE application validation. Payload is two LE
+ * words; header: ID, ID type, frame type, FD format, BRS, DLC. */
+volatile uint32_t can_diag_rx[9] = {0};
+/* Debugger one-shot: consume a valid ENTER ACK and queue one ERASE probe.
+ * NE diagnostic firmware rejects ERASE without accessing flash. */
+volatile uint32_t can_diag_advance = 0;
+volatile uint32_t can_diag_erase_reply[3] = {0}; /* seen, status, detail */
+volatile uint32_t can_diag_timing[3] = {0}; /* begin ms, ACK state, ACK age ms */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -158,6 +168,11 @@ static int fwu_transport_ready;
 
 static int fwu_can_send(uint32_t id, const uint8_t data[8])
 {
+  if (FWU_RX_DIAGNOSTIC != 0U &&
+      id != can_fwu_id(CAN_FWU_ENTER_BASE, can_fwu_dev) &&
+      id != can_fwu_id(CAN_FWU_ERASE_BASE, can_fwu_dev)) {
+    return 0; /* Diagnostic transport cannot send DATA/VERIFY/JUMP. */
+  }
   FDCAN_TxHeaderTypeDef header = {0};
   header.Identifier = id;
   header.IdType = FDCAN_STANDARD_ID;
@@ -304,7 +319,7 @@ Error_Handler();
 
     /* USER CODE BEGIN 3 */
     uint32_t now = HAL_GetTick();
-    if (WHEEL_BENCH_MODE != 0U) {
+    if (WHEEL_BENCH_MODE != 0U && FWU_BLINK_BENCH_ONLY == 0U) {
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
       wheel_bench_tick(now);
     }
@@ -351,13 +366,15 @@ Error_Handler();
         fwu_power_gesture_done = 1;
       }
     }
-    if (fwu_armed &&
+    if (fwu_armed && can_diag_erase_reply[0] == 0U &&
         (fwu_host.state == FWU_H_IDLE ||
-         (fwu_host.state == FWU_H_FAULT && fwu_host.seq_next == 0U)) &&
+         (fwu_host.state == FWU_H_FAULT &&
+          fwu_host.tx_id == can_fwu_id(CAN_FWU_ENTER_BASE, can_fwu_dev))) &&
         (uint32_t)(now - fwu_last_try) >= 300U) {
       /* ENTER retry is deliberately unbounded: the ESC answers from any
        * state, so calling forever is safe and removes all timing pressure. */
       fwu_last_try = now;
+      uint32_t diag_begin_tick = HAL_GetTick();
       if (wheel_bench_state == BENCH_IDLE &&
                  can_fwu_host_begin(&fwu_host, can_fwu_dev, fwu_test_image,
                                     FWU_TEST_IMAGE_SIZE, 1, now)) {
@@ -366,19 +383,24 @@ Error_Handler();
         fwu_armed = 0;
         can_fwu_result = 2U;
       }
+      can_diag_timing[0] = HAL_GetTick() - diag_begin_tick;
     }
     if (fwu_armed && fwu_host.state == FWU_H_FAULT &&
-        fwu_host.seq_next > 0U) {
+        fwu_host.tx_id != can_fwu_id(CAN_FWU_ENTER_BASE, can_fwu_dev)) {
       /* Progress was made then lost: latch, needs a fresh arm. */
       fwu_armed = 0;
       can_fwu_result = 4U;
     }
     if (fwu_host.state != FWU_H_IDLE && fwu_host.state != FWU_H_DONE &&
         fwu_host.state != FWU_H_FAULT) {
+      /* begin() CRCs the embedded image synchronously (~191 ms in Debug).
+       * Never stamp enqueue with the pre-CRC loop timestamp: that consumes
+       * the entire ACK budget before the frame has even been sent. */
+      now = HAL_GetTick();
       can_fwu_host_poll(&fwu_host, now);
       can_fwu_result = can_fwu_host_done(&fwu_host) ? 3U : 1U;
       if (fwu_host.state == FWU_H_FAULT) {
-        if (fwu_host.seq_next == 0U) {
+        if (fwu_host.tx_id == can_fwu_id(CAN_FWU_ENTER_BASE, can_fwu_dev)) {
           /* ENTER never acked: keep armed, retry above. */
           can_fwu_result = 1U;
         } else {
@@ -507,12 +529,22 @@ Error_Handler();
       {
         break;
       }
+      for (uint32_t j = 0; j < sizeof(can_rx_data); ++j) can_rx_data[j] = 0U;
       if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0,
                                 &can_rx_header, can_rx_data) != HAL_OK)
       {
         Error_Handler();
       }
       ++can_rx_frame_count;
+      can_diag_rx[1] = can_rx_header.Identifier;
+      can_diag_rx[2] = can_rx_header.IdType;
+      can_diag_rx[3] = can_rx_header.RxFrameType;
+      can_diag_rx[4] = can_rx_header.FDFormat;
+      can_diag_rx[5] = can_rx_header.BitRateSwitch;
+      can_diag_rx[6] = can_rx_header.DataLength;
+      can_diag_rx[7] = can_fwu_get_u32(can_rx_data, 0);
+      can_diag_rx[8] = can_fwu_get_u32(can_rx_data, 1);
+      ++can_diag_rx[0];
       if (can_rx_header.IdType == FDCAN_STANDARD_ID &&
           can_rx_header.RxFrameType == FDCAN_DATA_FRAME &&
           can_rx_header.FDFormat == FDCAN_FD_CAN &&
@@ -561,8 +593,28 @@ Error_Handler();
           can_rx_header.DataLength == FDCAN_DLC_BYTES_8)
       {
         ++can_fwu_rx_cnt;
-        can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
-                         can_rx_data, now);
+        can_diag_timing[1] = (uint32_t)fwu_host.state;
+        can_diag_timing[2] = HAL_GetTick() - fwu_host.tx_tick;
+        if (FWU_RX_DIAGNOSTIC == 0U) {
+          can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
+                           can_rx_data, now);
+        } else if (can_diag_advance != 0U &&
+                   fwu_host.state == FWU_H_ENTER_SENT &&
+                   can_rx_header.Identifier ==
+                       can_fwu_id(CAN_FWU_ACK_BASE, can_fwu_dev) &&
+                   can_fwu_get_u32(can_rx_data, 0) == CAN_FWU_OK) {
+          can_diag_advance = 0U;
+          can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
+                           can_rx_data, now);
+        } else if (fwu_host.state == FWU_H_ERASE_SENT) {
+          /* Capture rejection via the actual host state machine. An
+           * unexpected OK still cannot send DATA (transport guard). */
+          can_diag_erase_reply[1] = can_fwu_get_u32(can_rx_data, 0);
+          can_diag_erase_reply[2] = can_fwu_get_u32(can_rx_data, 1);
+          can_diag_erase_reply[0] = 1U;
+          can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
+                           can_rx_data, now);
+        }
       }
       last_can_rx_tick = now;
       if (can_activity_seen == 0U)
@@ -573,6 +625,10 @@ Error_Handler();
       }
     }
 
+    if (can_fwu_host_done(&fwu_host)) {
+      can_fwu_result = 3U;
+      fwu_armed = 0;
+    }
     /* LD2 indicates received data, never a TX acknowledgement. */
     if (can_activity_seen != 0U)
     {

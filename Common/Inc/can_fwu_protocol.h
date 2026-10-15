@@ -24,7 +24,7 @@ extern "C" {
 
 #define CAN_FWU_PAGE_SIZE 2048U
 #define CAN_FWU_BOOT_SIZE (16U * 1024U)
-#define CAN_FWU_APP_MAX (112U * 1024U)
+#define CAN_FWU_APP_MAX (110U * 1024U) /* final 2K page reserved for validity metadata */
 #define CAN_FWU_APP_OFFSET 0x4000U
 #define CAN_FWU_CHUNK 6U
 #define CAN_FWU_ENTER_TIMEOUT_MS 2000U

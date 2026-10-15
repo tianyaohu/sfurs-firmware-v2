@@ -178,7 +178,11 @@ void can_fwu_host_poll(struct can_fwu_host *h, uint32_t now)
     /* r == 1: frame left the FIFO; r == 0: still queued. Either way
      * keep waiting for the target ACK until the 100 ms budget expires. */
   }
-  if ((uint32_t)(now - h->tx_tick) >= CAN_FWU_HOST_ACK_TIMEOUT_MS) {
+  /* Page erase is slower than ordinary replies; do not use the DATA
+   * budget for a multi-page flash erase. */
+  uint32_t timeout = h->state == FWU_H_ERASE_SENT ? 2000U :
+                     CAN_FWU_HOST_ACK_TIMEOUT_MS;
+  if ((uint32_t)(now - h->tx_tick) >= timeout) {
     to_fault(h, CAN_FWU_REJECT);
   }
 }

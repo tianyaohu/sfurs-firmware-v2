@@ -58,11 +58,22 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add sources to executable
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(FWU_BLINK_DIR "${CMAKE_CURRENT_BINARY_DIR}/esc-blink")
+add_custom_command(
+    OUTPUT "${FWU_BLINK_DIR}/fwu_blink_image.c"
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/esc_blink/build.py"
+        --cc "${CMAKE_C_COMPILER}" --output "${FWU_BLINK_DIR}"
+    DEPENDS ../tests/esc_blink/build.py ../tests/esc_blink/main.c
+        ../tests/esc_blink/app.ld
+    VERBATIM
+)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/wheel_bench.c
     Core/Src/can_fwu_host.c
-    Core/Src/fwu_test_image.c
+    "${FWU_BLINK_DIR}/fwu_blink_image.c"
     ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_protocol.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_boot.c
 )
@@ -84,7 +95,6 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))
     message(ERROR "Generated code requires C11 or higher")
 endif()
-
 
 
 

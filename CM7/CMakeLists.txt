@@ -66,7 +66,8 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/esc_blink/build.py"
         --cc "${CMAKE_C_COMPILER}" --output "${FWU_BLINK_DIR}"
     DEPENDS ../tests/esc_blink/build.py ../tests/esc_blink/main.c
-        ../tests/esc_blink/app.ld
+        ../tests/esc_blink/app.ld ../tests/esc_blink/can_boot.c
+        ../tests/esc_blink/can_boot.h ../Common/Inc/boot_entry.h
     VERBATIM
 )
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
@@ -95,7 +96,6 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))
     message(ERROR "Generated code requires C11 or higher")
 endif()
-
 
 
 

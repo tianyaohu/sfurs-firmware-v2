@@ -12,7 +12,7 @@ source = r'''
 int main(void) {
   struct can_fwu_validity m = { FWU_VALID_MAGIC, ~FWU_VALID_MAGIC,
     128, 0x12345678, FWU_APP_BASE, CAN_FWU_PROTO_VERSION, {0,0} };
-  uint32_t sp = 0x20008000, pc = FWU_APP_BASE + 9;
+  uint32_t sp = ESC_BOOT_MAILBOX_ADDR, pc = FWU_APP_BASE + 9;
   assert(can_fwu_validity_valid(&m, sp, pc, m.crc));
   assert(!can_fwu_validity_valid(&m, sp, pc, m.crc ^ 1));
   m.magic = 0xFFFFFFFF; /* reset between metadata erase and final commit */
@@ -24,6 +24,7 @@ int main(void) {
   assert(!can_fwu_vectors_valid(sp, FWU_APP_BASE + 129, 128));
   assert(!can_fwu_vectors_valid(sp, 0x08000001, 128));
   assert(!can_fwu_vectors_valid(sp - 1, pc, 128));
+  assert(!can_fwu_vectors_valid(0x20008000, pc, 128)); /* reserved mailbox */
   assert(!can_fwu_vectors_valid(sp, pc, CAN_FWU_APP_MAX + 1));
   return 0;
 }

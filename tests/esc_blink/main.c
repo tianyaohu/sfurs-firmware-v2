@@ -1,7 +1,10 @@
 /* Motor-disabled B-G431B-ESC1 CAN-update acceptance payload.
  * Executes at 0x08004000, holds all six PWM inputs LOW, toggles PC6
- * every 500ms forever. No motor-control code, interrupts, or CAN writes. */
+ * every 500ms forever. Polls CAN only for guarded NE boot-entry requests;
+ * no motor-control code, interrupts, or CAN application transmissions. */
 #include <stdint.h>
+#include "boot_entry.h"
+#include "can_boot.h"
 #define REG(addr) (*(volatile uint32_t *)(addr))
 #define GPIOA 0x48000000U
 #define GPIOB 0x48000400U
@@ -30,9 +33,23 @@ void Reset_Handler(void)
   REG(0xE000E014U) = 16000U - 1U; /* SysTick: HSI16, 1ms, polling */
   REG(0xE000E018U) = 0U;
   REG(0xE000E010U) = 5U; /* enable + CPU clock, no interrupt */
+  int can_ready = esc_blink_can_init();
   for (;;) {
     for (unsigned tick = 0; tick < 500U; ++tick) {
-      while ((REG(0xE000E010U) & (1U << 16)) == 0U) { }
+      while ((REG(0xE000E010U) & (1U << 16)) == 0U) {
+        uint32_t id;
+        uint8_t payload[8];
+        if (can_ready && esc_blink_can_poll(&id, payload) &&
+            esc_boot_request_valid(id, payload, 1U)) {
+          /* This payload never starts a motor and has no arm/calibration
+           * state: its six gate inputs remain LOW throughout reset. */
+          esc_boot_mailbox_write(ESC_BOOT_MAILBOX, 1U);
+          __asm volatile("dsb" ::: "memory");
+          REG(0xE000ED0CU) = 0x05FA0004U; /* SYSRESETREQ */
+          __asm volatile("dsb" ::: "memory");
+          for (;;) { }
+        }
+      }
     }
     REG(GPIOC + 0x14U) ^= 1U << 6;
   }

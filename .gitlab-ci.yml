@@ -29,6 +29,12 @@ dev-image:
         python3 tests/test_wheel_sender.py &&
         python3 tests/test_can_fwu.py &&
         python3 tests/test_fwu_validity.py &&
+        python3 tests/test_fwu_verified_recovery.py &&
+        python3 tests/test_fwu_main_timing.py &&
+        python3 tests/test_fwu_main_control.py &&
+        python3 tests/test_fwu_artifacts.py &&
+        python3 tests/test_esc_blink_can.py &&
+        python3 tests/test_esc_boot_helpers.py &&
         rm -rf CM7/build && cd CM7 && cmake --preset Debug && cmake --build --preset Debug"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
     - |

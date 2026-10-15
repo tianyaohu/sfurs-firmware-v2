@@ -1,15 +1,18 @@
 #include "can_fwu_boot.h"
+#include <string.h>
 
 static int dev_match(uint32_t id, uint32_t base, uint32_t dev)
 {
-  return id == can_fwu_id(base, dev);
+  return can_fwu_dev_valid(dev) && id == can_fwu_id(base, dev);
 }
 
 void can_fwu_boot_init(struct can_fwu_boot *b, uint32_t dev,
                        const struct can_fwu_flash_ops *ops)
 {
   b->state = FWU_B_IDLE;
-  b->dev = dev & 0xFU;
+  b->dev = dev;
+  b->session = 0U;
+  memset(b->last_data, 0, sizeof(b->last_data));
   b->img_size = 0U;
   b->img_crc = 0U;
   b->received = 0U;
@@ -37,11 +40,30 @@ static void to_fault(struct can_fwu_boot *b, uint32_t code)
   b->fault = code;
 }
 
+static void reply(const struct can_fwu_boot *b, uint32_t id,
+                  const uint8_t payload[8], uint8_t ack[8], uint32_t status)
+{
+  uint32_t base = id & ~0xFU;
+  uint32_t detail = 0U;
+  uint16_t session = b->session;
+  switch (base) {
+  case CAN_FWU_ENTER_BASE:
+    session = can_fwu_enter_session(payload);
+    detail = CAN_FWU_BOOT_VERSION;
+    break;
+  case CAN_FWU_ERASE_BASE: detail = can_fwu_get_u32(payload, 1); break;
+  case CAN_FWU_DATA_BASE: detail = can_fwu_data_seq(payload); break;
+  case CAN_FWU_VERIFY_BASE: detail = can_fwu_get_u32(payload, 0); break;
+  default: break;
+  }
+  can_fwu_ack_reply_pack(ack, status, base, session, detail);
+}
+
 int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
                        const uint8_t payload[8], uint32_t now,
                        uint32_t *ack_id, uint8_t ack[8])
 {
-  uint32_t page, n, i, seq, detail = 0U, st = CAN_FWU_OK;
+  uint32_t page, n, i, seq, st = CAN_FWU_OK;
   int mine = dev_match(id, CAN_FWU_ENTER_BASE, b->dev) ||
              dev_match(id, CAN_FWU_ERASE_BASE, b->dev) ||
              dev_match(id, CAN_FWU_DATA_BASE, b->dev) ||
@@ -53,22 +75,29 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
   if (ack_id != 0) {
     *ack_id = can_fwu_id(CAN_FWU_ACK_BASE, b->dev);
   }
-  b->last_tick = now;
-
   if (dev_match(id, CAN_FWU_ENTER_BASE, b->dev)) {
-    if (can_fwu_get_u32(payload, 0) != CAN_FWU_MAGIC) {
+    uint16_t session = can_fwu_enter_session(payload);
+    if (can_fwu_enter_magic(payload) != CAN_FWU_MAGIC || session == 0U) {
       st = CAN_FWU_REJECT;
     } else {
       uint32_t size = can_fwu_get_u32(payload, 1);
       int stopped = (b->ops.motor_stopped != 0)
                         ? b->ops.motor_stopped(b->ops.ctx)
                         : 1;
-      if (size == 0U || size > CAN_FWU_APP_MAX) {
+      if (size < CAN_FWU_APP_MIN || size > CAN_FWU_APP_MAX) {
         st = CAN_FWU_BAD_SIZE;
       } else if (!stopped) {
         st = CAN_FWU_REJECT;
+      } else if (b->state != FWU_B_IDLE && b->state != FWU_B_FAULT) {
+        /* Never rewind flash/sequence state on a repeated ENTER or allow
+         * a different session to take over a live update. A fault permits
+         * recovery, but only with a fresh session (old retries stay stale). */
+        if (session != b->session || size != b->img_size) st = CAN_FWU_REJECT;
+      } else if (b->state == FWU_B_FAULT && session == b->session) {
+        st = CAN_FWU_REJECT;
       } else {
         b->state = FWU_B_ENTERED;
+        b->session = session;
         b->img_size = size;
         b->img_crc = 0U;
         b->received = 0U;
@@ -79,25 +108,29 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
         b->dw_fill = 0U;
         b->dw_base = 0U;
         b->fault = 0U;
-        detail = CAN_FWU_BOOT_VERSION;
       }
     }
-    can_fwu_ack_pack(ack, st, detail);
+    if (st == CAN_FWU_OK) b->last_tick = now;
+    reply(b, id, payload, ack, st);
     return 1;
   }
 
   if (b->state != FWU_B_ENTERED && b->state != FWU_B_ERASED &&
       b->state != FWU_B_RECEIVING && b->state != FWU_B_VERIFIED) {
-    can_fwu_ack_pack(ack, CAN_FWU_REJECT, 0U);
+    reply(b, id, payload, ack, CAN_FWU_REJECT);
     return 1;
   }
 
   if (dev_match(id, CAN_FWU_ERASE_BASE, b->dev)) {
-    if (b->state != FWU_B_ENTERED) {
+    page = can_fwu_get_u32(payload, 0);
+    n = can_fwu_get_u32(payload, 1);
+    if ((b->state == FWU_B_ERASED || b->state == FWU_B_RECEIVING ||
+         b->state == FWU_B_VERIFIED) && page == 0U && n == b->num_pages &&
+        b->erased_pages != 0U) {
+      /* Exact whole-image ERASE retry: acknowledge, never erase twice. */
+    } else if (b->state != FWU_B_ENTERED) {
       st = CAN_FWU_REJECT;
     } else {
-      page = can_fwu_get_u32(payload, 0);
-      n = can_fwu_get_u32(payload, 1);
       /* This protocol erases the complete declared image in one request.
        * Partial/overflowing ranges must never permit subsequent writes. */
       if (page != 0U || n != b->num_pages || n == 0U ||
@@ -112,26 +145,33 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
         }
         b->state = FWU_B_ERASED;
         b->expect_seq = 0U;
-        detail = n;
       }
     }
-    can_fwu_ack_pack(ack, st, detail);
+    if (st == CAN_FWU_OK) b->last_tick = now;
+    reply(b, id, payload, ack, st);
     return 1;
   }
 
   if (dev_match(id, CAN_FWU_DATA_BASE, b->dev)) {
     uint32_t remaining, take;
-    if (b->state != FWU_B_ERASED && b->state != FWU_B_RECEIVING) {
-      can_fwu_ack_pack(ack, CAN_FWU_REJECT, 0U);
+    seq = can_fwu_data_seq(payload);
+    if (b->expect_seq != 0U && seq == b->expect_seq - 1U) {
+      /* Compare padding too: only an identical wire retry is idempotent. */
+      st = memcmp(payload, b->last_data, 8) == 0 ? CAN_FWU_OK : CAN_FWU_BAD_SEQ;
+      if (st == CAN_FWU_OK) b->last_tick = now;
+      reply(b, id, payload, ack, st);
       return 1;
     }
-    seq = can_fwu_data_seq(payload);
+    if (b->state != FWU_B_ERASED && b->state != FWU_B_RECEIVING) {
+      reply(b, id, payload, ack, CAN_FWU_REJECT);
+      return 1;
+    }
     if (seq != b->expect_seq) {
-      can_fwu_ack_pack(ack, CAN_FWU_BAD_SEQ, b->expect_seq);
+      reply(b, id, payload, ack, CAN_FWU_BAD_SEQ);
       return 1;
     }
     if (b->erased_pages == 0U || b->received >= b->img_size) {
-      can_fwu_ack_pack(ack, CAN_FWU_REJECT, 0U);
+      reply(b, id, payload, ack, CAN_FWU_REJECT);
       return 1;
     }
     remaining = b->img_size - b->received;
@@ -151,7 +191,7 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
         if (b->ops.program_dw == 0 ||
             b->ops.program_dw(b->dw_base, dw, b->ops.ctx) != 0) {
           to_fault(b, CAN_FWU_FLASH_ERR);
-          can_fwu_ack_pack(ack, CAN_FWU_FLASH_ERR, seq);
+          reply(b, id, payload, ack, CAN_FWU_FLASH_ERR);
           return 1;
         }
         b->dw_fill = 0U;
@@ -173,12 +213,14 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
       if (b->ops.program_dw == 0 ||
           b->ops.program_dw(b->dw_base, dw, b->ops.ctx) != 0) {
         to_fault(b, CAN_FWU_FLASH_ERR);
-        can_fwu_ack_pack(ack, CAN_FWU_FLASH_ERR, seq);
+        reply(b, id, payload, ack, CAN_FWU_FLASH_ERR);
         return 1;
       }
       b->dw_fill = 0U;
     }
-    can_fwu_ack_pack(ack, CAN_FWU_OK, seq);
+    memcpy(b->last_data, payload, 8);
+    b->last_tick = now;
+    reply(b, id, payload, ack, CAN_FWU_OK);
     return 1;
   }
 
@@ -189,33 +231,33 @@ int can_fwu_boot_frame(struct can_fwu_boot *b, uint32_t id,
       st = CAN_FWU_BAD_SIZE;
     } else if (crc != b->stream_crc) {
       st = CAN_FWU_CRC_MISMATCH;
-      detail = b->stream_crc;
     } else {
       b->img_crc = crc;
       b->state = FWU_B_VERIFIED;
-      detail = crc;
     }
-    can_fwu_ack_pack(ack, st, detail);
+    if (st == CAN_FWU_OK) b->last_tick = now;
+    reply(b, id, payload, ack, st);
     return 1;
   }
 
   /* JUMP */
   if (b->state != FWU_B_VERIFIED) {
-    can_fwu_ack_pack(ack, CAN_FWU_REJECT, 0U);
+    reply(b, id, payload, ack, CAN_FWU_REJECT);
     return 1;
   }
   if (can_fwu_get_u32(payload, 0) != CAN_FWU_MAGIC) {
-    can_fwu_ack_pack(ack, CAN_FWU_REJECT, 0U);
+    reply(b, id, payload, ack, CAN_FWU_REJECT);
     return 1;
   }
   b->state = FWU_B_JUMP_PENDING;
-  can_fwu_ack_pack(ack, CAN_FWU_OK, 0U);
+  b->last_tick = now;
+  reply(b, id, payload, ack, CAN_FWU_OK);
   return 1;
 }
 
 void can_fwu_boot_poll(struct can_fwu_boot *b, uint32_t now)
 {
-  if (b->state == FWU_B_IDLE || b->state == FWU_B_VERIFIED ||
+  if (b->state == FWU_B_IDLE ||
       b->state == FWU_B_JUMP_PENDING || b->state == FWU_B_FAULT) {
     return;
   }

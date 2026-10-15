@@ -24,6 +24,7 @@
 #include "wheel_bench.h"
 #include "can_fwu_host.h"
 #include "fwu_test_image.h"
+#include "boot_entry.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -96,6 +97,10 @@ volatile uint32_t wheel_test_run_attempted = 0;
 volatile uint32_t can_fwu_request = 0;
 volatile uint32_t can_fwu_dev = 1;
 volatile uint32_t can_fwu_result = 0;
+/* Explicit remote-entry trigger, separate from destructive update START.
+ * Result: 0=none, 1=queued (NOT boot-confirmed), 2=rejected, 3=TX failed. */
+volatile uint32_t can_fwu_enter_boot = 0;
+volatile uint32_t can_fwu_boot_result = 0;
 /* Counts received FWU ACK frames (0x680|dev) for LED + SWD diagnosis. */
 volatile uint32_t can_fwu_rx_cnt = 0;
 /* Raw receive snapshot BEFORE application validation. Payload is two LE
@@ -323,23 +328,59 @@ Error_Handler();
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
       wheel_bench_tick(now);
     }
-    /* First over-CAN update test: embedded NE image, started only by an
-     * explicit debugger write to can_fwu_request while the bench is IDLE.
-     * ENTER is retried every 300 ms (up to ~36 s) so the ESC can be reset
-     * into its bootloader window after arming. Nothing is ever periodic. */
+    /* Embedded NE blink test: explicit request only, bench IDLE required.
+     * Unanswered ENTER requests repeat every 300ms until answered; later
+     * failures latch and require a NEW operator request. No automatic
+     * erase/data retries and no periodic drive commands. */
     static uint32_t fwu_last_try;
     static int fwu_armed;
+    static int fwu_fresh_request;
+    static int fwu_boot_pending;
+    static uint32_t fwu_boot_tick;
     if (!fwu_transport_ready) {
       struct can_fwu_transport t = { fwu_can_send, fwu_can_poll,
                                      fwu_can_abort };
       can_fwu_host_init(&fwu_host, &t);
       fwu_transport_ready = 1;
     }
+    if (can_fwu_enter_boot != 0U) {
+      uint8_t payload[8];
+      can_fwu_enter_boot = 0U;
+      if (!fwu_armed && !fwu_boot_pending && wheel_bench_state == BENCH_IDLE &&
+          (fwu_host.state == FWU_H_IDLE || fwu_host.state == FWU_H_DONE ||
+           fwu_host.state == FWU_H_FAULT) &&
+          esc_boot_request_pack(payload, can_fwu_dev)) {
+        if (fwu_can_send(ESC_BOOT_REQUEST_BASE | can_fwu_dev, payload)) {
+          fwu_boot_pending = 1;
+          fwu_boot_tick = HAL_GetTick();
+          can_fwu_boot_result = 1U;
+        } else {
+          can_fwu_boot_result = 3U;
+        }
+      } else {
+        can_fwu_boot_result = 2U;
+      }
+    }
+    if (fwu_boot_pending) {
+      int status = fwu_can_poll();
+      if (status == BENCH_TX_FAILED ||
+          (uint32_t)(HAL_GetTick() - fwu_boot_tick) >= 100U) {
+        fwu_can_abort();
+        fwu_boot_pending = 0;
+        can_fwu_boot_result = 3U;
+      } else if (status == BENCH_TX_OK) {
+        fwu_boot_pending = 0;
+      }
+    }
     if (can_fwu_request != 0U) {
       can_fwu_request = 0U;
-      if (wheel_bench_state == BENCH_IDLE && fwu_host.state == FWU_H_IDLE) {
+      if (!fwu_boot_pending && wheel_bench_state == BENCH_IDLE &&
+          (fwu_host.state == FWU_H_IDLE || fwu_host.state == FWU_H_FAULT ||
+           fwu_host.state == FWU_H_DONE)) {
         fwu_armed = 1;
+        fwu_fresh_request = 1;
         fwu_last_try = 0U;
+        can_diag_erase_reply[0] = 0U;
       } else {
         can_fwu_result = 2U;
       }
@@ -359,6 +400,7 @@ Error_Handler();
                    wheel_bench_state == BENCH_IDLE &&
                    fwu_host.state == FWU_H_IDLE && !fwu_armed) {
           fwu_armed = 1;
+          fwu_fresh_request = 1;
           fwu_last_try = 0U;
           fwu_power_gesture_done = 1;
         }
@@ -367,13 +409,15 @@ Error_Handler();
       }
     }
     if (fwu_armed && can_diag_erase_reply[0] == 0U &&
-        (fwu_host.state == FWU_H_IDLE ||
+        (fwu_fresh_request || fwu_host.state == FWU_H_IDLE ||
+         fwu_host.state == FWU_H_DONE ||
          (fwu_host.state == FWU_H_FAULT &&
           fwu_host.tx_id == can_fwu_id(CAN_FWU_ENTER_BASE, can_fwu_dev))) &&
         (uint32_t)(now - fwu_last_try) >= 300U) {
       /* ENTER retry is deliberately unbounded: the ESC answers from any
        * state, so calling forever is safe and removes all timing pressure. */
       fwu_last_try = now;
+      fwu_fresh_request = 0;
       uint32_t diag_begin_tick = HAL_GetTick();
       if (wheel_bench_state == BENCH_IDLE &&
                  can_fwu_host_begin(&fwu_host, can_fwu_dev, fwu_test_image,
@@ -602,15 +646,15 @@ Error_Handler();
                    fwu_host.state == FWU_H_ENTER_SENT &&
                    can_rx_header.Identifier ==
                        can_fwu_id(CAN_FWU_ACK_BASE, can_fwu_dev) &&
-                   can_fwu_get_u32(can_rx_data, 0) == CAN_FWU_OK) {
+                   can_fwu_ack_status(can_rx_data) == CAN_FWU_OK) {
           can_diag_advance = 0U;
           can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
                            can_rx_data, now);
         } else if (fwu_host.state == FWU_H_ERASE_SENT) {
           /* Capture rejection via the actual host state machine. An
            * unexpected OK still cannot send DATA (transport guard). */
-          can_diag_erase_reply[1] = can_fwu_get_u32(can_rx_data, 0);
-          can_diag_erase_reply[2] = can_fwu_get_u32(can_rx_data, 1);
+          can_diag_erase_reply[1] = can_fwu_ack_status(can_rx_data);
+          can_diag_erase_reply[2] = can_fwu_ack_detail(can_rx_data);
           can_diag_erase_reply[0] = 1U;
           can_fwu_host_ack(&fwu_host, can_rx_header.Identifier,
                            can_rx_data, now);

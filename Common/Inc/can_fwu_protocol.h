@@ -11,8 +11,8 @@ extern "C" {
  * Bus: 500 kbit/s, FD_NO_BRS, 8-byte payloads (classic-compatible).
  * Drive/telemetry live in 0x080..0x4FF/0x780; FWU owns 0x600..0x6FF.
  * Low nibble carries the wheel device bits (MOTOR_NE=1, SE=2, SW=4, NW=8). */
-#define CAN_FWU_PROTO_VERSION 1U
-#define CAN_FWU_MAGIC 0x46555743U /* "CFWU" little-endian */
+#define CAN_FWU_PROTO_VERSION 2U
+#define CAN_FWU_MAGIC 0x3257U /* v2 ENTER magic16; deliberately not v1 "CFWU" */
 #define CAN_FWU_BOOT_VERSION 1U
 
 #define CAN_FWU_ENTER_BASE 0x600U
@@ -25,6 +25,7 @@ extern "C" {
 #define CAN_FWU_PAGE_SIZE 2048U
 #define CAN_FWU_BOOT_SIZE (16U * 1024U)
 #define CAN_FWU_APP_MAX (110U * 1024U) /* final 2K page reserved for validity metadata */
+#define CAN_FWU_APP_MIN 8U /* initial stack pointer and reset vector */
 #define CAN_FWU_APP_OFFSET 0x4000U
 #define CAN_FWU_CHUNK 6U
 #define CAN_FWU_ENTER_TIMEOUT_MS 2000U
@@ -42,24 +43,43 @@ enum can_fwu_status {
 
 static inline uint32_t can_fwu_id(uint32_t base, uint32_t dev)
 {
-  return base | (dev & 0xFU);
+  return base | dev; /* callers must validate, never alias invalid device bits */
 }
+int can_fwu_dev_valid(uint32_t dev);
 
 /* Payload layouts (all 8 bytes, little-endian):
- * ENTER:  [magic u32][img_size u32]
+ * ENTER:  [magic u16][nonzero session u16][img_size u32]
  * ERASE:  [start_page u32][num_pages u32]
  * DATA:   [seq u16][6 chunk bytes]
  * VERIFY: [crc u32][size u32]
  * JUMP:   [magic u32][0 u32]
- * ACK:    [status u32][detail u32] (detail = seq / crc / boot version) */
+ * ACK:    [status u8][command u8 = request base >> 4][session u16][detail u32]
+ * Detail identifies the request on ALL statuses: ENTER boot version,
+ * ERASE requested page count, DATA requested seq, VERIFY requested crc, JUMP 0.
+ * These are v2-only codecs; v1 peers must not be mixed with v2 peers. */
 void can_fwu_put_u32(uint8_t out[8], uint32_t v0, uint32_t v1);
+void can_fwu_enter_session_pack(uint8_t out[8], uint16_t session, uint32_t img_size);
+uint16_t can_fwu_enter_magic(const uint8_t in[8]);
+uint16_t can_fwu_enter_session(const uint8_t in[8]);
+/* Convenience v2 ENTER using session 1; runtime hosts use the session API. */
 void can_fwu_enter_pack(uint8_t out[8], uint32_t img_size);
 void can_fwu_erase_pack(uint8_t out[8], uint32_t start_page, uint32_t num_pages);
 void can_fwu_data_pack(uint8_t out[8], uint16_t seq, const uint8_t chunk[6],
                        uint32_t chunk_len);
 void can_fwu_verify_pack(uint8_t out[8], uint32_t crc, uint32_t size);
 void can_fwu_jump_pack(uint8_t out[8]);
+void can_fwu_ack_reply_pack(uint8_t out[8], uint32_t status, uint32_t command_base,
+                            uint16_t session, uint32_t detail);
+/* Uncorrelated v2 ACK (command/session zero), NOT accepted by the host. */
 void can_fwu_ack_pack(uint8_t out[8], uint32_t status, uint32_t detail);
+/* For port-level commit/readback failures: preserve command/session/detail. */
+void can_fwu_ack_set_status(uint8_t ack[8], uint32_t status);
+/* Preserve command/session while deliberately replacing status/detail. */
+void can_fwu_ack_set_status_detail(uint8_t ack[8], uint32_t status, uint32_t detail);
+uint32_t can_fwu_ack_status(const uint8_t in[8]);
+uint32_t can_fwu_ack_command(const uint8_t in[8]); /* encoded base >> 4 */
+uint16_t can_fwu_ack_session(const uint8_t in[8]);
+uint32_t can_fwu_ack_detail(const uint8_t in[8]);
 uint32_t can_fwu_get_u32(const uint8_t in[8], unsigned word);
 uint16_t can_fwu_data_seq(const uint8_t in[8]);
 uint32_t can_fwu_data_count(uint32_t img_size);

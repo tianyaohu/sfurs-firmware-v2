@@ -1,6 +1,7 @@
 #ifndef CAN_FWU_VALIDITY_H
 #define CAN_FWU_VALIDITY_H
 #include "can_fwu_protocol.h"
+#include "boot_entry.h"
 
 #define FWU_APP_BASE 0x08004000U
 #define FWU_METADATA_BASE 0x0801F800U
@@ -21,7 +22,7 @@ static inline int can_fwu_vectors_valid(uint32_t sp, uint32_t reset,
 {
   uint32_t pc = reset & ~1U;
   return size >= 8U && size <= CAN_FWU_APP_MAX &&
-         sp > 0x20000000U && sp <= 0x20008000U && (sp & 7U) == 0U &&
+         sp > 0x20000000U && sp <= ESC_BOOT_MAILBOX_ADDR && (sp & 7U) == 0U &&
          (reset & 1U) != 0U && pc >= FWU_APP_BASE &&
          pc - FWU_APP_BASE < size;
 }

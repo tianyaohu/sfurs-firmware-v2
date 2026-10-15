@@ -19,12 +19,14 @@ binary = out / 'esc_blink.bin'
 subprocess.run([args.cc, '-mcpu=cortex-m4', '-mthumb', '-Os', '-std=c11',
                 '-ffreestanding', '-nostdlib', '-fno-unwind-tables',
                 '-fno-asynchronous-unwind-tables', '-Wall', '-Wextra', '-Werror',
+                '-I', str(here.parents[1] / 'Common/Inc'),
                 '-T', str(here / 'app.ld'), str(here / 'main.c'),
+                str(here / 'can_boot.c'),
                 '-o', str(elf)], check=True)
 subprocess.run([args.objcopy, '-O', 'binary', str(elf), str(binary)], check=True)
 data = binary.read_bytes()
 sp, pc = struct.unpack_from('<II', data)
-assert sp == 0x20008000 and pc & 1 and 0x08004000 <= (pc & ~1) < 0x08004000 + len(data)
+assert sp == 0x20007FF0 and pc & 1 and 0x08004000 <= (pc & ~1) < 0x08004000 + len(data)
 assert 8 <= len(data) <= 110 * 1024
 lines = ['/* Generated motor-disabled ESC blink payload. */',
          '#include "fwu_test_image.h"',

@@ -1,10 +1,15 @@
 #include "can_fwu_host.h"
 
+/* Runtime-wide allocator: reinitializing a host must not reuse a stale session.
+ * Single-threaded updater; wraps after 65535 begins, skipping zero. */
+static uint16_t next_session;
+
 void can_fwu_host_init(struct can_fwu_host *h,
                        const struct can_fwu_transport *t)
 {
   h->state = FWU_H_IDLE;
   h->dev = 0U;
+  h->session = 0U;
   h->image = 0;
   h->img_size = 0U;
   h->img_crc = 0U;
@@ -45,11 +50,16 @@ int can_fwu_host_begin(struct can_fwu_host *h, uint32_t dev,
                        uint32_t now)
 {
   uint8_t p[8];
-  if (!bench_idle || image == 0 || img_size == 0U ||
+  if ((h->state != FWU_H_IDLE && h->state != FWU_H_DONE &&
+       h->state != FWU_H_FAULT) || !can_fwu_dev_valid(dev) ||
+      !bench_idle || image == 0 || img_size < CAN_FWU_APP_MIN ||
       img_size > CAN_FWU_APP_MAX || h->t.send == 0) {
     return 0;
   }
-  h->dev = dev & 0xFU;
+  h->dev = dev;
+  next_session++;
+  if (next_session == 0U) next_session++;
+  h->session = next_session;
   h->image = image;
   h->img_size = img_size;
   h->img_crc = can_fwu_crc32(image, img_size);
@@ -58,7 +68,7 @@ int can_fwu_host_begin(struct can_fwu_host *h, uint32_t dev,
   h->num_pages = can_fwu_pages_for_size(img_size);
   h->fault = 0U;
   h->state = FWU_H_ENTER_SENT;
-  can_fwu_enter_pack(p, img_size);
+  can_fwu_enter_session_pack(p, h->session, img_size);
   queue(h, can_fwu_id(CAN_FWU_ENTER_BASE, h->dev), p, 0, now);
   return 1;
 }
@@ -77,7 +87,7 @@ static void to_fault(struct can_fwu_host *h, uint32_t code)
 void can_fwu_host_ack(struct can_fwu_host *h, uint32_t id,
                       const uint8_t payload[8], uint32_t now)
 {
-  uint32_t st, detail, seq;
+  uint32_t st, detail, seq, expected;
   uint8_t p[8];
   unsigned i;
   uint32_t off;
@@ -85,16 +95,30 @@ void can_fwu_host_ack(struct can_fwu_host *h, uint32_t id,
       h->state == FWU_H_FAULT) {
     return;
   }
-  if (id != can_fwu_id(CAN_FWU_ACK_BASE, h->dev)) {
+  if (!h->tx_pending || !h->tx_sent ||
+      id != can_fwu_id(CAN_FWU_ACK_BASE, h->dev) ||
+      can_fwu_ack_command(payload) != (h->tx_id >> 4) ||
+      can_fwu_ack_session(payload) != h->session) {
     return;
   }
-  st = can_fwu_get_u32(payload, 0);
-  detail = can_fwu_get_u32(payload, 1);
+  switch (h->state) {
+  case FWU_H_ENTER_SENT: expected = CAN_FWU_BOOT_VERSION; break;
+  case FWU_H_ERASE_SENT: expected = h->num_pages; break;
+  case FWU_H_SENDING: expected = h->seq_next; break;
+  case FWU_H_VERIFY_SENT: expected = h->img_crc; break;
+  case FWU_H_JUMP_SENT: expected = 0U; break;
+  default: return;
+  }
+  st = can_fwu_ack_status(payload);
+  detail = can_fwu_ack_detail(payload);
+  /* A previous DATA ACK, even an error, cannot complete/fault this request. */
+  if (detail != expected) return;
   if (st != CAN_FWU_OK) {
     to_fault(h, st ? st : CAN_FWU_REJECT);
     return;
   }
   h->tx_pending = 0;
+  h->tx_sent = 0;
   switch (h->state) {
   case FWU_H_ENTER_SENT:
     h->state = FWU_H_ERASE_SENT;
@@ -114,10 +138,6 @@ void can_fwu_host_ack(struct can_fwu_host *h, uint32_t id,
     queue(h, can_fwu_id(CAN_FWU_DATA_BASE, h->dev), p, 1, now);
     break;
   case FWU_H_SENDING:
-    if (detail != h->seq_next) {
-      to_fault(h, CAN_FWU_BAD_SEQ);
-      return;
-    }
     h->seq_acked = detail;
     h->seq_next++;
     if (h->seq_next < can_fwu_data_count(h->img_size)) {
@@ -136,10 +156,6 @@ void can_fwu_host_ack(struct can_fwu_host *h, uint32_t id,
     }
     break;
   case FWU_H_VERIFY_SENT:
-    if (detail != h->img_crc) {
-      to_fault(h, CAN_FWU_CRC_MISMATCH);
-      return;
-    }
     h->state = FWU_H_JUMP_SENT;
     can_fwu_jump_pack(p);
     queue(h, can_fwu_id(CAN_FWU_JUMP_BASE, h->dev), p, 0, now);

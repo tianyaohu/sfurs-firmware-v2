@@ -30,6 +30,7 @@ struct can_fwu_transport {
 struct can_fwu_host {
   enum can_fwu_host_state state;
   uint32_t dev;
+  uint16_t session;
   const uint8_t *image;
   uint32_t img_size;
   uint32_t img_crc;
@@ -48,11 +49,14 @@ struct can_fwu_host {
 
 void can_fwu_host_init(struct can_fwu_host *h,
                        const struct can_fwu_transport *t);
-/* bench_idle must be nonzero (BENCH_IDLE); refused otherwise. */
+/* Requires bench_idle, a single valid device, and IDLE/DONE/FAULT state.
+ * Each accepted begin allocates a fresh runtime-wide nonzero session16.
+ * Not thread-safe; a session is never implicitly restarted while active. */
 int can_fwu_host_begin(struct can_fwu_host *h, uint32_t dev,
                        const uint8_t *image, uint32_t img_size, int bench_idle,
                        uint32_t now);
-/* Feed target ACKs (id on 0x680|dev, 8-byte payload). Unknown IDs ignored. */
+/* Only a sent outstanding request with matching device, command, session and
+ * request detail can be completed (or faulted) by a v2 ACK. Others are ignored. */
 void can_fwu_host_ack(struct can_fwu_host *h, uint32_t id,
                       const uint8_t payload[8], uint32_t now);
 /* Pump transport: sends next frame when free, faults on 100 ms no-ack. */

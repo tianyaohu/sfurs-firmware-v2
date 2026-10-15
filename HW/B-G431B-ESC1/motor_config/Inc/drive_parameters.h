@@ -139,6 +139,24 @@
  **************************/
 
 /* ##@@_USER_CODE_START_##@@ */
+#ifdef ESC_LOW_CURRENT_TEST
+#include "test_profile.h"
+/* Opt-in bench profile only. These are reference limits, not peak-current guarantees. */
+#undef IQMAX_A
+#define IQMAX_A ESC_TEST_IQMAX_A
+#if defined(ESC_RPM_DIAGNOSTIC) || defined(ESC_REVERSE_SPEED_DIAGNOSTIC)
+/* Experimental low-speed trial only; not validated closed-loop tuning.
+ * Preserve SDK speed-unit scaling and existing PI divisors/anti-windup limits. */
+#undef PID_SPEED_KP_DEFAULT
+#define PID_SPEED_KP_DEFAULT (ESC_TEST_SPEED_KP/(SPEED_UNIT/10))
+#undef PID_SPEED_KI_DEFAULT
+#define PID_SPEED_KI_DEFAULT (ESC_TEST_SPEED_KI/(SPEED_UNIT/10))
+#endif
+#undef DEFAULT_TARGET_SPEED_RPM
+#define DEFAULT_TARGET_SPEED_RPM 0
+#undef OV_VOLTAGE_THRESHOLD_V
+#define OV_VOLTAGE_THRESHOLD_V 18
+#endif
 /* ##@@_USER_CODE_END_##@@ */
 
 #endif /*DRIVE_PARAMETERS_H*/

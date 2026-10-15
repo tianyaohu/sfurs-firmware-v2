@@ -196,6 +196,10 @@ static uint8_t SystickDividerCounter = SYSTICK_DIVIDER;
     /* Nothing to do */
   }
   /* USER CODE BEGIN SysTick_IRQn 1 */
+#ifdef ESC_LOW_CURRENT_TEST
+  extern void TestDriveSafetyTick(void);
+  TestDriveSafetyTick();
+#endif
 
   /* USER CODE END SysTick_IRQn 1 */
 
@@ -238,4 +242,3 @@ void EXTI15_10_IRQHandler(void)
   */
 
 /******************* (C) COPYRIGHT 2025 STMicroelectronics *****END OF FILE****/
-

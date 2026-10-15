@@ -43,7 +43,12 @@
 
 #define MOTOR_VOLTAGE_CONSTANT  3.0 /*!< Volts RMS ph-ph /kRPM */
 #define MOTOR_MAX_SPEED_RPM     2976 /*!< Maximum rated speed  */
+#ifdef ESC_LOW_CURRENT_TEST
+#include "test_profile.h"
+#define NOMINAL_CURRENT_A       ESC_TEST_REFERENCE_A
+#else
 #define NOMINAL_CURRENT_A       3
+#endif
 
 #define ID_DEMAG_A              -3 /*!< Demagnetization current */
 

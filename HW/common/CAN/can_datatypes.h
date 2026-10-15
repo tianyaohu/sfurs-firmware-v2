@@ -55,6 +55,19 @@
  */
 #define SPEED_WRITE (1U << 7)
 #define SPEED_READ  (2U << 7)
+#define SPEED_READ_REPLY (5U << 7)
+#define TEST_CURRENT_READ (6U << 7)
+#define TEST_CURRENT_REPLY (7U << 7)
+#define TEST_ARM (8U << 7)
+#define TEST_CAL_REQ (9U << 7)
+/* Bench profile only: CURRENT_REPLY = i16 iq, i16 id, u16 flags/faults,
+ * u16 peak(|iq|+|id|), all little endian SDK current units.
+ * flags: bit15 profile, bit14 armed, bit13 used, bit12 active,
+ * bit11 offsets calibrated; low11 faults. iq/id are valid only during RUN.
+ * TEST_ARM requires the explicit 4-byte magic 0x54455354. */
+/* SPEED_READ: 4-byte request. Reply: 8 bytes, little endian:
+ * [0..1] signed RPM, [2] motor state, [3] raw Hall bits H1/H2/H3,
+ * [4..7] observed Hall-state changes since boot (polling, not an encoder). */
 #define TORQUE_WRITE (3U << 7)
 #define MOTOR_STOP   (15U << 7)
 

@@ -1,0 +1,39 @@
+# STM32CubeMX / CMake build outputs
+build/
+*/build/
+Debug/
+Release/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+build.ninja
+*.o
+*.obj
+*.a
+*.so
+*.elf
+*.map
+*.bin
+*.hex
+*.axf
+
+# CubeMX cache (source of truth is *.ioc)
+.mxproject
+
+# Python test caches
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

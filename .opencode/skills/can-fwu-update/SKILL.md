@@ -57,6 +57,11 @@ it will not boot a stale app.
 Prereqs: H755 firmware with embedded image (`CM7/Core/Src/fwu_test_image.c`
 or generated blink image), shared bus wired + terminated, both boards powered.
 
+Motor app images (vs the blink/test payload): prereqs are the offset app
+build (`FLASH ORIGIN 0x08004000`, `VECT_TAB_OFFSET 0x4000`) plus the
+generated `fwu_test_image.c`; see `docs/CAN_FWU.md` (G4 port checklist /
+motor-app notes).
+
 ```sh
 # pyocd on the Nucleo probe (addresses from current ELF via arm-none-eabi-nm):
 pyocd commander -u <nucleo-sn> -t stm32h755zitx \

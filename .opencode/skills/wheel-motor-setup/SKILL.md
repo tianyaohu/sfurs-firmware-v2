@@ -5,6 +5,15 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
 
 # Wheel motor setup (living doc — update as the codebase moves)
 
+## Run duration caps
+
+RUN auto-stops after 15 s (NE/SE) or 1 s (SW/NW) by firmware design
+(`wheel_bench_tick`: `started` timestamp → `stop()`). A TUI hold therefore
+produces at most ~1 revolution on SW/NW regardless of hold length; release,
+`s`, or `q` sends STOP sooner. An unbounded-hold variant was tried and
+reverted to keep the dead-man's switch: if the probe session dies mid-run,
+nothing else stops the wheel short of Nucleo reset or power cut.
+
 ## Topology
 
 - 4x B-G431B-ESC1 (STM32G431, 128 KiB flash), one per wheel, shared CAN bus.
@@ -28,6 +37,11 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
   cap 150, NE cap 300). Session default dir: reverse (-1).
 - CAN scheme: `ID = COMMAND | SELECT`, commands `SPEED_WRITE 0x080`,
   `SPEED_READ 0x100`, `TEST_ARM 0x400`, `MOTOR_STOP 0x780`.
+- Rover-frame convention (sender-side): TUI `+` = rover-forward on every
+  wheel. SW/NW mounts are mirrored, so the sender negates their RPM sign;
+  all ESC images stay identical. Direct STLINK pulses are shaft-frame
+  (NOT mirrored): SW/NW direct visuals read opposite to TUI for the same
+  sign. Validate direct runs shaft-vs-shaft against NE, not rover-frame.
 
 ## Golden rules (all learned the hard way)
 
@@ -40,6 +54,11 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
 4. **CAL is RAM: every STLINK replug wipes it.** CAL last (result 2/valid 1),
    then touch nothing but the other cable (battery stays ON). Never
    "verify" CAL by reconnecting — the reconnect is what wipes it.
+   Battery OFF/ON wipes CAL on ALL wheels at once: after any flash or
+   power cycle, re-CAL every non-auto-CAL wheel before the TUI. Only
+   wheels with auto-CAL firmware recover alone — so "only the auto-CAL
+   wheel moves" means wiped CAL on the rest, not a sender/CAN fault.
+   Read the CAL words first; do not redebug the bus.
 5. **TX ACK proves nothing about the target.** CAN ACK is physical-layer;
    any bus node pulls the ACK slot. No-motion + good ACKs = start gate
    (CAL/ARM) or wrong/absent frame, not a dead motor.
@@ -51,16 +70,35 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
 7. **Reload the Nucleo sender after any sender change** before blaming an ESC
    (see RCA below). Keep ESC `esc-backups/` dumps + JSON sidecars before
    overwriting any unknown flash (full 128 KiB via CLI `-u ADDR SIZE FILE`).
+8. **No per-wheel special cases in shared paths — audit all layers per wheel.**
+   Proving wheel X works proves nothing about wheel Y: shared code with
+   per-wheel gates fails per-wheel, silently (good ACKs, no motion). When
+   enabling a wheel, adding a command, or touching anything addressed per
+   wheel, grep every layer for existing wheel IDs and confirm each handles
+   the new one: sender TX (`wheel_bench.c` ARM/RUN/STOP construction),
+   sender RX/mirror gates, TUI wheel map + display gates
+   (`keyboard_spin.py`), host-test coverage (`tests/test_wheel_bench.py`
+   must exercise all 4 wheels for every sender behavior), ESC CAN ID +
+   filter (`motor_controller_can.h`, `MOTOR_<WHEEL>_CAN_ID`). After ANY
+   sender change affecting addressing, re-prove motion on ALL commissioned
+   wheels, not just the one under test. A gate with no else-alarm
+   (e.g. `if wheel==1||wheel==2` silently skipping) is a bug — prefer
+   unconditional shared paths, pre-gated once by a validator
+   (`selection_bit`).
 
 ## Per-wheel bring-up playbook
 
 1. Cable to ESC probe. Dump flash to `esc-backups/` + JSON sidecar if unknown.
 2. Battery OFF → flash half-amp (1.5 A torque) diagnostic → ON → CAL.
-3. DARM→DRUN pulse, observe shaft sign (+torque → backward on NE/SE so far).
+3. DARM→DRUN pulse, observe shaft sign (+torque → backward on NE/SE,
+   forward on SW — left-side wheels are mounted mirrored, so the same
+   shaft direction rolls the rover the opposite way).
 4. Build reverse-speed image with correct gain sign (`MOTOR_<WHEEL>`),
    flash, CAL, direct -100 stability check (count-stop, no runaway).
 5. Cable to Nucleo (battery ON). TUI wheel key, hold SPACE: motion = CAN OK.
 6. Log the run in `REVERSE_SPEED_VALIDATION.md` (firmware-v2, motor-testing).
+7. After any sender/TUI change: re-prove motion on ALL commissioned wheels
+   (rule 8) — never just the wheel under test.
 
 ## Reading RPM
 
@@ -75,8 +113,27 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
   armed locally, speed frames hit an unarmed ESC, declined silently with
   healthy ACKs. Fix was reflashing the Nucleo; SE ELF disassembly had already
   proven its ID2 constants correct. Lesson: suspect the sender first.
+- **SW CAN silence (2026-10-15):** SAME pattern, one wheel later. Sender
+  transmitted CAN ARM only for wheels 1/2 (`if selected==1||selected==2`,
+  else "arm locally"); SW speed frames (`0x084`) hit an unarmed ESC while
+  the TUI showed `RUNNING` on good `tx/ack`. Direct DARM→DRUN worked, which
+  isolated it to the CAN ARM path. Fix: unconditional CAN ARM for all
+  selections (pre-gated by `selection_bit`), host tests extended to assert
+  ARM+RUN frames for all 4 wheels, Nucleo reflashed. Lesson: the SE fix
+  covered the instance, not the pattern — see rule 8.
+- **NW near-miss (2026-10-15):** same gate would have dropped NW (`0x408`)
+  identically; caught by auditing all layers for wheel-ID gates instead of
+  waiting for hardware symptoms. NW still needs full bring-up (unknown
+  flash), but the sender path is proven by host tests for wheel 8.
 - **Ghost no-motion after cable moves:** CAL wiped by replug (all-zero
   gate words). Recalibrate; do not re-tune.
+- **Only the auto-CAL wheel moves after flashing/power cycles (2026-10-15):**
+  SW/NW bring-up cycled the battery, rebooting all ESCs and wiping RAM CAL
+  everywhere. NE self-recovered (NE-only auto-CAL prototype); SE/SW/NW
+  silently declined CAN ARM with healthy ACKs. SE read IDLE + faults 0 +
+  CAL 0/0, fixed by manual CAL1. Lesson: after any battery cycle, re-CAL
+  all non-auto-CAL wheels first. Durable fix (open): extend auto-CAL to
+  all wheels instead of NE-only.
 - **First-after-power-on CAL transient:** retry works; persistent reject →
   power off for minutes (rail decay), not seconds.
 - **Halls:** alive = word at Hall net address changes while turning by hand.

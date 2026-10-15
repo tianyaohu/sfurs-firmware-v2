@@ -89,13 +89,13 @@ int main(int argc, char **argv) {
     if (index<=3) {
       wheel_bench_tick(19001); assert(sends==8 && id==0x78f);
       complete_stop(19001); assert(sends==10 && wheel_bench_state==BENCH_IDLE);
-      arm(19603); assert(wheel_bench_result==4); /* cooldown */
-      arm(19604); assert(wheel_bench_state==BENCH_ARMED);
+      arm(19353); assert(wheel_bench_result==4); /* cooldown */
+      arm(19354); assert(wheel_bench_state==BENCH_ARMED);
     } else {
       wheel_bench_tick(5001); assert(sends==6 && id==0x78f);
       complete_stop(5001); assert(sends==8 && wheel_bench_state==BENCH_IDLE);
-      arm(5603); assert(wheel_bench_result==4); /* cooldown */
-      arm(5604); assert(wheel_bench_state==BENCH_ARMED);
+      arm(5353); assert(wheel_bench_result==4); /* cooldown */
+      arm(5354); assert(wheel_bench_state==BENCH_ARMED);
     }
   } else if (test == 10) {
     arm(0); wheel_bench_tick(5000); run(5001);

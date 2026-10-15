@@ -148,7 +148,7 @@ class Bench:
         except RuntimeError:
             res = self.read(a["result"])
             raise RuntimeError(
-                f"ARM rejected (result={res}); 0.5 s cooldown? hold SPACE "
+                f"ARM rejected (result={res}); 0.25 s cooldown? hold SPACE "
                 "again shortly / check FAULT (confirm wheel stopped first)")
         self.t.write32(a["request"], RUN2)
         self._wait(a["state"], 2, "RUN")

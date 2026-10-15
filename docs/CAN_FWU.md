@@ -60,6 +60,32 @@ Host ACK budget 100 ms per frame (matches bench); target idles out after 2 s.
 - [ ] Widen the app's exact-match CAN mask filter to accept `0x600|dev`.
 - [ ] Bench-test ENTER→ERASE→DATA→VERIFY→JUMP on one wheel (NE) first.
 
+## Motor app image (offset build → embedded payload)
+
+The blink path above stays as-is for acceptance; a motor application uses
+the same wire path with a different embedded payload:
+
+1. Build the motor app as an offset ELF: `FLASH ORIGIN 0x08004000
+   LENGTH 110K` (see `tests/esc_blink/app.ld` for the slot shape),
+   `.isr_vector` at `0x08004000`, last 16 bytes of SRAM reserved for the
+   boot mailbox (`0x20007FF0`, never stack/data/bss).
+2. Generate the Nucleo payload (validates slot size, SRAM entry SP, reset
+   vector, and IEEE CRC32 against the canonical headers):
+   ```sh
+   python3 scripts/fwu_image.py --elf motor_app.elf \
+     --output CM7/Core/Src/fwu_test_image.c
+   # or from a raw binary starting at the vector table:
+   python3 scripts/fwu_image.py --bin motor_app.bin \
+     --output CM7/Core/Src/fwu_test_image.c
+   ```
+   Oversized images, non-SRAM/misaligned entry SPs, and out-of-image
+   reset targets are rejected before anything is written.
+3. Rebuild the Nucleo firmware with the generated file compiled in place
+   of the blink-generated payload, then run the standard update
+   (`docs/CAN_FWU_BLINK_TEST.md` one-cable sequence, `can_fwu_request=1`
+   while bench IDLE) and the SWD readback/CRC comparison.
+4. Host gate: `python3 tests/test_fwu_motor_image.py`.
+
 ## Files
 
 - `Common/Inc/can_fwu_protocol.h`, `Common/Src/can_fwu_protocol.c` — P2

@@ -59,6 +59,17 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 option(NUCLEO_MOTOR_ENABLED "Enable explicit wheel bench ARM/RUN commands" OFF)
+option(NUCLEO_IK_ENABLED "Exclusive keyboard IK mode (no bench/CAL/FWU pump)" OFF)
+if(NUCLEO_IK_ENABLED)
+    if(NOT NUCLEO_MOTOR_ENABLED)
+        message(FATAL_ERROR "IK requires NUCLEO_MOTOR_ENABLED=ON")
+    endif()
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NUCLEO_IK_ENABLED=1)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        Core/Src/ik_drive.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/rover_kinematics.c
+    )
+endif()
 if(NUCLEO_MOTOR_ENABLED)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE FWU_BLINK_BENCH_ONLY=0U)
 else()
@@ -113,7 +124,6 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))
     message(ERROR "Generated code requires C11 or higher")
 endif()
-
 
 
 

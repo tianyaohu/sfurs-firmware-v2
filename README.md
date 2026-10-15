@@ -19,6 +19,14 @@ are ignored.
 See `.opencode/skills/nucleo-h755-build/SKILL.md` for the supported
 build/flash flow (CM7 / CM4, ST-LINK probe selection, STM32CubeProgrammer).
 
+## Omni-wheel keyboard IK
+
+See [keyboard IK setup](docs/KEYBOARD_IK.md) for the separate, opt-in CM7
+IK image and keyboard TUI, and [geometry notes](docs/OMNI_KINEMATICS.md)
+for provisional measurements. The normal single-wheel TUI is unchanged.
+The current ESC interface requires stopping before changing direction;
+continuous steering is not implemented.
+
 ## Relationship to firmware-v2
 
 This repository is intended to eventually replace the old `firmware-v2`

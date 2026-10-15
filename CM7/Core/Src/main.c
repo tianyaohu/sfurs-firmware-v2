@@ -22,6 +22,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "wheel_bench.h"
+#if NUCLEO_IK_ENABLED
+#include "ik_drive.h"
+#endif
 #include "can_fwu_host.h"
 #include "fwu_test_image.h"
 #include "boot_entry.h"
@@ -348,6 +351,25 @@ Error_Handler();
     /* USER CODE BEGIN 3 */
     (void)wheel_bench_motor_enabled; /* Retain debugger-visible build identity. */
     uint32_t now = HAL_GetTick();
+#if NUCLEO_IK_ENABLED
+    /* Exclusive IK image: reuse the existing CAN adapter, never run another
+     * producer (single-wheel bench, CAL or FWU) alongside it. No ESC changes. */
+    (void)ik_drive_abi; /* Retain the debugger-visible identity with linker GC. */
+    ik_drive_tick(now);
+    if ((uint32_t)(now - heartbeat_tick) >= 500U) {
+      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+      heartbeat_tick = now;
+    }
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14,
+                     ik_drive_state == IK_FAULT ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    /* No telemetry polling in v1; drain unsolicited replies, bounded per pass.
+     * TUI RPM values are commanded targets, not measured feedback. */
+    for (uint32_t i = 0; i < 8U &&
+         HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) != 0U; ++i) {
+      (void)HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &can_rx_header, can_rx_data);
+    }
+    continue;
+#endif
     if (WHEEL_BENCH_MODE != 0U && FWU_BLINK_BENCH_ONLY == 0U) {
       wheel_bench_button(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
       wheel_bench_tick(now);

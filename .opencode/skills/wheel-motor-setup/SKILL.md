@@ -12,6 +12,8 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
   `scripts/keyboard_spin.py` TUI (pyOCD attach to the Nucleo probe).
 - ESC firmware source: `firmware-v2/HW/B-G431B-ESC1/motor_config/`
   (built by `build_cli.py`); this repo holds the Nucleo sender + TUI.
+- ESC application updates go over CAN, not SWD: see the `can-fwu-update`
+  skill (protocol v2, 16 KiB boot + 110 KiB app + validity page).
 
 | Wheel | Probe serial       | CAN ID | ARM frame | Speed frame |
 |-------|--------------------|--------|-----------|-------------|

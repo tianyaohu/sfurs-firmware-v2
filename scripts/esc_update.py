@@ -23,6 +23,7 @@ import hashlib
 import json
 import pathlib
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -245,6 +246,11 @@ def main():
     if failed:
         raise RuntimeError(f"verification failed: {failed}; backup in {out}")
     print(f"{w}: installed and verified ({', '.join(checks)})", flush=True)
+    # Keep the installed ELF: the next run identifies this app (and reads its
+    # Vbus) after build/ has been rebuilt.
+    known_dir = BACKUPS / "known-apps"
+    known_dir.mkdir(exist_ok=True)
+    shutil.copy2(app_elf, known_dir / f"motor_{w}_drive_{sha(app)[:12]}.elf")
 
     if not args.keep_updater:
         program_nucleo(drive, out / "nucleo-drive.log")

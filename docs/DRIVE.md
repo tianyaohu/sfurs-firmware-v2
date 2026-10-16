@@ -101,9 +101,12 @@ Motor constants in `pmsm_motor_parameters.h` are the Workbench placeholder
 (Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM). Measured by capture on all four motors:
 dq R 0.30–0.32 Ω (includes switches and shunts), L 135–150 µH, τ ≈ 0.45 ms;
 current PI 4000/4400 is matched to those. Ke is not measured yet. Every
-capture also shows a few current-sense disturbances (a single ~0.5 A false
-sample the loop then reacts to for ~0.3 ms); FDCAN1 runs at NVIC priority 0,
-above the ADC/FOC interrupt (2), which is the first suspect.
+capture also shows ~4 corrupted current samples per 512 (0.2–1 A off for one
+period; the loop then reacts for ~0.3 ms). At the capture's fixed angle each
+shows ΔIq ≈ −0.55·ΔId, i.e. the phase-U reading alone is wrong. Phase U is on
+ADC1 with the Vbus and temperature regular conversions; that collision is the
+open lead. Not CAN: moving FDCAN1 below the FOC interrupt (NVIC 0 → 3, kept
+since MCSDK expects its interrupts to preempt) left the count unchanged.
 
 ## Kinematics
 

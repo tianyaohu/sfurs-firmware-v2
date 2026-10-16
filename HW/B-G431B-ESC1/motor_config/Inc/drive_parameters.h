@@ -73,13 +73,15 @@
 #define TFDIFFERENTIAL_TERM_ENABLING        DISABLE
 
 /* Speed PI in current counts (544/A) per RPM of error (SPEED_UNIT = U_RPM).
- * Kp 4096/256 = 16 counts/RPM: a 100 RPM error asks for ~3 A.
- * Ki 4424/16384 per 1 ms: a held 30 RPM error adds ~15 A/s, so a stalled
- * wheel reaches full torque in a fraction of a second. Tunable over CAN
+ * Kp 1024/256 = 4 counts/RPM: a 100 RPM error asks for ~0.75 A.
+ * Ki 553/16384 per 1 ms: a held 30 RPM error adds ~1.9 A/s.
+ * Provisional, wheels raised (2026-10-16): 4096/4424 limit-cycled at +-6 A
+ * (+-300 RPM at a 60 RPM command); these hold the command with Iq ~0.1 A.
+ * Retune after the current loop and on the ground. Tunable over CAN
  * CONFIG_SET without reflashing. Positive: +Iq accelerates in +Hall
  * direction once HALL_PHASE_SHIFT is measured (CAN HALL_ALIGN). */
-#define PID_SPEED_KP_DEFAULT                4096
-#define PID_SPEED_KI_DEFAULT                4424
+#define PID_SPEED_KP_DEFAULT                1024
+#define PID_SPEED_KI_DEFAULT                553
 #define PID_SPEED_KD_DEFAULT                0
 
 /* Speed control loop */

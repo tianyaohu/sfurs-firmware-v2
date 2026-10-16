@@ -74,12 +74,14 @@ The result lives in RAM. Bake it in with
 
 ## Tuning
 
-Speed PI (counts per RPM of error, `SPEED_UNIT = U_RPM`): Kp 4096/256 =
-16 counts/RPM (100 RPM error → 3 A), Ki 4424/16384 per ms. These are
-first-principles defaults. Tune live without reflashing:
-`scripts/esc_tool.py set all kp 6000` (IDLE only, RAM only), then copy good
-values into `drive_parameters.h`. Free-air oscillation with stable ground
-behaviour is expected: the robot's inertia is part of the plant.
+Speed PI (counts per RPM of error, `SPEED_UNIT = U_RPM`): Kp 1024/256 =
+4 counts/RPM (100 RPM error → 0.75 A), Ki 553/16384 per ms. Chosen with all
+four wheels raised: Kp 4096 / Ki 4424 limit-cycled at ±6 A (loud buzz, no
+rotation); 1024/553 holds ±60 and 120 RPM with Iq ≈ 0.1 A. At 30–60 RPM the
+Hall speed estimate itself scatters by about ±25 RPM whatever the gains. On
+the ground the robot's inertia is part of the plant, so retune there. Tune
+live without reflashing: `scripts/esc_tool.py set all kp 2048` (IDLE only,
+RAM only), then copy good values into `drive_parameters.h`.
 
 Motor constants (`pmsm_motor_parameters.h`, from the Workbench profile, not
 measured on these motors): 8 pole pairs, Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM.

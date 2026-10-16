@@ -1,0 +1,20 @@
+# Interactive dev container. Repo is mounted (not copied), so edits, build
+# outputs and git state live on the host, owned by the host user via UID/GID
+# build args. USB is passed through for ST-LINK probe access.
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: sfurs-firmware-dev
+    working_dir: /work/sfurs_firmware_v2
+    volumes:
+      # This checkout, whatever its host directory name.
+      - .:/work/sfurs_firmware_v2
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    stdin_open: true
+    tty: true

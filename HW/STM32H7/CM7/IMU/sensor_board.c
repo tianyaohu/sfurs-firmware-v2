@@ -31,6 +31,7 @@
  * Author:        Bandits-FC SFURS <sfurs@sfu.ca>                     *
  ************************************************************************/
 
+#include <stddef.h>
 #include "stm32h7xx_hal.h"
 #include "sensor_board.h"
 

@@ -60,17 +60,46 @@
 #define HALL_ALIGN_MAGIC 0x4E4C4148U /* "HALN" */
 /* CONFIG_SET: uint16 key (ESC_CFG_*), int16 value. IDLE only, RAM only. */
 #define CONFIG_SET   (10U << 7)
+/* IDENT_READ (any payload) -> IDENT_REPLY: uint32 app CRC32, uint32 app size,
+ * from the bootloader's validity record. The bootloader checks the flash
+ * against that record before every jump, so a running app is that image. */
+#define IDENT_READ   (3U << 7)
+#define IDENT_REPLY  (11U << 7)
+/* CAPTURE: one current-loop step test (no torque) and its readout.
+ *  word = ESC_CAPTURE_START << 24 | step mA: from IDLE only, hold the rotor at
+ *   a forced electrical angle with ESC_CAPTURE_HOLD_MA of d-axis current, then
+ *   step the Id reference to step mA (<= IQMAX) for the rest of
+ *   ESC_CAPTURE_SAMPLES FOC periods, recording every period. Iq ref stays 0.
+ *  word = ESC_CAPTURE_READ << 24 | bank << 16 | count << 10 | first:
+ *   count (1..32) CAPTURE_REPLY frames, uint16 tag (bank << 12 | sample) and
+ *   three int16:
+ *     bank 0: Id, Iq (counts, ESC_COUNTS_PER_AMP), Vd (s16V)
+ *     bank 1: Vq (s16V), Id reference (counts), electrical angle (s16)
+ *     bank 3, sample 0: status (ESC_CAPTURE_*), Vbus centivolts at the step,
+ *       samples recorded.
+ *   s16V: 32767 = Vbus / sqrt(3) phase-voltage amplitude. */
+#define CAPTURE      (4U << 7)
+#define CAPTURE_REPLY (14U << 7)
+#define ESC_CAPTURE_START 0xC5U
+#define ESC_CAPTURE_READ  0x3DU
+#define ESC_CAPTURE_SAMPLES 512U
+#define ESC_CAPTURE_PRE 64U       /* samples at the hold current before the step */
+#define ESC_CAPTURE_HOLD_MA 1000U
+#define ESC_CAPTURE_INFO_BANK 3U
+enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
+       ESC_CAPTURE_ABORTED = 3, ESC_CAPTURE_REJECTED = 4 };
 #define MOTOR_STOP   (15U << 7)
 
 #define ESC_COUNTS_PER_AMP 544
 
+/* CURRENT_KP/KI set both the Iq and Id PI gains (dividers TF_KPDIV/TF_KIDIV). */
 enum { ESC_CFG_SPEED_KP = 1, ESC_CFG_SPEED_KI = 2, ESC_CFG_HALL_SHIFT_DEG = 3,
-       ESC_CFG_IQ_MAX_MA = 4 };
+       ESC_CFG_IQ_MAX_MA = 4, ESC_CFG_CURRENT_KP = 5, ESC_CFG_CURRENT_KI = 6 };
 enum { ESC_STOP_NONE = 0, ESC_STOP_COMMAND = 1, ESC_STOP_TIMEOUT = 2,
-       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4 };
+       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5 };
 #define ESC_FLAG_ACTIVE  0x10U /* streaming speed commands accepted */
 #define ESC_FLAG_DERATED 0x20U /* I2T limit reached, current derated */
-#define ESC_FLAG_ALIGN   0x40U /* Hall alignment running */
+#define ESC_FLAG_ALIGN   0x40U /* forced-angle test running: Hall alignment or capture */
 #define ESC_FLAG_ALIGNED 0x80U /* Hall shift known: built in or measured this boot */
 enum { ESC_ALIGN_NONE = 0, ESC_ALIGN_OK = 1, ESC_ALIGN_REVERSED = 2,
        ESC_ALIGN_NO_EDGES = 3, ESC_ALIGN_ABORTED = 4, ESC_ALIGN_RUNNING = 5 };

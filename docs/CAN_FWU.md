@@ -8,11 +8,23 @@ runs a separate **updater image** carrying one ESC application.
 
 ```sh
 scripts/build_all.py                       # ESC apps, payloads, updaters, drive image
-scripts/esc_update.py NE --battery-off     # one wheel; repeat for SE SW NW
+scripts/esc_update.py NE --can             # one wheel; repeat for SE SW NW
 ```
 
-Per wheel: battery OFF, that ESC's ST-LINK USB and the Nucleo USB connected.
-`esc_update.py` backs up the full ESC flash to `esc-backups/update-<W>-<UTC>/`,
+`--can` needs only the Nucleo USB; the battery may be ON. Through the drive
+image it checks that all four ESCs answer, are IDLE and report Vbus, records
+the wheel's IDENT (CRC32 and size of the running app). The updater image
+then sends the boot-entry request `0x650|sel`, which the app accepts only
+when idle with no fault: it resets into its bootloader, which listens until
+ENTER. One transfer; the bootloader checks the CRC at VERIFY before it
+commits the validity record and jumps. Back on the drive image, the wheel's
+IDENT must equal the built image and all four must be IDLE. A failed
+transfer leaves that ESC in its bootloader, listening: rerun with
+`--can --target-in-boot`. No flash backup on this path.
+
+`--battery-off` is the SWD path, for an ESC whose app can't take the boot
+request (first install, or a broken app). Per wheel: battery OFF, that ESC's
+ST-LINK USB and the Nucleo USB connected. It backs up the full ESC flash to `esc-backups/update-<W>-<UTC>/`,
 flashes the updater onto the Nucleo, resets the ESC to open the bootloader's
 3 s window, transfers once (no automatic retry), verifies by readback
 (bootloader unchanged, app bytes, metadata, VTOR, app running), then puts the

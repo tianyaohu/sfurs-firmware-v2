@@ -27,13 +27,22 @@ struct drive_app_state {
   uint32_t align_phase, align_result;
   uint32_t align_edges_fwd, align_edges_back, align_wrong_dir;
   int32_t align_error_mean; /* s16 degrees added to the previous shift */
+  uint32_t capture_phase, capture_status; /* ESC_CAPTURE_* */
   uint32_t speed_commands, status_replies, rejected;
 };
 extern volatile struct drive_app_state drive_app;
 
-/* Forced electrical angle for Hall alignment, read by FOC_CurrControllerM1. */
+/* Forced electrical angle for Hall alignment and capture, read by
+ * FOC_CurrControllerM1. */
 extern volatile uint8_t drive_align_force;
 extern volatile int16_t drive_align_angle;
+
+/* Current-loop capture, called from FOC_CurrControllerM1 every FOC period:
+ * _ref may replace the Id reference before the PI controllers, _store records
+ * the period (measured Iqd, applied Vqd after circle limitation). */
+void drive_capture_isr_ref(int16_t *id_ref);
+void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
+                             int16_t id_ref, int16_t el_angle);
 
 void drive_app_init(void);
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length);

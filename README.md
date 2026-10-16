@@ -26,7 +26,7 @@ it from the keyboard over the Nucleo's ST-LINK.
 ```sh
 scripts/build_all.py                          # everything into build/ (no hardware)
 python3 tests/run_all.py                      # host tests (no hardware)
-scripts/esc_update.py NE --battery-off        # install ESC app over CAN, per wheel
+scripts/esc_update.py NE --can                # install ESC app over CAN, per wheel
 scripts/esc_tool.py align all                 # battery ON, wheels raised
 scripts/keyboard_drive.py --speed 0.5         # WASD move, QE rotate, X quit
 ```

@@ -538,10 +538,13 @@ inline uint16_t FOC_CurrControllerM1(void)
   PWMC_GetPhaseCurrents(pwmcHandle[M1], &Iab);
   Ialphabeta = MCM_Clarke(Iab);
   Iqd = MCM_Park(Ialphabeta, hElAngle);
+  qd_t Iqdref = FOCVars[M1].Iqdref;
+  /* Current-loop capture (drive_app.c) steps the Id reference sample-exactly. */
+  drive_capture_isr_ref(&Iqdref.d);
   if (PWMC_GetPWMState(pwmcHandle[M1]) == true)
   {
-    Vqd.q = PI_Controller(pPIDIq[M1], (int32_t)(FOCVars[M1].Iqdref.q) - Iqd.q);
-    Vqd.d = PI_Controller(pPIDId[M1], (int32_t)(FOCVars[M1].Iqdref.d) - Iqd.d);
+    Vqd.q = PI_Controller(pPIDIq[M1], (int32_t)(Iqdref.q) - Iqd.q);
+    Vqd.d = PI_Controller(pPIDId[M1], (int32_t)(Iqdref.d) - Iqd.d);
   }
   else
   {
@@ -549,6 +552,7 @@ inline uint16_t FOC_CurrControllerM1(void)
     Vqd.d = 0;
   }
   Vqd = Circle_Limitation(&CircleLimitationM1, Vqd);
+  drive_capture_isr_store(Iqd.d, Iqd.q, Vqd.d, Vqd.q, Iqdref.d, hElAngle);
   Valphabeta = MCM_Rev_Park(Vqd, hElAngle);
 
   if (PWMC_GetPWMState(pwmcHandle[M1]) == true)

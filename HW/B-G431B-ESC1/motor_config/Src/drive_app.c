@@ -25,6 +25,22 @@
 enum { ALIGN_IDLE, ALIGN_START, ALIGN_RAMP, ALIGN_HOLD, ALIGN_FWD, ALIGN_BACK,
        ALIGN_STOPPING };
 
+/* Current-loop capture: the same forced-angle hold as alignment but at a
+ * fixed angle, so the rotor settles on the d axis and an Id step makes no
+ * torque. The FOC ISR applies the step and records every period. */
+#define CAPTURE_START_TIMEOUT_MS 1000U
+#define CAPTURE_RAMP_MS 200U
+#define CAPTURE_HOLD_MS 300U
+#define CAPTURE_RUN_TIMEOUT_MS 200U /* 512 samples at 16 kHz take 32 ms */
+#define CAPTURE_READ_MAX 32U
+enum { CAPTURE_IDLE, CAPTURE_STARTING, CAPTURE_RAMP, CAPTURE_HOLD, CAPTURE_RUN,
+       CAPTURE_STOPPING };
+
+/* Bootloader validity record (can_fwu_validity.h): magic, ~magic, size, crc. */
+#ifndef DRIVE_APP_VALIDITY
+#define DRIVE_APP_VALIDITY ((const volatile uint32_t *)0x0801F800U)
+#endif
+
 volatile struct drive_app_state drive_app;
 volatile uint8_t drive_align_force;
 volatile int16_t drive_align_angle;
@@ -32,8 +48,17 @@ volatile int16_t drive_align_angle;
 /* ISR -> tick mailbox. Each payload is one word, published before its count. */
 static volatile uint32_t rx_speed_word, rx_speed_count, rx_stop_count;
 static volatile uint32_t rx_align_count, rx_config_word, rx_config_count;
-static volatile uint8_t status_pending, diag_pending;
-static uint32_t seen_speed, seen_stop, seen_align, seen_config;
+static volatile uint32_t rx_capture_word, rx_capture_count;
+static volatile uint32_t rx_read_word, rx_read_count;
+static volatile uint8_t status_pending, diag_pending, ident_pending;
+static uint32_t seen_speed, seen_stop, seen_align, seen_config, seen_capture, seen_read;
+
+/* FOC ISR <-> tick: the tick arms, the ISR records and disarms when full. */
+static int16_t capture_buf[ESC_CAPTURE_SAMPLES][6];
+static volatile uint32_t capture_armed, capture_index;
+static volatile int16_t capture_step_counts;
+static uint32_t capture_ms, capture_vbus_cv;
+static uint32_t read_next, read_end, read_bank; /* poll context only */
 
 static uint32_t align_ms, align_prev_hall;
 static int16_t align_saved_shift, align_ref;
@@ -69,8 +94,35 @@ void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length)
     case DIAG_READ: diag_pending = 1U; break;
     case HALL_ALIGN: if (word == HALL_ALIGN_MAGIC) ++rx_align_count; break;
     case CONFIG_SET: rx_config_word = word; ++rx_config_count; break;
+    case IDENT_READ: ident_pending = 1U; break;
+    case CAPTURE:
+      if ((word >> 24) == ESC_CAPTURE_START) { rx_capture_word = word; ++rx_capture_count; }
+      else if ((word >> 24) == ESC_CAPTURE_READ) { rx_read_word = word; ++rx_read_count; }
+      break;
     default: break;
   }
+}
+
+void drive_capture_isr_ref(int16_t *id_ref)
+{
+  if (capture_armed && capture_index >= ESC_CAPTURE_PRE) *id_ref = capture_step_counts;
+}
+
+void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
+                             int16_t id_ref, int16_t el_angle)
+{
+  if (!capture_armed) return;
+  const uint32_t i = capture_index;
+  int16_t *s = capture_buf[i];
+  s[0] = id; s[1] = iq; s[2] = vd; s[3] = vq; s[4] = id_ref; s[5] = el_angle;
+  capture_index = i + 1U;
+  if (i + 1U >= ESC_CAPTURE_SAMPLES) capture_armed = 0U;
+}
+
+static uint32_t vbus_centivolts(void)
+{
+  return (uint32_t)VBS_GetAvBusVoltage_d(&BusVoltageSensor_M1._Super) *
+         BusVoltageSensor_M1._Super.ConversionFactor * 100U / 65536U;
 }
 
 static void stop(uint32_t reason)
@@ -193,6 +245,80 @@ static void align_begin(void)
   if (!MC_StartMotor1()) align_finish(ESC_ALIGN_ABORTED);
 }
 
+static void capture_finish(uint32_t status)
+{
+  capture_armed = 0U;
+  drive_app.capture_status = status;
+  (void)MC_StopMotor1();
+  drive_app.stop_reason = ESC_STOP_CAPTURE;
+  drive_app.capture_phase = CAPTURE_STOPPING;
+}
+
+static void capture_begin(uint32_t step_ma)
+{
+  if (step_ma > (uint32_t)(IQMAX_A * 1000)) {
+    drive_app.capture_status = ESC_CAPTURE_REJECTED;
+    ++drive_app.rejected;
+    return;
+  }
+  capture_step_counts = (int16_t)(step_ma * (uint32_t)CURRENT_CONV_FACTOR / 1000U);
+  capture_armed = 0U;
+  capture_index = 0U;
+  capture_ms = 0U;
+  drive_align_angle = 0;
+  drive_align_force = 1U;
+  MC_SetCurrentReferenceMotor1((qd_t){ .q = 0, .d = 0 });
+  drive_app.capture_status = ESC_CAPTURE_RUNNING;
+  drive_app.capture_phase = CAPTURE_STARTING;
+  if (!MC_StartMotor1()) capture_finish(ESC_CAPTURE_ABORTED);
+}
+
+static void capture_tick(uint16_t state)
+{
+  const uint32_t phase = drive_app.capture_phase;
+  if (phase == CAPTURE_IDLE) return;
+  if (phase == CAPTURE_STOPPING) {
+    if (state == IDLE || state == FAULT_OVER) {
+      drive_align_force = 0U;
+      drive_app.capture_phase = CAPTURE_IDLE;
+    }
+    return;
+  }
+  ++capture_ms;
+  if (state == FAULT_NOW || state == FAULT_OVER) {
+    capture_finish(ESC_CAPTURE_ABORTED);
+    return;
+  }
+  switch (phase) {
+    case CAPTURE_STARTING:
+      if (state == RUN) { drive_app.capture_phase = CAPTURE_RAMP; capture_ms = 0U; }
+      else if (capture_ms > CAPTURE_START_TIMEOUT_MS) capture_finish(ESC_CAPTURE_ABORTED);
+      break;
+    case CAPTURE_RAMP: {
+      const qd_t iqd = { .q = 0, .d = (int16_t)(ESC_CAPTURE_HOLD_MA * CURRENT_CONV_FACTOR / 1000U *
+                                               capture_ms / CAPTURE_RAMP_MS) };
+      MC_SetCurrentReferenceMotor1(iqd);
+      if (capture_ms >= CAPTURE_RAMP_MS) { drive_app.capture_phase = CAPTURE_HOLD; capture_ms = 0U; }
+      break;
+    }
+    case CAPTURE_HOLD:
+      if (capture_ms >= CAPTURE_HOLD_MS) {
+        capture_vbus_cv = vbus_centivolts();
+        capture_index = 0U;
+        capture_armed = 1U; /* the ISR steps Id after ESC_CAPTURE_PRE samples */
+        drive_app.capture_phase = CAPTURE_RUN;
+        capture_ms = 0U;
+      }
+      break;
+    case CAPTURE_RUN:
+      if (!capture_armed) capture_finish(ESC_CAPTURE_DONE);
+      else if (capture_ms > CAPTURE_RUN_TIMEOUT_MS) capture_finish(ESC_CAPTURE_ABORTED);
+      break;
+    default:
+      break;
+  }
+}
+
 static void apply_config(uint32_t word)
 {
   const int16_t value = (int16_t)(word >> 16);
@@ -207,6 +333,16 @@ static void apply_config(uint32_t word)
       if (value <= 0 || value > (int16_t)(IQMAX_A * 1000)) { ++drive_app.rejected; return; }
       drive_app.iq_max_counts = (int32_t)value * (int32_t)CURRENT_CONV_FACTOR / 1000;
       if (!drive_app.derated) set_iq_limit(drive_app.iq_max_counts);
+      break;
+    case ESC_CFG_CURRENT_KP:
+      if (value < 0) { ++drive_app.rejected; return; }
+      PID_SetKP(&PIDIqHandle_M1, value);
+      PID_SetKP(&PIDIdHandle_M1, value);
+      break;
+    case ESC_CFG_CURRENT_KI:
+      if (value < 0) { ++drive_app.rejected; return; }
+      PID_SetKI(&PIDIqHandle_M1, value);
+      PID_SetKI(&PIDIdHandle_M1, value);
       break;
     default: ++drive_app.rejected; break;
   }
@@ -267,6 +403,7 @@ void drive_app_tick(void)
   uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
   const uint32_t speed_count = rx_speed_count, stop_count = rx_stop_count;
   const uint32_t align_count = rx_align_count, config_count = rx_config_count;
+  const uint32_t capture_count = rx_capture_count;
   const int stop_received = stop_count != seen_stop;
   const int speed_received = speed_count != seen_speed;
   seen_stop = stop_count;
@@ -281,6 +418,9 @@ void drive_app_tick(void)
     drive_app.fault_latched = 0U;
     if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING) {
       align_finish(ESC_ALIGN_ABORTED);
+    } else if (drive_app.capture_phase != CAPTURE_IDLE &&
+               drive_app.capture_phase != CAPTURE_STOPPING) {
+      capture_finish(ESC_CAPTURE_ABORTED);
     } else if (state == FAULT_OVER) {
       /* Clear a fault whose cause is gone (e.g. undervolt latched on USB power
        * before the battery came on); align and boot entry need IDLE. */
@@ -292,19 +432,31 @@ void drive_app_tick(void)
     drive_app.active = 0U;
   }
   align_tick(state);
+  capture_tick(state);
 
-  const int idle = drive_app.align_phase == ALIGN_IDLE && !drive_app.active;
+  const int idle = drive_app.align_phase == ALIGN_IDLE &&
+                   drive_app.capture_phase == CAPTURE_IDLE && !drive_app.active;
   if (align_count != seen_align) {
     seen_align = align_count;
     if (idle && state == IDLE && !stop_received) align_begin();
     else ++drive_app.rejected;
+  }
+  if (capture_count != seen_capture) {
+    seen_capture = capture_count;
+    if (idle && state == IDLE && !stop_received && drive_app.align_phase == ALIGN_IDLE) {
+      capture_begin(rx_capture_word & 0xFFFFU);
+    } else {
+      drive_app.capture_status = ESC_CAPTURE_REJECTED;
+      ++drive_app.rejected;
+    }
   }
   if (config_count != seen_config) {
     seen_config = config_count;
     if (idle && state == IDLE) apply_config(rx_config_word);
     else ++drive_app.rejected;
   }
-  if (speed_received && drive_app.align_phase == ALIGN_IDLE && !stop_received)
+  if (speed_received && drive_app.align_phase == ALIGN_IDLE &&
+      drive_app.capture_phase == CAPTURE_IDLE && !stop_received)
     speed_command(rx_speed_word, state);
 
   if ((uint32_t)(now - drive_app.last_command_ms) >= ESC_COMMAND_TIMEOUT_MS) {
@@ -317,7 +469,28 @@ void drive_app_tick(void)
 int drive_app_idle(void)
 {
   return !drive_app.active && drive_app.align_phase == ALIGN_IDLE &&
-         rx_speed_count == seen_speed && rx_align_count == seen_align;
+         drive_app.capture_phase == CAPTURE_IDLE && rx_speed_count == seen_speed &&
+         rx_align_count == seen_align && rx_capture_count == seen_capture;
+}
+
+static void put16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+
+static void put32(uint8_t *p, uint32_t v) { put16(p, v); put16(p + 2, v >> 16); }
+
+/* One CAPTURE_REPLY for sample i of bank read_bank. */
+static void capture_frame(uint8_t data[8], uint32_t i)
+{
+  put16(data, (read_bank << 12) | i);
+  if (read_bank == ESC_CAPTURE_INFO_BANK) {
+    put16(data + 2, drive_app.capture_status);
+    put16(data + 4, capture_vbus_cv);
+    put16(data + 6, capture_index);
+    return;
+  }
+  const int16_t *s = &capture_buf[i][read_bank == 0U ? 0 : 3];
+  put16(data + 2, (uint16_t)s[0]);
+  put16(data + 4, (uint16_t)s[1]);
+  put16(data + 6, (uint16_t)s[2]);
 }
 
 void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
@@ -329,7 +502,8 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     const uint8_t flags = (uint8_t)((drive_app.stop_reason & 0x0FU) |
         (drive_app.active ? ESC_FLAG_ACTIVE : 0U) |
         (drive_app.derated ? ESC_FLAG_DERATED : 0U) |
-        (drive_app.align_phase != ALIGN_IDLE ? ESC_FLAG_ALIGN : 0U) |
+        (drive_app.align_phase != ALIGN_IDLE || drive_app.capture_phase != CAPTURE_IDLE
+             ? ESC_FLAG_ALIGN : 0U) |
         (drive_app.aligned ? ESC_FLAG_ALIGNED : 0U));
     data[0] = (uint8_t)rpm; data[1] = (uint8_t)((uint16_t)rpm >> 8);
     data[2] = (uint8_t)iqd.q; data[3] = (uint8_t)((uint16_t)iqd.q >> 8);
@@ -342,8 +516,7 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     }
   }
   if (diag_pending) {
-    const uint32_t centivolts = (uint32_t)VBS_GetAvBusVoltage_d(&BusVoltageSensor_M1._Super) *
-        BusVoltageSensor_M1._Super.ConversionFactor * 100U / 65536U;
+    const uint32_t centivolts = vbus_centivolts();
     const uint16_t faults = MC_GetOccurredFaultsMotor1();
     const int16_t shift = s16_degrees(HALL_M1.PhaseShift);
     uint32_t load = (uint32_t)(drive_app.i2t_a2s * 100.0f / I2T_LIMIT_A2S);
@@ -354,6 +527,29 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     data[6] = (uint8_t)drive_app.align_result;
     data[7] = (uint8_t)load;
     if (send(DIAG_REPLY | MOTOR_CAN_ID, data)) diag_pending = 0U;
+  }
+  if (ident_pending) {
+    const volatile uint32_t *validity = DRIVE_APP_VALIDITY;
+    put32(data, validity[3]);     /* crc */
+    put32(data + 4, validity[2]); /* size */
+    if (send(IDENT_REPLY | MOTOR_CAN_ID, data)) ident_pending = 0U;
+  }
+  const uint32_t read_count = rx_read_count;
+  if (read_count != seen_read) {
+    seen_read = read_count;
+    const uint32_t word = rx_read_word;
+    read_bank = (word >> 16) & 0x3U;
+    read_next = read_bank == ESC_CAPTURE_INFO_BANK ? 0U : (word & 0x3FFU);
+    uint32_t count = read_bank == ESC_CAPTURE_INFO_BANK ? 1U : ((word >> 10) & 0x3FU);
+    if (count > CAPTURE_READ_MAX) count = CAPTURE_READ_MAX;
+    read_end = read_next + count;
+    if (read_end > ESC_CAPTURE_SAMPLES) read_end = ESC_CAPTURE_SAMPLES;
+    if (read_bank == 2U) read_end = read_next; /* no bank 2 */
+  }
+  while (read_next < read_end) {
+    capture_frame(data, read_next);
+    if (!send(CAPTURE_REPLY | MOTOR_CAN_ID, data)) break; /* FIFO full: next poll */
+    ++read_next;
   }
 }
 

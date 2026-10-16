@@ -3,20 +3,29 @@
 
   esc_tool.py status                    print all four wheels once
   esc_tool.py align FR|BR|BL|FL|all     measure + apply Hall phase shift (RAM)
-  esc_tool.py set WHEEL KEY VALUE       KEY: kp, ki, shift (deg), iqmax_ma (RAM)
+  esc_tool.py set WHEEL KEY VALUE       KEY: kp, ki (speed PI), current_kp,
+                                        current_ki (Id+Iq PI), shift (deg),
+                                        iqmax_ma (RAM)
+  esc_tool.py capture WHEEL [--step-ma 3000] [--out f.json]
+                                        current-loop step test: R, L, step
+                                        response, PI gains for 0.5/0.8/1 kHz
   esc_tool.py stop                      broadcast STOP; also clears a fault whose
                                         cause is gone (FAULT_OVER -> IDLE)
 
 align turns the wheel about 1/4 revolution forward and back at 2 A: battery
 ON, wheels off the ground. Results are lost on ESC reset; bake them into the
-per-wheel build with build_cli.py --hall-shift.
+per-wheel build with build_cli.py --hall-shift. capture holds the rotor with
+d-axis current (1 A, then the step): it may click into position but makes no
+torque; battery ON.
 """
 import argparse
+import json
 import pathlib
 import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import capture_analysis  # noqa: E402
 import ik_link  # noqa: E402
 
 NAMES = {name: (i, sel) for i, (name, _esc, sel) in enumerate(ik_link.WHEELS)}
@@ -47,10 +56,11 @@ def show(before, rows):
         if r is None or not r["status_count"] or (r0 and r0["status_count"] == r["status_count"]):
             print(f"{name}/{esc}: no reply")  # rows keep the last values; only a new count is live
             continue
+        app = f"{r['app_crc']:08X}/{r['app_size']}" if r["ident_count"] else "?"
         print(f"{name}/{esc}: {r['mc_state']:<10s} rpm {r['rpm']:5d}  Iq {r['iq_a']:5.2f} A  "
               f"Vbus {r['vbus_v']:5.2f} V  faults {','.join(r['fault_names']) or '-'}  "
               f"hall shift {r['hall_shift_deg']} deg ({'known' if r['aligned'] else 'NOT ALIGNED'})  "
-              f"align {r['align']}  stop {r['stop_reason']}")
+              f"align {r['align']}  stop {r['stop_reason']}  app {app}")
 
 
 def align(link, name, index, selector):
@@ -71,6 +81,25 @@ def align(link, name, index, selector):
     return row
 
 
+def capture(link, name, selector, args):
+    info, samples = link.capture(selector, args.step_ma)
+    a = capture_analysis.analyze(info, samples)
+    if args.out:
+        args.out.write_text(json.dumps(dict(wheel=name, step_ma=args.step_ma, info=info,
+                                            analysis=a, samples=samples)))
+    rise = f"{a['rise_us']:.0f} us" if a["rise_us"] is not None else "-"
+    settle = f"{a['settle_us']:.0f} us" if a["settle_us"] is not None else "not settled"
+    print(f"{name}: Vbus {a['vbus_v']:.2f} V, Id {a['hold_a']:.2f} -> {a['step_a']:.2f} A")
+    print(f"  R {a['r_ohm'] * 1e3:.0f} mOhm  L {a['l_h'] * 1e6:.0f} uH  tau {a['tau_ms']:.2f} ms  "
+          f"PWM delay {a['delay_periods']} periods")
+    print(f"  step: rise 10-90% {rise}, overshoot {a['overshoot_pct']:.1f}%, settle 5% {settle}, "
+          f"steady error {a['steady_error_a'] * 1e3:.0f} mA")
+    for fc in (500, 800, 1000):
+        kp, ki = capture_analysis.pi_gains(a["r_ohm"], a["l_h"], a["vbus_v"], fc_hz=fc)
+        print(f"  for {fc} Hz: current_kp {kp} current_ki {ki}")
+    return a
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -85,6 +114,10 @@ def main(argv=None):
     p.add_argument("wheel")
     p.add_argument("key", choices=sorted(ik_link.CONFIG_KEYS))
     p.add_argument("value", type=int)
+    p = sub.add_parser("capture")
+    p.add_argument("wheel")
+    p.add_argument("--step-ma", type=int, default=3000)
+    p.add_argument("--out", type=pathlib.Path)
     args = parser.parse_args(argv)
     session, link = ik_link.Link.open(args.sn, args.elf)
     try:
@@ -99,6 +132,9 @@ def main(argv=None):
             print("build flags: " + "  ".join(
                 f"{name}:--hall-shift {r['hall_shift_deg']}"
                 for (name, _i, _s), r in zip(wheels(args.wheel), results) if r["align_result"] == 1))
+        elif args.command == "capture":
+            for name, _i, sel in wheels(args.wheel):
+                capture(link, name, sel, args)
         elif args.command == "set":
             for name, _i, sel in wheels(args.wheel):
                 link.send_raw(*ik_link.config_frame(sel, args.key, args.value))

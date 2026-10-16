@@ -40,7 +40,7 @@ qd_t MC_GetIqdMotor1(void); qd_t MC_GetIqdrefMotor1(void);
 #include <stdint.h>
 typedef struct { int16_t kp, ki; int16_t up, low; int32_t iup, ilow; uint16_t kidiv; } PID_Handle_t;
 typedef struct { int16_t PhaseShift; int8_t Direction; uint8_t HallState; int16_t MeasuredElAngle; } HALL_Handle_t;
-extern PID_Handle_t PIDSpeedHandle_M1; extern HALL_Handle_t HALL_M1;
+extern PID_Handle_t PIDSpeedHandle_M1, PIDIqHandle_M1, PIDIdHandle_M1; extern HALL_Handle_t HALL_M1;
 static inline void PID_SetKP(PID_Handle_t *p, int16_t v) { p->kp = v; }
 static inline void PID_SetKI(PID_Handle_t *p, int16_t v) { p->ki = v; }
 static inline uint16_t PID_GetKIDivisor(PID_Handle_t *p) { return p->kidiv; }
@@ -56,6 +56,11 @@ typedef struct { uint16_t ConversionFactor; uint16_t raw; } BusVoltageSensor_Han
 typedef struct { BusVoltageSensor_Handle_t _Super; } RDivider_Handle_t;
 extern RDivider_Handle_t BusVoltageSensor_M1;
 static inline uint16_t VBS_GetAvBusVoltage_d(const BusVoltageSensor_Handle_t *p) { return p->raw; }
+''',
+"test_hooks.h": r'''
+#pragma once
+#include <stdint.h>
+extern uint32_t fake_validity[8];
 ''',
 "parameters_conversion.h": r'''
 #pragma once
@@ -78,7 +83,7 @@ HARNESS = r'''
 #include <stdlib.h>
 #include <string.h>
 
-PID_Handle_t PIDSpeedHandle_M1 = { .kidiv = 16384 };
+PID_Handle_t PIDSpeedHandle_M1 = { .kidiv = 16384 }, PIDIqHandle_M1, PIDIdHandle_M1;
 HALL_Handle_t HALL_M1;
 RDivider_Handle_t BusVoltageSensor_M1 = { ._Super = { .ConversionFactor = 34, .raw = 23831 } };
 
@@ -135,8 +140,26 @@ static void mf_step(void) {
 }
 static void tick(int n) { while (n--) { mf_step(); drive_app_tick(); motor_step(); } }
 static void rx(uint32_t id, uint32_t word) { uint8_t d[4]; CAN_PAYLOAD_FROM_U32(d, word); drive_app_can_rx(id, d, 4); }
+uint32_t fake_validity[8] = { 0x56414C49U, ~0x56414C49U, 45344U, 0xDEADBEEFU, 0x08004000U, 2U };
 static uint32_t sent_id; static uint8_t sent[8];
-static int send(uint32_t id, const uint8_t d[8]) { sent_id = id; memcpy(sent, d, 8); return 1; }
+static unsigned frames, send_budget = 1000000;
+static uint32_t frame_id[64]; static uint8_t frame[64][8];
+static int send(uint32_t id, const uint8_t d[8]) {
+  if (send_budget == 0) return 0;
+  --send_budget; sent_id = id; memcpy(sent, d, 8);
+  if (frames < 64) { frame_id[frames] = id; memcpy(frame[frames], d, 8); } ++frames; return 1;
+}
+static int16_t f16(const uint8_t *d) { return (int16_t)(d[0] | d[1] << 8); }
+/* FOC ISR: 16 periods per ms, Id follows its reference with lag; Vd = 0.5 V/A-ish */
+static int16_t foc_id;
+static void foc_isr(int n) {
+  while (n--) {
+    int16_t ref_d = iqdref.d; drive_capture_isr_ref(&ref_d);
+    if (state == RUN) foc_id = (int16_t)(foc_id + (ref_d - foc_id) / 4); else foc_id = 0;
+    drive_capture_isr_store(foc_id, 0, (int16_t)(2 * ref_d), 0, ref_d, drive_align_angle);
+  }
+}
+static void tick_isr(int n) { while (n--) { mf_step(); drive_app_tick(); foc_isr(16); motor_step(); } }
 static void speed_cmd(int rpm, int ms) { rx(SPEED_WRITE | 1U, ((uint32_t)(uint16_t)ms << 16) | (uint16_t)rpm); }
 static double shift_deg(void) { return HALL_M1.PhaseShift * 360.0 / 65536.0; }
 
@@ -222,12 +245,66 @@ int main(int argc, char **argv) {
     rx(CONFIG_SET | 1U, ((uint32_t)(uint16_t)7000 << 16) | ESC_CFG_SPEED_KP); tick(1);
     assert(PIDSpeedHandle_M1.kp == 5000 && drive_app.rejected == 2);
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(1); assert(drive_app.align_phase == 0);
+    rx(MOTOR_STOP | 1U, 0); tick(3); assert(state == IDLE);
+    rx(CONFIG_SET | 1U, ((uint32_t)1500 << 16) | ESC_CFG_CURRENT_KP); tick(1);
+    rx(CONFIG_SET | 1U, ((uint32_t)900 << 16) | ESC_CFG_CURRENT_KI); tick(1);
+    assert(PIDIqHandle_M1.kp == 1500 && PIDIdHandle_M1.kp == 1500);
+    assert(PIDIqHandle_M1.ki == 900 && PIDIdHandle_M1.ki == 900);
+    rx(CONFIG_SET | 1U, ((uint32_t)(uint16_t)-5 << 16) | ESC_CFG_CURRENT_KP); tick(1);
+    assert(PIDIqHandle_M1.kp == 1500 && drive_app.rejected == 4);
   } else if (scenario == 8) { /* STOP aborts alignment; idle check for boot entry */
     assert(drive_app_idle());
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); assert(!drive_app_idle()); tick(600);
     rx(MOTOR_STOP | 1U, 0); tick(5);
     assert(drive_app.align_result == ESC_ALIGN_ABORTED && !drive_align_force && state == IDLE);
     assert(fabs(shift_deg() - 120.0) < 0.01 && drive_app_idle());
+  } else if (scenario == 10) { /* IDENT_READ reports the bootloader validity record */
+    rx(IDENT_READ | 1U, 0); drive_app_poll(send);
+    assert(sent_id == (IDENT_REPLY | 1U));
+    assert((uint32_t)(sent[0] | sent[1] << 8 | sent[2] << 16 | (uint32_t)sent[3] << 24) == 0xDEADBEEFU);
+    assert((uint32_t)(sent[4] | sent[5] << 8 | sent[6] << 16 | (uint32_t)sent[7] << 24) == 45344U);
+    rx(IDENT_READ | 2U, 0); frames = 0; drive_app_poll(send); assert(frames == 0); /* other wheel */
+  } else if (scenario == 11) { /* capture: hold, sample-exact Id step, readout */
+    const uint32_t start = (uint32_t)ESC_CAPTURE_START << 24;
+    rx(CAPTURE | 1U, start | 7000U); tick_isr(2); /* above IQMAX */
+    assert(drive_app.capture_status == ESC_CAPTURE_REJECTED && starts == 0);
+    rx(CAPTURE | 1U, start | 3000U); tick_isr(2);
+    assert(drive_align_force && drive_align_angle == 0 && starts == 1);
+    assert(drive_app.capture_status == ESC_CAPTURE_RUNNING && !drive_app_idle());
+    speed_cmd(100, 100); tick_isr(1); assert(starts == 1); /* speed ignored */
+    rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick_isr(1); assert(drive_app.align_phase == 0);
+    int t = 0; while (drive_app.capture_status == ESC_CAPTURE_RUNNING && t < 2000) { tick_isr(1); ++t; }
+    printf("capture done after %d ms\n", t);
+    assert(drive_app.capture_status == ESC_CAPTURE_DONE && t > 500 && t < 600);
+    tick_isr(3);
+    assert(state == IDLE && !drive_align_force && drive_app_idle() && drive_app.stop_reason == ESC_STOP_CAPTURE);
+    const uint32_t read = (uint32_t)ESC_CAPTURE_READ << 24;
+    rx(CAPTURE | 1U, read | (1U << 16) | (8U << 10) | 60U); frames = 0; drive_app_poll(send);
+    assert(frames == 8 && frame_id[0] == (CAPTURE_REPLY | 1U));
+    for (int k = 0; k < 8; ++k) {
+      assert((frame[k][0] | frame[k][1] << 8) == (1 << 12 | (60 + k)));
+      assert(f16(frame[k] + 4) == (60 + k < 64 ? 544 : 1632)); /* Id ref: hold 1 A, step 3 A */
+    }
+    rx(CAPTURE | 1U, read | (0U << 16) | (32U << 10) | 64U); frames = 0; drive_app_poll(send);
+    assert(frames == 32 && f16(frame[0] + 2) < f16(frame[31] + 2)); /* Id rises after the step */
+    assert(f16(frame[31] + 6) == 2 * 1632); /* Vd */
+    rx(CAPTURE | 1U, read | (0U << 16) | (63U << 10) | 500U); frames = 0; drive_app_poll(send);
+    assert(frames == 12); /* clamped to the buffer end */
+    send_budget = 3; rx(CAPTURE | 1U, read | (20U << 10)); frames = 0; drive_app_poll(send);
+    assert(frames == 3); send_budget = 1000; drive_app_poll(send); assert(frames == 20); /* resumes */
+    rx(CAPTURE | 1U, read | (3U << 16)); frames = 0; drive_app_poll(send);
+    assert(frames == 1 && (frame[0][0] | frame[0][1] << 8) == 3 << 12);
+    assert(f16(frame[0] + 2) == ESC_CAPTURE_DONE && f16(frame[0] + 4) == 1236 && f16(frame[0] + 6) == 512);
+  } else if (scenario == 12) { /* STOP aborts a capture; busy ESC rejects one */
+    const uint32_t start = (uint32_t)ESC_CAPTURE_START << 24;
+    drive_app.aligned = 1; speed_cmd(100, 100); tick_isr(3); assert(state == RUN);
+    rx(CAPTURE | 1U, start | 2000U); tick_isr(1);
+    assert(drive_app.capture_status == ESC_CAPTURE_REJECTED && !drive_align_force);
+    rx(MOTOR_STOP | 1U, 0); tick_isr(3); assert(state == IDLE);
+    rx(CAPTURE | 1U, start | 2000U); tick_isr(300);
+    assert(drive_app.capture_status == ESC_CAPTURE_RUNNING && iqdref.d > 0);
+    rx(MOTOR_STOP | 0xFU, 0); tick_isr(3);
+    assert(drive_app.capture_status == ESC_CAPTURE_ABORTED && state == IDLE && !drive_align_force);
   } else if (scenario == 9) { /* undervolt latched on USB power: STOP clears it once gone */
     state = FAULT_OVER; cur_faults = 4; occ_faults = 4; tick(1);
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2);
@@ -252,6 +329,7 @@ class EscDriveAppTest(unittest.TestCase):
         (tmp / "harness.c").write_text(HARNESS)
         cls.exe = tmp / "harness"
         subprocess.run(["gcc", "-std=gnu11", "-Wall", "-Werror", "-O1", "-DMOTOR_NE",
+                        "-include", str(tmp / "test_hooks.h"), "-DDRIVE_APP_VALIDITY=fake_validity",
                         "-I", str(tmp), "-I", str(ESC / "motor_config/Inc"),
                         "-I", str(ESC / "Inc"), "-I", str(ROOT / "HW/common/CAN"),
                         str(tmp / "harness.c"), str(ESC / "motor_config/Src/drive_app.c"),
@@ -295,6 +373,15 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_stop_clears_finished_fault(self):
         self.run_scenario(9)
+
+    def test_ident_reports_validity_record(self):
+        self.run_scenario(10)
+
+    def test_capture_steps_id_and_reads_out(self):
+        print(self.run_scenario(11), end="")
+
+    def test_capture_stop_and_busy(self):
+        self.run_scenario(12)
 
 
 if __name__ == "__main__":

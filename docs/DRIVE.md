@@ -63,8 +63,8 @@ The result lives in RAM. Bake it in with
 
 ## Bring-up
 
-1. `scripts/build_all.py`; battery OFF; `scripts/esc_update.py <W> --battery-off`
-   for each wheel ([CAN_FWU.md](CAN_FWU.md)).
+1. `scripts/build_all.py`; `scripts/esc_update.py <W> --can` for each wheel
+   (`--battery-off` with the ESC's USB for a first install; [CAN_FWU.md](CAN_FWU.md)).
 2. Battery ON, wheels off the ground: `scripts/esc_tool.py status`, then
    `scripts/esc_tool.py align all`. Expect `ok`, 12 edges each way.
 3. Off the ground: `scripts/keyboard_drive.py --speed 0.3`; check each key
@@ -73,6 +73,20 @@ The result lives in RAM. Bake it in with
 5. Bake the measured shifts (above) so alignment survives power cycles.
 
 ## Tuning
+
+Tune from the inside out: current loop, then speed loop.
+
+Current loop: `scripts/esc_tool.py capture <W> --step-ma 3000` (battery ON,
+IDLE). The ESC holds the rotor on the d axis at 1 A, steps Id to 3 A and
+records Id, Iq, Vd, Vq every FOC period (16 kHz, 512 samples); the Nucleo
+relays the readout. `capture_analysis.py` fits R (from the two steady states,
+cancelling dead time) and L (transient, with the PWM delay picked by fit),
+reports rise time, overshoot and settling, and prints `current_kp`/`current_ki`
+for 0.5, 0.8 and 1 kHz (Kp = L·ωc, Ki = R·ωc). Try them with
+`esc_tool.py set <W> current_kp N` / `current_ki N` (RAM, both axes) and
+capture again; copy good values into `PID_TORQUE_*`/`PID_FLUX_*` in
+`drive_parameters.h`. With one PWM period of delay, overshoot grows quickly
+above about 0.8 kHz.
 
 Speed PI (counts per RPM of error, `SPEED_UNIT = U_RPM`): Kp 1024/256 =
 4 counts/RPM (100 RPM error → 0.75 A), Ki 553/16384 per ms. Chosen with all

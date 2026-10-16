@@ -9,7 +9,7 @@
  * enable == 0 or a heartbeat older than IK_DRIVE_HEARTBEAT_MS decelerates to
  * zero, holds briefly, then broadcasts STOP. ESCs stop on their own if the
  * stream stops (ESC_COMMAND_TIMEOUT_MS). All words are 32 bit for SWD access. */
-#define IK_DRIVE_ABI 0x494B0003U
+#define IK_DRIVE_ABI 0x494B0004U
 #define IK_DRIVE_PERIOD_MS 20U
 #define IK_DRIVE_HEARTBEAT_MS 300U
 #define IK_DRIVE_HOLD_MS 200U

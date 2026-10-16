@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """Install the built ESC application on ONE wheel over CAN (bootloader kept).
 
-  scripts/esc_update.py NE --battery-off [--keep-updater]
+  scripts/esc_update.py NE --can              no ESC USB; battery ON allowed
+  scripts/esc_update.py NE --battery-off      ESC ST-LINK attached, battery OFF
 
-Needs: motor battery OFF, that wheel's ESC ST-LINK USB and the Nucleo USB
-connected, no other tool holding either probe. Artifacts from build_all.py.
+--can needs only the Nucleo USB. Through the drive image it checks that all
+four ESCs answer, are IDLE (no fault) and report Vbus; then the updater image
+sends the CAN boot-entry request (the app accepts it only when idle), streams
+the app, and the bootloader verifies its CRC before it writes the validity
+record and jumps. Back on the drive image, the wheel's IDENT reply must give
+the built image's CRC32 and size, and all four must be IDLE again. No flash
+backup (the bootloader is never touched). If a transfer fails the ESC stays
+in its bootloader listening; rerun with --can --target-in-boot.
+
+--battery-off needs: motor battery OFF, that wheel's ESC ST-LINK USB and the
+Nucleo USB connected, no other tool holding either probe:
 
 1. Full 128 KiB backup of the ESC to esc-backups/update-<W>-<UTC>/.
 2. Identify the installed app by its flash bytes (build/esc/*, or the ELFs in
@@ -138,16 +148,179 @@ def check_battery_off(target, elf):
     return dict(vbus_v=round(vbus, 2), mc_state=state, app_elf=elf.name)
 
 
+def bus_snapshot(link, settle=0.4):
+    """Live telemetry rows (None for a wheel whose status count didn't move)."""
+    before = link.rows()
+    time.sleep(settle)
+    after = link.rows()
+    return [r if r and (not r0 or r["status_count"] != r0["status_count"]) else None
+            for r0, r in zip(before, after)]
+
+
+def wait_ident(link, index, timeout=2.0):
+    """A fresh IDENT reply for one wheel (polled once per ~85 ms per wheel)."""
+    start = link.rows()[index]
+    count = start["ident_count"] if start else 0
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        row = link.rows()[index]
+        if row and row["ident_count"] != count:
+            return row["app_crc"], row["app_size"]
+        time.sleep(0.05)
+    return None
+
+
+def check_bus(rows, names, skip=None):
+    """All wheels answering and IDLE; returns {wheel: Vbus}."""
+    problems, vbus = [], {}
+    for i, (name, row) in enumerate(zip(names, rows)):
+        if i == skip:
+            continue
+        if row is None:
+            problems.append(f"{name} no reply")
+        elif row["state"] != 0 or row["active"] or row["aligning"]:
+            problems.append(f"{name} {row['mc_state']}{' active' if row['active'] else ''}")
+        else:
+            vbus[name] = round(row["vbus_v"], 2)
+    if problems:
+        raise RuntimeError("bus not ready: " + ", ".join(problems) +
+                           " (esc_tool.py stop clears a cleared fault)")
+    return vbus
+
+
+def can_install(args, w, selector, app, crc, app_elf, updater, drive, out, session, save):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import ik_link
+    index = [sel for _n, _e, sel in ik_link.WHEELS].index(selector)
+    names = [name for name, _e, _s in ik_link.WHEELS]
+    nu = symbols(updater, ("nucleo_image_kind", "fwu_host", "can_fwu_request", "can_fwu_dev",
+                           "can_fwu_result", "can_fwu_enter_boot", "can_fwu_boot_result",
+                           "fwu_test_image", "fwu_test_image_size"))
+    addr = {k: v[0] for k, v in nu.items()}
+
+    def open_drive():
+        try:
+            return ik_link.Link.open(NUCLEO_SN, drive)
+        except RuntimeError:  # not the drive image (or an older ABI)
+            program_nucleo(drive, out / "nucleo-drive-before.log")
+            time.sleep(1.0)
+            return ik_link.Link.open(NUCLEO_SN, drive)
+
+    lsession, link = open_drive()
+    try:
+        rows = bus_snapshot(link)
+        skip = index if args.target_in_boot else None
+        session["before_vbus"] = check_bus(rows, names, skip)
+        if args.target_in_boot:
+            if rows[index] is not None:
+                raise RuntimeError(f"{w} answers as an app; drop --target-in-boot")
+            session["before_ident"] = "target in bootloader"
+        else:
+            ident = wait_ident(link, index)
+            session["before_ident"] = (dict(crc=f"{ident[0]:08X}", size=ident[1]) if ident
+                                       else "no IDENT reply (app predates it)")
+    finally:
+        lsession.close()
+    save()
+    print(f"{w}: bus ready, Vbus {session['before_vbus']}, installed {session['before_ident']}",
+          flush=True)
+
+    program_nucleo(updater, out / "nucleo-updater.log")
+    with nucleo_session() as ns:
+        t = ns.target
+        if t.read32(addr["nucleo_image_kind"]) != 2:
+            raise RuntimeError("Nucleo is not running the updater image")
+        if t.read32(addr["fwu_test_image_size"]) != len(app) or \
+           bytes(t.read_memory_block8(addr["fwu_test_image"], len(app))) != app:
+            raise RuntimeError("updater payload does not match the built ESC app")
+        t.write32(addr["can_fwu_dev"], selector)
+        if not args.target_in_boot:
+            t.write32(addr["can_fwu_enter_boot"], 1)
+            time.sleep(0.2)
+            boot = t.read32(addr["can_fwu_boot_result"])
+            if boot != 1:
+                raise RuntimeError(f"boot-entry request not sent (result {boot})")
+            time.sleep(0.3)  # the app resets into its bootloader, which then listens
+        t.write32(addr["can_fwu_request"], 1)
+        from pyocd.core.target import Target
+        deadline, last = time.monotonic() + 60, None
+        while True:
+            state, result = t.read32(addr["fwu_host"]), t.read32(addr["can_fwu_result"])
+            if (state, result) != last:
+                print(f"  updater state {state} result {result}", flush=True)
+                last = (state, result)
+            if state == FWU_DONE and result == 3:
+                break
+            if state == FWU_FAULT and result == 4:
+                raise RuntimeError(f"transfer failed; {w} stays in its bootloader. "
+                                   "Rerun with --can --target-in-boot")
+            if time.monotonic() > deadline:
+                t.reset(Target.ResetType.SYSRESETREQ)  # drop the pending request
+                raise RuntimeError(f"no completion within 60 s; if {w} stopped answering it is "
+                                   "in its bootloader: rerun with --can --target-in-boot")
+            time.sleep(0.1)
+
+    program_nucleo(drive, out / "nucleo-drive.log")
+    session["nucleo_after"] = dict(elf=str(drive), sha256=sha(drive.read_bytes()))
+    time.sleep(1.0)
+    lsession, link = ik_link.Link.open(NUCLEO_SN, drive)
+    try:
+        ident = wait_ident(link, index)
+        rows = bus_snapshot(link)
+        session["after_vbus"] = check_bus(rows, names)
+    finally:
+        lsession.close()
+    checks = {"IDENT reply": ident is not None,
+              "CRC32 matches build": bool(ident) and ident[0] == crc,
+              "size matches build": bool(ident) and ident[1] == len(app),
+              "all four IDLE": True}
+    session["after_ident"] = dict(crc=f"{ident[0]:08X}", size=ident[1]) if ident else None
+    session["checks"] = checks
+    save()
+    failed = [name for name, ok in checks.items() if not ok]
+    if failed:
+        raise RuntimeError(f"verification failed: {failed}; see {out}")
+    print(f"{w}: installed and verified over CAN ({', '.join(checks)})", flush=True)
+    known_dir = BACKUPS / "known-apps"
+    known_dir.mkdir(exist_ok=True)
+    shutil.copy2(app_elf, known_dir / f"motor_{w}_drive_{sha(app)[:12]}.elf")
+    session["complete"] = True
+    save()
+    print(f"{w}: done. Nucleo runs the drive image.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("wheel", choices=WHEELS)
-    parser.add_argument("--battery-off", action="store_true", required=True,
-                        help="operator confirms the motor battery is OFF")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--can", action="store_true",
+                      help="CAN only, no ESC USB: all four ESCs IDLE, Vbus measured")
+    mode.add_argument("--battery-off", action="store_true",
+                      help="SWD path: operator confirms the motor battery is OFF")
+    parser.add_argument("--target-in-boot", action="store_true",
+                        help="--can recovery: the wheel is already in its bootloader")
     parser.add_argument("--keep-updater", action="store_true",
-                        help="leave the updater on the Nucleo (to update another wheel next)")
+                        help="SWD path: leave the updater on the Nucleo")
     args = parser.parse_args()
+    if args.target_in_boot and not args.can:
+        parser.error("--target-in-boot needs --can")
     w = args.wheel
+    if args.can:
+        selector = WHEELS[w][0]
+        app_elf = BUILD / f"esc/{w}/motor_{w}_drive_offset.elf"
+        app = app_elf.with_suffix(".bin").read_bytes()
+        out = BACKUPS / f"can-update-{w}-{datetime.datetime.now(datetime.timezone.utc):%Y%m%dT%H%M%SZ}"
+        out.mkdir(parents=True)
+        session = dict(wheel=w, selector=selector, mode="can", app_elf=str(app_elf),
+                       app_sha256=sha(app), app_crc32=f"{zlib.crc32(app):08X}",
+                       app_bytes=len(app), complete=False)
+        save = lambda: (out / "session.json").write_text(json.dumps(session, indent=2))
+        save()
+        can_install(args, w, selector, app, zlib.crc32(app) & 0xFFFFFFFF, app_elf,
+                    BUILD / f"updater/{w}/sfurs_firmware_v2_CM7.elf",
+                    BUILD / "drive/sfurs_firmware_v2_CM7.elf", out, session, save)
+        return
     selector, esc_sn = WHEELS[w]
     app_elf = BUILD / f"esc/{w}/motor_{w}_drive_offset.elf"
     app = app_elf.with_suffix(".bin").read_bytes()

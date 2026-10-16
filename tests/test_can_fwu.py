@@ -572,7 +572,7 @@ int main(int argc, char **argv) {
   return 0;
 }
 '''
-with tempfile.TemporaryDirectory(prefix='can-fwu-tests-', dir='/tmp/opencode') as tmp:
+with tempfile.TemporaryDirectory(prefix='can-fwu-tests-') as tmp:
     tmp = pathlib.Path(tmp)
     (tmp / 'test.c').write_text(harness)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',

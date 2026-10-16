@@ -55,7 +55,7 @@ def vectors_valid(sp, reset, size):
             and reset & 1 and APP_BASE <= pc < APP_BASE + size)
 
 
-with tempfile.TemporaryDirectory(prefix='fwu-motor-image-', dir='/tmp/opencode') as tmp:
+with tempfile.TemporaryDirectory(prefix='fwu-motor-image-') as tmp:
     tmp = pathlib.Path(tmp)
 
     # 1. Oversized image rejected; exact slot size accepted, undersize refused.

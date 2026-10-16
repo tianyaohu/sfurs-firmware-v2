@@ -59,7 +59,7 @@ int main(void) {
   puts("PASS: real blink CAN init, FIFO indexes, BOOT payload, FD/DLC/header rejection");
 }
 '''
-with tempfile.TemporaryDirectory(dir='/tmp/opencode', prefix='blink-can-mmio-') as tmp:
+with tempfile.TemporaryDirectory(prefix='blink-can-mmio-') as tmp:
     folder = pathlib.Path(tmp)
     (folder / 'test.c').write_text(code)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',

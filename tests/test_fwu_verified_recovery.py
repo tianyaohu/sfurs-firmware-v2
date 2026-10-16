@@ -42,7 +42,7 @@ int main(void) {
   return 0;
 }
 '''
-with tempfile.TemporaryDirectory(dir='/tmp/opencode', prefix='verified-recovery-') as tmp:
+with tempfile.TemporaryDirectory(prefix='verified-recovery-') as tmp:
     folder = pathlib.Path(tmp)
     (folder / 'test.c').write_text(code)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',

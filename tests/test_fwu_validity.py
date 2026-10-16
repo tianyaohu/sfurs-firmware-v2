@@ -29,7 +29,7 @@ int main(void) {
   return 0;
 }
 '''
-with tempfile.TemporaryDirectory(dir='/tmp/opencode', prefix='fwu-validity-') as tmp:
+with tempfile.TemporaryDirectory(prefix='fwu-validity-') as tmp:
     folder = pathlib.Path(tmp)
     (folder / 'test.c').write_text(source)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',

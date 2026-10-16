@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(dir='/tmp/opencode', prefix='esc-boot-helpers-') as tmp:
+with tempfile.TemporaryDirectory(prefix='esc-boot-helpers-') as tmp:
     exe = pathlib.Path(tmp) / 'test'
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g',
                     '-fsanitize=address,undefined', '-fno-omit-frame-pointer',

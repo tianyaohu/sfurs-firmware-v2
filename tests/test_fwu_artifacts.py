@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--esc-root', type=pathlib.Path)
 args = parser.parse_args()
 root = pathlib.Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(dir='/tmp/opencode', prefix='fwu-artifact-') as tmp:
+with tempfile.TemporaryDirectory(prefix='fwu-artifact-') as tmp:
     out = pathlib.Path(tmp)
     subprocess.run(['python3', str(root / 'tests/esc_blink/build.py'),
                     '--output', str(out)], check=True)

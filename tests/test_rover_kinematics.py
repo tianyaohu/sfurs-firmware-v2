@@ -148,7 +148,7 @@ class IKTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    with tempfile.TemporaryDirectory(prefix='omni-ik-math-', dir='/tmp/opencode') as tmp:
+    with tempfile.TemporaryDirectory(prefix='omni-ik-math-') as tmp:
         library = pathlib.Path(tmp) / 'ik.so'
         subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                         '-shared', '-fPIC', '-I', str(ROOT / 'Common/Inc'),

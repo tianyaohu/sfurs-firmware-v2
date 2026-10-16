@@ -92,8 +92,7 @@ def validate_vectors(data, layout):
 
 def elf_to_bin(elf, objcopy, objdump, layout):
     """Convert an offset ELF to raw bytes; refuse non-app link addresses."""
-    with tempfile.TemporaryDirectory(prefix='fwu-image-',
-                                    dir='/tmp/opencode') as tmp:
+    with tempfile.TemporaryDirectory(prefix='fwu-image-') as tmp:
         tmp = pathlib.Path(tmp)
         binary = tmp / 'app.bin'
         subprocess.run([objcopy, '-O', 'binary', str(elf), str(binary)],

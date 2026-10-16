@@ -42,10 +42,10 @@ def fresh_row(link, index, field, after, timeout=1.0):
     raise RuntimeError("no telemetry reply from this ESC (powered? CAN connected?)")
 
 
-def show(rows):
-    for (name, esc, _), r in zip(ik_link.WHEELS, rows):
-        if r is None or not r["status_count"]:
-            print(f"{name}/{esc}: no reply")
+def show(before, rows):
+    for (name, esc, _), r0, r in zip(ik_link.WHEELS, before, rows):
+        if r is None or not r["status_count"] or (r0 and r0["status_count"] == r["status_count"]):
+            print(f"{name}/{esc}: no reply")  # rows keep the last values; only a new count is live
             continue
         print(f"{name}/{esc}: {r['mc_state']:<10s} rpm {r['rpm']:5d}  Iq {r['iq_a']:5.2f} A  "
               f"Vbus {r['vbus_v']:5.2f} V  faults {','.join(r['fault_names']) or '-'}  "
@@ -89,8 +89,9 @@ def main(argv=None):
     session, link = ik_link.Link.open(args.sn, args.elf)
     try:
         if args.command == "status":
-            time.sleep(0.2)
-            show(link.rows())
+            before = link.rows()
+            time.sleep(0.3)
+            show(before, link.rows())
         elif args.command == "stop":
             link.send_raw(ik_link.MOTOR_STOP | 0x0F, 0)
         elif args.command == "align":

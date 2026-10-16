@@ -67,6 +67,7 @@ if(NUCLEO_IK_ENABLED)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NUCLEO_IK_ENABLED=1)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Src/ik_drive.c
+        Core/Src/ik_telemetry.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/rover_kinematics.c
     )
 endif()
@@ -124,6 +125,5 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))
     message(ERROR "Generated code requires C11 or higher")
 endif()
-
 
 

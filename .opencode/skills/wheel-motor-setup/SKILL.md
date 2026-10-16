@@ -5,6 +5,18 @@ description: Commission rover wheel motors (B-G431B-ESC1) via Nucleo H755 CAN se
 
 # Wheel motor setup (living doc — update as the codebase moves)
 
+## Operator interaction preference
+
+For flashing/commissioning handoffs, use the **question tool's multiple-choice
+or checkbox UI**, not requests to type a fixed confirmation phrase. Offer the
+next physical/compass wheel and a Pause choice; use explicit checkboxes for
+battery OFF, closed TUI/logger/tuner and exclusive hardware release before writes.
+Require all necessary confirmations, independently verify the probe serial, and
+obtain fresh power/target confirmation after cable changes. A clear confirmation
+already supplied by the operator need not be asked twice. See `can-fwu-update`
+for the full interaction and multi-wheel update procedure. Never interpret
+"wheel on" as motor-battery state or authorize motion from a wheel selection.
+
 ## Run duration and motor-enabled build
 
 The operator requested removal of the Nucleo's 15 s / 1 s RUN caps.

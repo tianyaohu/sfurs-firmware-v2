@@ -322,6 +322,104 @@ int main(int argc, char **argv) {
     assert(wheel_bench_state == BENCH_FAULT);
     assert(wheel_bench_esc_poll_due(1000) == 0x101);
     assert(wheel_bench_esc_age_ms == 0xFFFFFFFFU);
+  } else if (test == 34) {
+    /* BENCH_TUNE while not ARMED: rejected, nothing sent. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    wheel_bench_tune_kp = -22528; wheel_bench_tune_ki = -864;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(0);
+    assert(!sends && wheel_bench_result == 4 && wheel_bench_state == BENCH_IDLE);
+  } else if (test == 35) {
+    /* ARM NE, then TUNE: 0x501, kp/ki int16 LE, ARMED kept, RUN still works. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    arm(0); assert(sends == 1 && id == 0x401);
+    wheel_bench_tune_kp = -22528; wheel_bench_tune_ki = -864;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(1);
+    assert(sends == 2 && id == 0x501 && wheel_bench_result == 6);
+    assert(payload[0] == 0x00 && payload[1] == 0xA8 &&
+           payload[2] == 0xA0 && payload[3] == 0xFC);
+    assert(wheel_bench_state == BENCH_ARMED);
+    wheel_bench_speed_rpm = 250;
+    run(2);
+    assert(sends == 3 && id == 0x81 && wheel_bench_state == BENCH_RUNNING);
+    assert(payload[0] == 250 && payload[1] == 0);
+    /* TX accounting includes the tune frame; STOP aborts the in-flight RUN
+     * TX before completion, so its ACK is never counted (existing semantics). */
+    wheel_bench_request = BENCH_STOP; wheel_bench_tick(3);
+    complete_stop(3);
+    assert(wheel_bench_tx_count == 6 && wheel_bench_tx_ack_count == 5);
+  } else if (test == 36) {
+    /* Out-of-range numerators rejected bench-side; extremes accepted. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    arm(0); wheel_bench_tick(1); /* ARM TX completes */
+    const int32_t bad[][2] = {{-999,-72},{0,-72},{1,-72},{-32768,-72},
+                              {-18600,0},{-18600,1},{-18600,-32768}};
+    for (unsigned i = 0; i < sizeof(bad)/sizeof(bad[0]); ++i) {
+      wheel_bench_tune_kp = bad[i][0]; wheel_bench_tune_ki = bad[i][1];
+      wheel_bench_request = BENCH_TUNE; wheel_bench_tick(2 + i);
+      assert(sends == 1 && wheel_bench_result == 4 &&
+             wheel_bench_state == BENCH_ARMED);
+    }
+    wheel_bench_tune_kp = -32767; wheel_bench_tune_ki = -32767;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(10);
+    assert(sends == 2 && wheel_bench_result == 6 && id == 0x501);
+    wheel_bench_tick(11); /* completes */
+    wheel_bench_tune_kp = -1000; wheel_bench_tune_ki = -1;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(12);
+    assert(sends == 3 && wheel_bench_result == 6);
+    assert(payload[0] == 0x18 && payload[1] == 0xFC &&
+           payload[2] == 0xFF && payload[3] == 0xFF);
+  } else if (test == 37) {
+    /* Selection changed after ARM: tune rejected, nothing sent. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    arm(0); wheel_bench_tick(1);
+    wheel_bench_wheel = 2;
+    wheel_bench_tune_kp = -22528; wheel_bench_tune_ki = -72;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(2);
+    assert(sends == 1 && wheel_bench_result == 4 && wheel_bench_state == BENCH_ARMED);
+  } else if (test == 38) {
+    /* TUNE while RUNNING: rejected, nothing sent, run continues. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    arm(0); run(1);
+    assert(sends == 2 && wheel_bench_state == BENCH_RUNNING);
+    wheel_bench_tune_kp = -22528; wheel_bench_tune_ki = -72;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(2);
+    assert(sends == 2 && wheel_bench_result == 4 && wheel_bench_state == BENCH_RUNNING);
+  } else if (test == 39) {
+    /* TUNE enqueue failure is a transport fault like RUN's. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    arm(0); wheel_bench_tick(1);
+    wheel_bench_tune_kp = -22528; wheel_bench_tune_ki = -72;
+    fail_send = 1;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(2);
+    assert(wheel_bench_first_fault == 1 && wheel_bench_first_fault_tick == 2);
+    wheel_bench_tick(52); wheel_bench_tick(102);
+    assert(wheel_bench_state == BENCH_FAULT);
+  } else if (test == 40) {
+    /* The armed window is NOT refreshed by TUNE: expiry from ARM time. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    arm(0);
+    wheel_bench_tune_kp = -22528; wheel_bench_tune_ki = -72;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(1);
+    assert(sends == 2 && wheel_bench_result == 6);
+    wheel_bench_tick(4999); assert(wheel_bench_state == BENCH_ARMED);
+    wheel_bench_tick(5000);
+    assert(wheel_bench_state == BENCH_IDLE && wheel_bench_result == 4);
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(5001);
+    assert(sends == 2 && wheel_bench_result == 4);
+  } else if (test == 41) {
+    /* TUNE TX timeout: abort, fault 3, STOP drain, like other TX paths. */
+    wheel_bench_wheel = 1; wheel_bench_direction = 1;
+    arm(0); wheel_bench_tick(1);
+    wheel_bench_tune_kp = -22528; wheel_bench_tune_ki = -72;
+    status = BENCH_TX_PENDING;
+    wheel_bench_request = BENCH_TUNE; wheel_bench_tick(2);
+    assert(sends == 2 && wheel_bench_result == 6);
+    wheel_bench_tick(101);
+    assert(aborts == 0 && !wheel_bench_first_fault); /* 99 ms: still waiting */
+    wheel_bench_tick(102);
+    assert(aborts == 1 && wheel_bench_first_fault == 3);
+    status = BENCH_TX_OK; complete_stop(102);
+    assert(wheel_bench_state == BENCH_FAULT && wheel_bench_result == 5);
   }
   return 0;
 }
@@ -338,6 +436,6 @@ with tempfile.TemporaryDirectory(prefix='wheel-bench-tests-', dir='/tmp/opencode
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-I', str(root / 'CM7/Core/Inc'), str(tmp / 'test.c'),
                     str(root / 'CM7/Core/Src/wheel_bench.c'), '-o', str(tmp / 'test')], check=True)
-    for case in range(34):
+    for case in range(42):
         subprocess.run([str(tmp / 'test'), str(case)], check=True)
-print('PASS: 34 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select, ESC mirror')
+print('PASS: 42 scenarios, signed payloads, STOP/fault gates, TX race, physical ARM/RUN gates, speed select, ESC mirror, GAIN_SET tune frames')

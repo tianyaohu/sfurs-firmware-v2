@@ -60,6 +60,12 @@
 #define TEST_CURRENT_REPLY (7U << 7)
 #define TEST_ARM (8U << 7)
 #define TEST_CAL_REQ (9U << 7)
+/* Slot 10 (0x500 base) is ESC_TEST_TORQUE_COMMAND in torque test profiles.
+ * In RPM2 builds compiled with ESC_TUNE_GAIN_SET it is GAIN_SET instead:
+ * payload int16 LE Kp numerator, int16 LE Ki numerator (both negative),
+ * addressed per wheel like TEST_ARM. No reply frame; acceptance is proven
+ * by ESC RAM readback (test_gain_set_result / test_speed_kp_gain). */
+#define TEST_GAIN_SET (10U << 7)
 /* Bench profile only: CURRENT_REPLY = i16 iq, i16 id, u16 flags/faults,
  * u16 peak(|iq|+|id|), all little endian SDK current units.
  * flags: bit15 profile, bit14 armed, bit13 used, bit12 active,

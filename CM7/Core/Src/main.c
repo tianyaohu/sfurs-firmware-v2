@@ -24,6 +24,7 @@
 #include "wheel_bench.h"
 #if NUCLEO_IK_ENABLED
 #include "ik_drive.h"
+#include "ik_telemetry.h"
 #endif
 #include "can_fwu_host.h"
 #include "fwu_test_image.h"
@@ -362,11 +363,36 @@ Error_Handler();
     }
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14,
                      ik_drive_state == IK_FAULT ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    /* No telemetry polling in v1; drain unsolicited replies, bounded per pass.
-     * TUI RPM values are commanded targets, not measured feedback. */
+    /* Read-only telemetry uses a separate, untracked TX enqueue so the drive
+     * adapter's bench_tx_mask cannot be overwritten by a poll. Never poll while
+     * drive frames/STOP own the bus; missed poll slots are not caught up. */
+    uint32_t telemetry_id = ik_telemetry_poll_due(now, ik_drive_transport_idle());
+    if (telemetry_id != 0U) {
+      FDCAN_TxHeaderTypeDef telemetry_header = {0};
+      const uint8_t telemetry_data[4] = {0};
+      telemetry_header.Identifier = telemetry_id;
+      telemetry_header.IdType = FDCAN_STANDARD_ID;
+      telemetry_header.TxFrameType = FDCAN_DATA_FRAME;
+      telemetry_header.DataLength = FDCAN_DLC_BYTES_4;
+      telemetry_header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+      telemetry_header.BitRateSwitch = FDCAN_BRS_OFF;
+      telemetry_header.FDFormat = FDCAN_FD_CAN;
+      telemetry_header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+      (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &telemetry_header, telemetry_data);
+    }
+    /* Bounded RX: validate framing before passing a reply to the per-wheel
+     * decoder. RPM/state and current retain separate timestamps/seen counts. */
     for (uint32_t i = 0; i < 8U &&
          HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) != 0U; ++i) {
-      (void)HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &can_rx_header, can_rx_data);
+      if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0,
+                               &can_rx_header, can_rx_data) != HAL_OK) break;
+      if (can_rx_header.IdType == FDCAN_STANDARD_ID &&
+          can_rx_header.RxFrameType == FDCAN_DATA_FRAME &&
+          can_rx_header.FDFormat == FDCAN_FD_CAN &&
+          can_rx_header.BitRateSwitch == FDCAN_BRS_OFF &&
+          can_rx_header.DataLength == FDCAN_DLC_BYTES_8) {
+        (void)ik_telemetry_rx(can_rx_header.Identifier, can_rx_data, now);
+      }
     }
     continue;
 #endif

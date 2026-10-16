@@ -2,7 +2,8 @@
 #define IK_DRIVE_H
 #include <stdint.h>
 
-#define IK_DRIVE_ABI 0x494B0001U
+#define IK_DRIVE_ABI 0x494B0002U
+#define IK_DRIVE_MAX_LINEAR_MMPS 5000
 enum { IK_PREPARE = 1, IK_START = 2, IK_STOP = 3 };
 enum { IK_IDLE, IK_BUSY, IK_RUNNING, IK_STOPPING, IK_FAULT };
 enum { IK_NONE, IK_SENT, IK_REJECTED, IK_TX_FAULT, IK_BAD_TARGET };
@@ -24,4 +25,7 @@ extern volatile uint32_t ik_drive_state, ik_drive_result;
 extern volatile int32_t ik_drive_rpm[4]; /* raw CAN motor RPM FR/BR/BL/FL */
 extern volatile uint32_t ik_drive_tx_count, ik_drive_ack_count, ik_drive_fault;
 void ik_drive_tick(uint32_t now);
+/* For read-only telemetry requests: false while drive TX, a newly committed
+ * command, ARM/SPEED burst or STOP drain owns the transport. */
+int ik_drive_transport_idle(void);
 #endif

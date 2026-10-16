@@ -6,10 +6,10 @@ import tempfile
 
 root = pathlib.Path(__file__).resolve().parent
 source = (root / 'Src/main.c').read_text()
-helpers = source.split('/* Explicit diagnostic request words', 1)[1].split('#endif', 1)[0]
+helpers = source.split('/* Explicit diagnostic request words', 1)[1].split('/* HARNESS HELPERS END */', 1)[0]
 helpers = '/* Explicit diagnostic request words' + helpers
 commands = source.split('  if (can_rx_header.Identifier == (TEST_CURRENT_READ | MOTOR_CAN_ID))', 1)[1]
-commands = '  if (can_rx_header.Identifier == (TEST_CURRENT_READ | MOTOR_CAN_ID))' + commands.split('#endif', 1)[0]
+commands = '  if (can_rx_header.Identifier == (TEST_CURRENT_READ | MOTOR_CAN_ID))' + commands.split('/* HARNESS COMMANDS END */', 1)[0]
 
 harness = r'''
 #include <assert.h>

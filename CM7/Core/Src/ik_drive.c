@@ -13,6 +13,13 @@ static uint32_t operation, sequence, seen_sequence, pending_tick, stop_tick;
 static unsigned index, stop_count;
 static int pending;
 
+int ik_drive_transport_idle(void)
+{
+  return !pending && ik_drive_sequence == seen_sequence &&
+         (ik_drive_state == IK_IDLE || ik_drive_state == IK_RUNNING ||
+          ik_drive_state == IK_FAULT);
+}
+
 static void begin_stop(uint32_t now)
 {
   if (pending) wheel_bench_abort();
@@ -63,7 +70,8 @@ void ik_drive_tick(uint32_t now)
       const int32_t vy = ik_drive_vy_mmps;
       const int32_t omega = ik_drive_omega_mradps;
       if (request == IK_START &&
-          (vx < -300 || vx > 300 || vy < -300 || vy > 300 ||
+          (vx < -IK_DRIVE_MAX_LINEAR_MMPS || vx > IK_DRIVE_MAX_LINEAR_MMPS ||
+           vy < -IK_DRIVE_MAX_LINEAR_MMPS || vy > IK_DRIVE_MAX_LINEAR_MMPS ||
            omega < -1000 || omega > 1000 ||
            !rover_ik(rover_ik_provisional, vx / 1000.0f, vy / 1000.0f,
                      omega / 1000.0f, target, 0))) {

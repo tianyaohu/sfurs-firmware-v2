@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 enum { ROVER_FR, ROVER_BR, ROVER_BL, ROVER_FL, ROVER_WHEEL_COUNT };
+#define ROVER_IK_MAX_MOTOR_RPM 900.0f
 
 /* Coordinates: x right, y forward, positive yaw CCW from above.
  * dx/dy: unit rolling direction for positive wheel travel BEFORE motor_sign.

@@ -5,6 +5,34 @@ description: Flash STM32G431 ESC application firmware over CAN-FD from the NUCLE
 
 # Over-CAN firmware update (living doc — update as the codebase moves)
 
+## Operator handoff UI preference
+
+The operator prefers **interactive multiple-choice or checkbox prompts** for
+firmware-update handoffs. Use the question tool rather than requiring typed
+phrases such as "BR connected, battery OFF" or showing a non-interactive list.
+
+- After completing/verifying a wheel and releasing both probes, offer a
+  single-choice next step: the next named wheel (physical and compass labels),
+  another wheel if appropriate, or **Pause / not ready**. Recommend the next
+  pending wheel; never infer a cable move from an old selection.
+- Use a multi-select confirmation checklist for **motor battery OFF**, **TUI /
+  logger / tuner closed**, and **shared hardware released to this session**.
+  State that all required conditions must be confirmed before programming;
+  unchecked conditions are unknown, not satisfied. Offer Pause separately.
+- A clear unsolicited confirmation may satisfy the current handoff without
+  another redundant prompt. "BR on" alone is ambiguous; an explicit separate
+  "battery OFF" confirmation plus verified probe identity is required.
+- Selections confirm operator actions; the agent still independently lists and
+  verifies the exact attached serial, payload identity and target selector.
+  Selecting a wheel never authorizes motion, option bytes or bootloader writes.
+- Keep the Nucleo USB connected; move only the ESC USB between wheels. Require
+  fresh target/power confirmation after each cable/power change. Do not ask for
+  cable movement while a probe/session or transfer is still active.
+
+See `wheel-motor-setup` for physical-wheel mapping and `docs/HIGH_SPEED_CAPS.md`
+for the current coordinated rollout/evidence; those records are not blanket
+permission to repeat programming.
+
 ## Topology
 
 - Host: NUCLEO-H755ZI-Q (`CM7/`, FDCAN1 `PB8/PB9`, 500 kbit/s, FD no-BRS).
@@ -71,6 +99,30 @@ pyocd commander -u <nucleo-sn> -t stm32h755zitx \
 
 Host retries ENTER every 300 ms until answered; later failures latch and need
 a fresh request. No automatic erase/data retries.
+
+### Battery-OFF application updates with an existing bootloader
+
+Keep motor battery OFF and power the selected ESC from its USB connection.
+The app's undervoltage fault can correctly block remote boot entry. Do not clear
+that protection just to program: after all identities/backup/idle gates pass,
+request one host session and issue a normal system reset on the **selected ESC
+probe** to expose its existing three-second bootloader window. The installed
+pyOCD API uses `Target.ResetType.SYSRESETREQ` (not `SW_SYSRESETREQ`). This is a
+reset, not a bootloader write or a fault-clear command.
+
+Validate helper APIs and required linked symbols before queuing the session.
+Unused globals may be linker-discarded in update-only builds; do not invent RAM
+addresses. Independently check the flashed updater and embedded raw payload,
+motor producer disabled, bench IDLE, and no pending requests. Bound the host
+monitoring interval; on helper failure explicitly stop/clear pending ENTER
+retries rather than leaving them armed across a handoff. Do not automatically
+restart a transfer that progressed beyond ENTER.
+
+For multi-wheel rollouts, keep the Nucleo on update-only firmware between wheels;
+install the matching drive image only after every selected ESC's app/metadata
+is independently verified. Back up each wheel before overwriting, preserve its
+bootloader, and report partial progress truthfully. Finish/release each session
+before presenting the next interactive handoff.
 
 ## C. Monitor
 

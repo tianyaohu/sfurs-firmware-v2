@@ -1,6 +1,24 @@
 #ifndef ESC_TEST_PROFILE_H
 #define ESC_TEST_PROFILE_H
 
+/* Offline Ki-only candidate; never selected by an ordinary RPM2 build.
+ * One shared tune for all four wheel selectors, not a per-wheel exception. */
+#if defined(ESC_RPM2_KI4)
+#if !defined(ESC_LOW_CURRENT_TEST) || !defined(ESC_REVERSE_SPEED_DIAGNOSTIC) || \
+    !defined(ESC_BOOT_OFFSET_APP) || defined(ESC_RPM_DIAGNOSTIC) || \
+    defined(ESC_HALF_AMP_DIAGNOSTIC) || defined(ESC_TORQUE_COUNT_DIAGNOSTIC) || \
+    defined(ESC_NE_LOW_SPEED_P2) || defined(ESC_TUNE_GAIN_SET) || \
+    (defined(MOTOR_NE) + defined(MOTOR_SE) + defined(MOTOR_SW) + defined(MOTOR_NW) != 1)
+#error "ESC_RPM2_KI4 requires one wheel, offset-app, guarded RPM2, no other tune"
+#endif
+#endif
+
+/* Runtime CAN GAIN_SET (slot 10) exists only in the RPM2 negated-gain
+ * profile; torque profiles own 0x500 as their start command. */
+#if defined(ESC_TUNE_GAIN_SET) && !defined(ESC_REVERSE_SPEED_DIAGNOSTIC)
+#error "ESC_TUNE_GAIN_SET requires ESC_REVERSE_SPEED_DIAGNOSTIC"
+#endif
+
 /* Opt-in reference bounds only, not instantaneous phase-current protection. */
 #if defined(ESC_TORQUE_COUNT_DIAGNOSTIC)
 #define ESC_TEST_REFERENCE_A 0.8f
@@ -18,17 +36,21 @@
 #define ESC_TEST_SAMPLED_STOP_A 3.0f
 #define ESC_TEST_TIMEOUT_MS 30000U
 #define ESC_TEST_TARGET_RPM -100
-#define ESC_TEST_RPM_MIN -300
-#define ESC_TEST_RPM_MAX 300
+#define ESC_TEST_RPM_MIN -900
+#define ESC_TEST_RPM_MAX 900
 #define ESC_TEST_SPEED_KP -18600
+#if defined(ESC_RPM2_KI4)
+#define ESC_TEST_SPEED_KI -288 /* 4x integral only; divisor remains 16384. */
+#else
 #define ESC_TEST_SPEED_KI -72
+#endif
 #define ESC_TEST_HALL_STALL_MS 2000U
 #define ESC_TEST_ARM_MAGIC 0x52504D32U /* RPM2 */
 #define ESC_TEST_TORQUE_PROFILE 0U
 #define ESC_TEST_RPM_PROFILE 1U
 #define ESC_TEST_COUNT_PROFILE 1U
 #define ESC_TEST_TARGET_NET_EDGES 480
-#define ESC_TEST_MAX_MOTOR_RPM 300
+#define ESC_TEST_MAX_MOTOR_RPM 900
 #elif defined(ESC_RPM_DIAGNOSTIC)
 #define ESC_TEST_REFERENCE_A 3.0f
 #define ESC_TEST_SAMPLED_STOP_A 3.0f

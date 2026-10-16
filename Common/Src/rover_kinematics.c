@@ -4,10 +4,10 @@
 
 const struct rover_wheel_geometry rover_ik_provisional[ROVER_WHEEL_COUNT] = {
   /* Contact x/y; forward rolling dx/dy; radius; ratio; motor sign; RPM cap. */
-  { 0.0720f,  0.0475f, -0.5000000f, 0.8660254f, 0.03275f, 1.0f,  1.0f, 300.0f},
-  { 0.0705f, -0.0475f,  0.5735764f, 0.8191520f, 0.03275f, 1.0f,  1.0f, 150.0f},
-  {-0.0705f, -0.0475f, -0.5735764f, 0.8191520f, 0.03275f, 1.0f, -1.0f, 150.0f},
-  {-0.0720f,  0.0475f,  0.5000000f, 0.8660254f, 0.03275f, 1.0f, -1.0f, 150.0f}
+  { 0.0720f,  0.0475f, -0.5000000f, 0.8660254f, 0.03275f, 1.0f,  1.0f, ROVER_IK_MAX_MOTOR_RPM},
+  { 0.0705f, -0.0475f,  0.5735764f, 0.8191520f, 0.03275f, 1.0f,  1.0f, ROVER_IK_MAX_MOTOR_RPM},
+  {-0.0705f, -0.0475f, -0.5735764f, 0.8191520f, 0.03275f, 1.0f, -1.0f, ROVER_IK_MAX_MOTOR_RPM},
+  {-0.0720f,  0.0475f,  0.5000000f, 0.8660254f, 0.03275f, 1.0f, -1.0f, ROVER_IK_MAX_MOTOR_RPM}
 };
 
 static int geometry_valid(const struct rover_wheel_geometry *w)

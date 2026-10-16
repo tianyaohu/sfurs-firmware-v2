@@ -1,4 +1,4 @@
-# Separate keyboard IK test image
+# Separate keyboard IK test image and telemetry
 
 Worktree: `sfurs-omni-ik`, branch `fh/omni-ik`, based on `hw-session` 4fe8e8c.
 This is a stand-test implementation, not yet physically validated. Geometry
@@ -6,12 +6,30 @@ and raw motor polarity remain provisional; see [OMNI_KINEMATICS.md](OMNI_KINEMAT
 
 ## What changes (and what does not)
 
+**Installed and independently verified:** translation input cap 5 m/s,
+all-four IK caps 900 RPM, RPM2 ESC bounds +/-900 RPM. All four ESCs and the
+matching IK host completed programming with battery OFF. No higher-speed
+motion or loaded performance is established by that verification. See
+[HIGH_SPEED_CAPS.md](HIGH_SPEED_CAPS.md) for the coordinated deployment boundary.
+The prior Nucleo telemetry ELF remains preserved. The TUI now defaults to the
+installed `CM7/build/IK-900-reviewed` ELF. Preserve both images; use fresh output
+directories for future source changes. Programming is complete, but calibration
+and a separately agreed stand test must precede motion.
+
 - Separate `scripts/keyboard_drive.py`; `keyboard_spin.py` stays unchanged.
 - C IK runs on the Nucleo using wheel radius 32.75 mm, provisional tracks
   144/141 mm, wheelbase 95 mm and front/rear rolling angles 60/55 degrees.
 - A small command adapter sends existing CAN ARM/SPEED/STOP frames. It uses
   raw signed IK targets directly, without another left-wheel sign flip.
-- No ESC code, PID gains, calibration mechanism or independent ESC limits changed.
+- ABI2 adds all-four-wheel CAN speed/current polling and telemetry logging.
+  The first-working ABI1 ELF is preserved in `CM7/build/IK`; the older ABI2 image
+  remains in `CM7/build/IK-telemetry`. Current high-cap ABI2 is in
+  `CM7/build/IK-900-reviewed`. See the programming/capture records below and
+  [LOW_TORQUE_DIAGNOSTICS.md](LOW_TORQUE_DIAGNOSTICS.md).
+- Initial IK/ABI2 telemetry did not change ESC code or gains. Later FR P2 tuning
+  and the installed all-four high-speed caps are recorded separately. Following
+  reported P2 jitter, FR's original RPM2 gains were restored and read back; all
+  four now match. Smoothness/load validation of that configuration is pending.
 - Dedicated IK build only: bench, manual CAL and FWU pumps are not run in this
   image. Normal builds retain their existing behavior. To use FWU or the old
   single-wheel TUI, restore the matching normal Nucleo image first.
@@ -41,17 +59,22 @@ From this worktree's root:
 
 ```sh
 export PATH=/tmp/opencode/cm7-toolchain/root/usr/bin:$PATH
-cmake -S CM7 -B CM7/build/IK -G Ninja \
+cmake -S CM7 -B CM7/build/IK-900-reviewed -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/gcc-arm-none-eabi.cmake" \
   -DCMAKE_BUILD_TYPE=Debug \
   -DNUCLEO_MOTOR_ENABLED=ON -DNUCLEO_IK_ENABLED=ON
-cmake --build CM7/build/IK
+cmake --build CM7/build/IK-900-reviewed
 ```
 
-ELF: `CM7/build/IK/sfurs_firmware_v2_CM7.elf`. The compiler path above is
+Current-source ELF: `CM7/build/IK-900-reviewed/sfurs_firmware_v2_CM7.elf`.
+The preserved older telemetry ELF in `CM7/build/IK-telemetry` must stay unchanged.
+The reviewed high-cap ELF is now installed too; do not overwrite it for a future
+changed-source build. Choose a fresh `-B` directory and explicit `--elf` instead.
+The compiler path above is
 machine-local and temporary. Do not share binary output directories with other
 builders. Building is not flashing. Programming requires separate authorization;
-no ESC, CM4, bootloader or option-byte writes are needed for this host feature.
+no CM4, bootloader or option-byte writes are needed. Higher RPM commands also
+require the matching ESC application update; see HIGH_SPEED_CAPS.md.
 
 ## Keyboard test (after authorized Nucleo programming)
 
@@ -62,7 +85,7 @@ Never infer later power state from an old setup note.
 ```sh
 python3 scripts/keyboard_drive.py --self-test
 python3 scripts/keyboard_drive.py \
-  --elf CM7/build/IK/sfurs_firmware_v2_CM7.elf
+  --elf CM7/build/IK-900-reviewed/sfurs_firmware_v2_CM7.elf
 ```
 
 Requires pyOCD and pyelftools for live access. The TUI attaches without target
@@ -80,20 +103,55 @@ Controls:
 | Space | STOP broadcast |
 | Escape / Ctrl-C | STOP, then quit |
 
-Default translation is 0.2 m/s; yaw is 0.5 rad/s. `--speed` selects 0.05–0.3 m/s;
+Default translation remains 0.2 m/s; yaw is 0.5 rad/s. Current-source `--speed`
+selects 0.05–5 m/s on the now-installed matching host;
 `--yaw` selects 0.1–1 rad/s. No minimum wheel-RPM floor is added. Very small
 targets may quantize in the ESC (SDK speed resolution is not changed here).
+This extends selectable bounds, not the default start speed. Do not select the
+high-cap ELF or higher references until its coordinated rollout is authorized
+and verified; uniform 900 RPM saturation can reduce the requested body speed.
 
 Terminal key-up is unavailable: release is inferred from 0.6 seconds without
 key-repeat. Motion can persist through that interval; Space is the explicit
-STOP. The display shows requested twist, **commanded** RPM and bus completion,
-not measured speed or confirmed physical stopping. Existing ESC timeout/count
+STOP. The display distinguishes requested twist, **commanded** RPM, **measured**
+RPM and bus completion; no field proves physical stopping. Existing ESC timeout/count
 limits may independently end motion; the TUI does not silently re-arm.
 
 First observations: check each requested axis and STOP on the stand. Actual
 ground translation/rotation must be checked separately before assuming the
 provisional model agrees with the robot. Do not increase speed to compensate
 for wrong direction or an ESC start rejection.
+
+## All-four CAN telemetry (ABI2, no ESC update)
+
+The scheduler alternates speed and current requests for selectors 1/2/4/8,
+one frame every 20 ms (about 6.25 updates/s per wheel per reply kind when not
+paused). ARM/SPEED bursts and STOP drains take priority; there is no catch-up
+burst. Requests never overwrite the drive adapter's tracked TX mask.
+
+The TUI reads coherent, generation-bracketed RAM rows at about 10 Hz:
+command versus actual RPM, SDK state, Hall bits/change count, raw Iq/Id and
+sampled L1 peak, plus current-fault/CAL/armed/active flags. Speed and current
+have separate ages/counts. Missing data is `NO REPLY`, not zero; data older
+than 500 ms is `STALE`. Polling pauses during STOP may naturally produce stale
+rows. Converted Iq/Id are shown only with fresh RUN, CAL-valid, active,
+profile-present and fault-free evidence. The scale is firmware-equivalent
+544 SDK counts/A, not independently calibrated physical or battery current.
+
+Both drive and monitor modes write an exclusive JSONL log to a fresh
+`/tmp/opencode/ik-telemetry-UTC-PID.jsonl` by default. `--log PATH` selects a
+new path (existing files are never overwritten). Logs include ELF identity,
+timestamps, keys, mailbox submissions/outcomes, targets and raw/decoded samples.
+No Vbus or Iq reference is invented from the CAN data: those fields are absent.
+
+```sh
+python3 scripts/keyboard_drive.py --monitor-only
+```
+
+Monitor-only ignores P, movement and Space and makes no mailbox writes, even
+on exit. It still needs exclusive Nucleo probe ownership; do not start a second
+Nucleo TUI alongside it. A separate ESC read-only logger may use the other
+USB/probe once explicitly handed over. See [loaded-motion diagnostics](LOW_TORQUE_DIAGNOSTICS.md).
 
 ## Offline verification record
 
@@ -105,13 +163,23 @@ for wrong direction or an ESC start rejection.
 - Existing `tests/test_wheel_bench.py`: 34 scenarios pass unchanged.
 - Existing `tests/test_fwu_main_control.py`: passes.
 - `python3 scripts/keyboard_drive.py --self-test` and
-  `python3 tests/test_keyboard_drive.py`: same 41 TUI/transport tests pass.
+  `python3 tests/test_keyboard_drive.py`: same 65 TUI/transport/telemetry tests pass.
+  This includes host-time aging when firmware RAM/ticks freeze and recording
+  failed cleanup STOP outcomes without adding retries.
   Integration review corrected WASD to the firmware's x-right/y-forward frame.
-- All 13 mailbox symbols resolve from the actual built ELF. Flash-segment
+- All 15 ABI2 symbols resolve from the actual built ELF (including 4x52-byte
+  telemetry rows). Flash-segment
   verification exercised against an offline image-backed target; pyOCD and
   pyelftools imports succeed on this machine. The ABI word is explicitly
   referenced in the IK loop so linker garbage collection cannot drop it.
-- CM7 Debug IK build: FLASH 21,200 B, RAM 1,872 B.
+- `tests/test_ik_telemetry.py`: nine actual-C decoder/scheduler scenarios pass
+  at both -O0 and -O2.
+- `tests/test_ik_telemetry_tui.py`: four actual-C decoder-to-TUI tests pass.
+- `scripts/monitor_esc_power.py --self-test` and `tests/test_monitor_esc_power.py`:
+  same 25 read-only NE power/current monitor tests pass, including archived ELF
+  identity/layout and fake live-flash verification.
+- CM7 Debug IK-telemetry build: FLASH 22,020 B, RAM 2,088 B.
+- First-working IK image: FLASH 21,200 B, RAM 1,872 B; preserved byte-identical.
 - Default motor-disabled/IK-disabled build: succeeds; IK symbols absent.
 - No physical drive validation or programming performed by these checks.
 
@@ -133,6 +201,12 @@ Detected Nucleo `002200364142500620353451` and front-right ESC
   Powered stand testing has not yet been performed with this image.
 
 ## First working IK checkpoint (operator report, 2026-10-15)
+
+Follow-up: the operator subsequently confirmed that the weakness affects all
+translations and that wheels spin only freely in the air; on the ground they
+buzz without driving, sometimes with mixed rotating/buzzing wheels. See
+[loaded-motion diagnostics](LOW_TORQUE_DIAGNOSTICS.md). No current/voltage
+diagnosis or limit change follows from this observation alone.
 
 After programming the image above and running the separate keyboard TUI,
 the operator reported that it works and the wheels spin. They also reported
@@ -166,13 +240,34 @@ Existing ESC CAN replies can supply, per selector 1/2/4/8:
 | `0x100|selector` / `0x280|selector` | Signed RPM, motor state, Hall bits, Hall-change count |
 | `0x300|selector` / `0x380|selector` | Signed Iq/Id counts, flags (faults, armed, active, calibration valid), sampled peak L1 counts |
 
-The current IK image drains replies without storing them and does not poll
-telemetry; its displayed RPM remains a command. Next add Nucleo polling/RX
-and TUI display/logging using these existing packets, with per-wheel reply
-age. No ESC update is needed for those fields. Preserve raw current counts;
+The first-working ABI1 image drains replies without storing them and does not
+poll telemetry; its displayed RPM remains a command. The new ABI2 image adds
+Nucleo polling/RX and TUI display/logging using these existing packets, with
+per-wheel reply age; ABI2 is programmed, but powered telemetry validation remains pending.
+No ESC update is needed for those fields. Preserve raw current counts;
 any A conversion must be labeled firmware-scaled, with validity conditions.
 Iq reference, stop reason, detailed CAL result, and bus voltage are not in
 these two CAN replies. Read them separately through the second ESC USB/debug
 connection with matching image symbols, or add a separate telemetry protocol
 change later. Current-reference versus measured-Iq is particularly useful for
 distinguishing low torque demand from an actual current ceiling.
+
+## ABI2 telemetry programming record (2026-10-15)
+
+Operator confirmed battery OFF, authorized Nucleo programming, then closed
+the existing keyboard TUI to release the probe. Only Nucleo
+`002200364142500620353451` was detected at this step (ESC data cable not detected).
+
+- Image: `CM7/build/IK-telemetry/sfurs_firmware_v2_CM7.elf`.
+- ELF SHA256: `b889175178c4486a7f22a1ae4bd4cf6ea353436d046453bb2342a78181057e50`.
+- CubeProgrammer: download complete, verified successfully, software reset performed.
+- Read-only pyOCD attach independently compared all flash load bytes and ABI2.
+  IDLE, zero target RPM/twist, request/sequence/completed all 0, drive TX/ACK/fault
+  all 0. No PREPARE/START/STOP writes were issued by verification.
+- All four speed/current seen counts were 0 with battery OFF. Readback CAN
+  PSR `0x76b`, ECR `0x100080`: missing-ACK/error-passive evidence while ESCs
+  are not powered; **not bus-off**. Telemetry polls are automatic read requests,
+  separate from the zero drive-command counters. Fresh powered replies still
+  need validation; no fault clearing/reset workaround was performed.
+- ESCs, CM4 and option bytes unchanged. Probe session released. Last
+  operator-reported motor battery state OFF; no powered telemetry run yet.

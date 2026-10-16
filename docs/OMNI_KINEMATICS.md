@@ -135,13 +135,16 @@ The previous all-positive-right/all-negative-yaw model is not reused.
 
 Motor sign and gearing are applied exactly once. A later CAN adapter must send
 these raw outputs directly; do not pass them through the single-wheel sender's
-left-sign mirror. Provisional limits match the existing sender: 300 RPM for
-NE, 150 for the other wheels (not independently validated ESC limits). Saturation
+left-sign mirror. Initial provisional limits matched the existing sender:
+300 RPM for NE, 150 for the other wheels. Current source raises the IK table to
+900 RPM on all four at the operator's request; the coordinated ESC/host rollout
+is **installed/readback verified, not physically validated at higher speed**
+(see [HIGH_SPEED_CAPS.md](HIGH_SPEED_CAPS.md)). Saturation
 scales ALL four RPMs by one factor to preserve the requested twist direction.
 No minimum-speed floor; exact zero remains zero. Float outputs deliberately
 leave wire quantization and small-speed ESC behavior to later integration.
 
-Verification: `python3 tests/test_rover_kinematics.py` — seven tests pass,
+Verification: `python3 tests/test_rover_kinematics.py` — eight tests pass,
 including independent axis coefficients, zero/small commands, mixed linearity,
 reversal, common saturation, sign/gearing, invalid inputs, and 100 deterministic
 forward-model reconstructions. Host tests prove math, not physical travel.

@@ -76,14 +76,28 @@ class IKTests(unittest.TestCase):
 
     def test_uniform_saturation_preserves_twist(self):
         small = self.run_ik((0.1, 0.2, 0.3))[1]
-        ok, rpm, scale = self.run_ik((1, 2, 3))
+        ok, rpm, scale = self.run_ik((10, 20, 30))
         self.assertEqual(ok, 1)
         self.assertTrue(0 < scale < 1)
-        self.assert_close(rpm, [r * 10 * scale for r in small])
+        self.assert_close(rpm, [r * 100 * scale for r in small])
         self.assertTrue(all(abs(r) <= w.max_motor_rpm + 0.0001
                             for r, w in zip(rpm, self.geometry())))
         self.assertTrue(any(abs(abs(r) - w.max_motor_rpm) < 0.0001
                             for r, w in zip(rpm, self.geometry())))
+
+    def test_all_four_900_caps_and_tournament_speed_scaling(self):
+        self.assertEqual([w.max_motor_rpm for w in self.geometry()], [900] * 4)
+        unit = self.run_ik((0, 1, 0))[1]
+        for speed in (1, 2, 3):
+            ok, rpm, scale = self.run_ik((0, speed, 0))
+            self.assertEqual((ok, scale), (1, 1))
+            self.assert_close(rpm, [r * speed for r in unit])
+        for velocity in ((0, 5, 0), (0, -5, 0), (5, 5, 1), (-5, -5, -1)):
+            ok, rpm, scale = self.run_ik(velocity)
+            self.assertEqual(ok, 1)
+            self.assertTrue(0 < scale < 1)
+            self.assertLessEqual(max(map(abs, rpm)), 900.0001)
+            self.assertAlmostEqual(max(map(abs, rpm)), 900, delta=0.0001)
 
     def test_motor_sign_and_gearing_applied_once(self):
         base = self.run_ik((0.05, 0.1, 0.2))[1]

@@ -7,6 +7,7 @@
 #define BENCH_RUN  0x52554E32U
 #define BENCH_STOP 0x53544F50U
 #define BENCH_ARM_BUTTON 0x4142544EU /* ABTN: explicit 60-second button window */
+#define BENCH_TUNE 0x47535431U /* GST1: queue RPM2-tune GAIN_SET (0x500|dev) */
 enum { BENCH_IDLE, BENCH_ARMED, BENCH_RUNNING, BENCH_STOPPING, BENCH_FAULT };
 enum { BENCH_TX_PENDING, BENCH_TX_OK, BENCH_TX_FAILED };
 static inline int wheel_bench_tx_status(uint32_t occurred, uint32_t canceled,
@@ -20,6 +21,9 @@ static inline int wheel_bench_tx_status(uint32_t occurred, uint32_t canceled,
 }
 extern volatile uint32_t wheel_bench_request, wheel_bench_wheel;
 extern volatile int32_t wheel_bench_direction;
+/* RPM2 speed-PI numerators for BENCH_TUNE (int16 range, both negative;
+ * kp magnitude >= 1000). Applied by the ESC only while armed+IDLE; RAM-only. */
+extern volatile int32_t wheel_bench_tune_kp, wheel_bench_tune_ki;
 extern volatile uint32_t wheel_bench_state, wheel_bench_result;
 extern volatile uint32_t wheel_bench_run_count;
 extern volatile int32_t wheel_bench_speed_rpm;
@@ -39,8 +43,10 @@ extern volatile uint32_t wheel_bench_esc_state, wheel_bench_esc_age_ms;
 /* First fault: 1=enqueue failed, 2=TX canceled/failed, 3=100 ms timeout.
  * Diagnostics only; fault remains latched and blocks drive commands. */
 /* result: 0=none, 1=armed, 2=run queued, 3=STOP frames ACKed (not stopped
- * feedback), 4=rejected, 5=transport fault. run_count: completed RUNs, no
- * latch — repeats need a fresh ARM after the cooldown. */
+ * feedback), 4=rejected, 5=transport fault, 6=tune frame queued (TX ACK only;
+ * ESC acceptance is proven by ESC RAM readback, never by this code).
+ * run_count: completed RUNs, no latch — repeats need a fresh ARM after the
+ * cooldown. */
 void wheel_bench_tick(uint32_t now);
 void wheel_bench_button(uint32_t now, uint8_t pressed);
 /* Tier-1 ESC poll hooks. esc_rx stores a validated 8-byte 0x280|ID reply

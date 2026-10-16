@@ -45,6 +45,11 @@ int main(int argc, char **argv) {
   assert(argc==2); int scenario=atoi(argv[1]);
   if (scenario==0) {
     pump(0, 1000); assert(count==0 && ik_drive_state==IK_IDLE);
+    assert(ik_drive_transport_idle());
+    ik_drive_request=IK_PREPARE; ik_drive_sequence=1;
+    assert(!ik_drive_transport_idle()); /* Newly committed command precedes polls. */
+    ik_drive_tick(1000);
+    assert(!ik_drive_transport_idle()); /* ARM burst owns the transport. */
   } else if (scenario==1) {
     prepare(); assert(ik_drive_ack_count==4 && ik_drive_tx_count==4);
   } else if (scenario>=2 && scenario<=4) {
@@ -53,6 +58,7 @@ int main(int argc, char **argv) {
     if (scenario==4) ik_drive_omega_mradps=500;
     request(IK_START, 2, 1); pump(2, 15);
     assert(count==8 && ik_drive_state==IK_RUNNING && ik_drive_completed==2);
+    assert(ik_drive_transport_idle()); /* Polls allowed between drive commands. */
     const int expected[3][4]={{51,48,-48,-51},{-29,33,33,-29},{13,12,12,13}};
     for (unsigned i=0; i<4; ++i) {
       assert(ids[i]==(0x400U | (1U<<i)));
@@ -65,6 +71,7 @@ int main(int argc, char **argv) {
     assert(count==8 && ik_drive_completed==3 && ik_drive_result==IK_REJECTED);
     request(IK_STOP, 4, 21); pump(22, 200);
     assert(ik_drive_state==IK_STOPPING && ik_drive_completed!=4);
+    assert(!ik_drive_transport_idle());
     pump(222, 800);
     assert(count==11 && ik_drive_completed==4 && ik_drive_state==IK_IDLE);
     for (unsigned i=8; i<11; ++i) {
@@ -75,7 +82,7 @@ int main(int argc, char **argv) {
     assert(count==3 && ik_drive_state==IK_IDLE); /* zero is STOP, not start */
     assert(ik_drive_completed==1);
   } else if (scenario==6) {
-    ik_drive_vx_mmps=301;
+    ik_drive_vx_mmps=5001;
     request(IK_START, 1, 0);
     assert(count==0 && ik_drive_completed==1 && ik_drive_result==IK_BAD_TARGET);
   } else if (scenario==7) {
@@ -113,6 +120,62 @@ int main(int argc, char **argv) {
     assert(count==4 && ik_drive_state==IK_IDLE); /* Reject leaves IDLE usable. */
     pump(12, 100); assert(count==4); /* Persistent request is not replayed. */
     request(IK_PREPARE, 2, 120); assert(count==4); /* Duplicate sequence ignored. */
+  } else if (scenario>=13 && scenario<=16) {
+    /* Both signs at the 5 m/s boundary, each axis, every addressed wheel. */
+    const int sign=(scenario & 1) ? 1 : -1;
+    const int forward=scenario>=15;
+    if (forward) ik_drive_vy_mmps=sign*5000;
+    else ik_drive_vx_mmps=sign*5000;
+    request(IK_START, 1, 0); pump(1, 20);
+    assert(count==8 && ik_drive_state==IK_RUNNING && ik_drive_result==IK_SENT);
+    const int lateral[4]={-729,836,836,-729};
+    const int longitudinal[4]={900,851,-851,-900};
+    for (unsigned i=0;i<4;++i) {
+      assert(ids[i]==(0x400U | (1U<<i)));
+      assert(ids[4+i]==(0x080U | (1U<<i)));
+      assert(rpm(4+i)==sign*(forward ? longitudinal[i] : lateral[i]));
+      assert(rpm(4+i)==ik_drive_rpm[i] && abs(rpm(4+i))<=900);
+      assert(payload[4+i][2]==0xf4 && payload[4+i][3]==1);
+    }
+    request(IK_STOP, 2, 21); pump(22, 1000);
+    assert(count==11 && ik_drive_state==IK_IDLE && ik_drive_completed==2);
+    for (unsigned i=8;i<11;++i) assert(ids[i]==0x78f);
+  } else if (scenario>=17 && scenario<=20) {
+    const int sign=(scenario & 1) ? 1 : -1;
+    if (scenario>=19) ik_drive_vy_mmps=sign*5001;
+    else ik_drive_vx_mmps=sign*5001;
+    request(IK_START, 1, 0);
+    assert(count==0 && ik_drive_completed==1 && ik_drive_result==IK_BAD_TARGET);
+  } else if (scenario==21 || scenario==22) {
+    ik_drive_vy_mmps=scenario==21 ? 1000 : 3000;
+    request(IK_START, 1, 0); pump(1, 20);
+    const int expected[2][4]={{253,239,-239,-253},{758,717,-717,-758}};
+    assert(count==8 && ik_drive_state==IK_RUNNING);
+    for (unsigned i=0;i<4;++i) assert(rpm(4+i)==expected[scenario-21][i]);
+  } else if (scenario==23) {
+    ik_drive_vx_mmps=5000; ik_drive_vy_mmps=5000; ik_drive_omega_mradps=1000;
+    request(IK_START, 1, 0); pump(1, 20);
+    assert(count==8 && ik_drive_state==IK_RUNNING);
+    unsigned saturated=0;
+    for (unsigned i=0;i<4;++i) {
+      assert(ids[4+i]==(0x080U | (1U<<i)));
+      assert(abs(rpm(4+i))<=900);
+      saturated|=abs(rpm(4+i))==900;
+    }
+    assert(saturated);
+  } else if (scenario==24 || scenario==25) {
+    ik_drive_omega_mradps=scenario==24 ? 1001 : -1001;
+    request(IK_START, 1, 0);
+    assert(count==0 && ik_drive_completed==1 && ik_drive_result==IK_BAD_TARGET);
+  } else if (scenario==26 || scenario==27) {
+    ik_drive_omega_mradps=scenario==26 ? 1000 : -1000;
+    request(IK_START, 1, 0); pump(1, 20);
+    assert(count==8 && ik_drive_state==IK_RUNNING);
+  } else if (scenario==28 || scenario==29) {
+    if (scenario==28) ik_drive_vx_mmps=INT32_MIN;
+    else ik_drive_vy_mmps=INT32_MAX;
+    request(IK_START, 1, 0);
+    assert(count==0 && ik_drive_completed==1 && ik_drive_result==IK_BAD_TARGET);
   }
   return 0;
 }
@@ -126,6 +189,6 @@ with tempfile.TemporaryDirectory(prefix='ik-drive-tests-', dir='/tmp/opencode') 
                     str(tmp / 'test.c'), str(ROOT / 'CM7/Core/Src/ik_drive.c'),
                     str(ROOT / 'Common/Src/rover_kinematics.c'),
                     '-lm', '-o', str(tmp / 'test')], check=True)
-    for scenario in range(13):
+    for scenario in range(30):
         subprocess.run([str(tmp / 'test'), str(scenario)], check=True)
-print('PASS: 13 IK adapter scenarios (fake CAN, no hardware)')
+print('PASS: 30 IK adapter scenarios (all-four +/-900 RPM, 5 m/s bounds, fake CAN, no hardware)')

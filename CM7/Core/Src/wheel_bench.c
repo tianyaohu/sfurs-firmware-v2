@@ -3,6 +3,7 @@
 volatile uint32_t wheel_bench_request = 0;
 volatile uint32_t wheel_bench_wheel = 0;
 volatile int32_t wheel_bench_direction = 0;
+volatile int32_t wheel_bench_tune_kp = -18600, wheel_bench_tune_ki = -72;
 volatile uint32_t wheel_bench_state = BENCH_IDLE;
 volatile uint32_t wheel_bench_result = 0;
 volatile uint32_t wheel_bench_run_count = 0; /* Completed RUNs, diagnostics only. */
@@ -256,6 +257,34 @@ void wheel_bench_tick(uint32_t now)
     } else {
       wheel_bench_result = 4;
       if (wheel_bench_state == BENCH_ARMED) wheel_bench_state = BENCH_IDLE;
+    }
+  } else if (request == BENCH_TUNE) {
+    /* Auto-tune GAIN_SET (0x500|dev, TEST_GAIN_SET): RPM2 speed-PI numerators,
+     * int16 LE kp then ki, both negative. Sent only while ARMED with the
+     * armed selection unchanged; the 5 s armed window is NOT refreshed (the
+     * ESC counts it from ARM). ACK proves only bus TX; ESC acceptance is read
+     * back from ESC RAM (test_gain_set_result / test_speed_kp_gain). */
+    if (wheel_bench_state == BENCH_ARMED && !pending && !faulted &&
+        wheel_bench_wheel == selected && wheel_bench_direction == direction &&
+        wheel_bench_tune_kp >= -32767 && wheel_bench_tune_kp <= -1000 &&
+        wheel_bench_tune_ki >= -32767 && wheel_bench_tune_ki <= -1) {
+      uint32_t packed = ((uint32_t)(uint16_t)(int16_t)wheel_bench_tune_ki << 16) |
+                        (uint32_t)(uint16_t)(int16_t)wheel_bench_tune_kp;
+      const uint8_t data[4] = {(uint8_t)packed, (uint8_t)(packed >> 8),
+                               (uint8_t)(packed >> 16), (uint8_t)(packed >> 24)};
+      if (wheel_bench_send(0x500U | selected, data)) {
+        ++wheel_bench_tx_count;
+        pending = 1;
+        pending_arm = 0;
+        pending_stop = 0;
+        pending_tick = now;
+        wheel_bench_result = 6;
+      } else {
+        record_fault(1U, now);
+        stop(now);
+      }
+    } else {
+      wheel_bench_result = 4;
     }
   } else if (request && request != BENCH_STOP) {
     wheel_bench_result = 4;

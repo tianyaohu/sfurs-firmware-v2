@@ -26,8 +26,29 @@ profiles.add_argument('--rpm-diagnostic', action='store_true',
 profiles.add_argument('--torque-count-diagnostic', action='store_true',
                       help='Build disarmed NE-only 1.5 A torque / 14400-edge (300-turn) count stop / 180 s backup')
 profiles.add_argument('--reverse-speed-diagnostic', action='store_true',
-                      help='Build disarmed NE-only -60 RPM reverse-stable / negated PI / 3 A / 10 s validation')
+                       help='Build disarmed RPM2 profile: +/-900 RPM bounds / '
+                            '-100 RPM default / negated PI / 3 A / 30 s backup')
+parser.add_argument('--ne-low-speed-p2', action='store_true',
+                    help='FR-only RPM2 comparison: double proportional response; '
+                         'requires --motor NE --reverse-speed-diagnostic --app-offset')
+parser.add_argument('--rpm2-tune', action='store_true',
+                    help='RPM2 + RAM-only CAN GAIN_SET (0x500|dev) for auto-tune '
+                         'sweeps; requires --motor NE --reverse-speed-diagnostic '
+                          '--app-offset')
+parser.add_argument('--rpm2-ki4', action='store_true',
+                    help='Opt-in RPM2 candidate: Ki -288/16384, original Kp and '
+                         'guards; requires --reverse-speed-diagnostic --app-offset')
 args = parser.parse_args()
+if args.rpm2_ki4 and (not args.reverse_speed_diagnostic or not args.app_offset):
+    parser.error('--rpm2-ki4 requires --reverse-speed-diagnostic --app-offset')
+if args.rpm2_ki4 and (args.ne_low_speed_p2 or args.rpm2_tune):
+    parser.error('--rpm2-ki4 cannot be combined with another gain experiment')
+if args.ne_low_speed_p2 and (args.motor != 'NE' or not args.reverse_speed_diagnostic or not args.app_offset):
+    parser.error('--ne-low-speed-p2 requires --motor NE --reverse-speed-diagnostic --app-offset')
+if args.rpm2_tune and (args.motor != 'NE' or not args.reverse_speed_diagnostic or not args.app_offset):
+    parser.error('--rpm2-tune requires --motor NE --reverse-speed-diagnostic --app-offset')
+if args.rpm2_tune and args.ne_low_speed_p2:
+    parser.error('--rpm2-tune and --ne-low-speed-p2 are mutually exclusive')
 if (args.low_current_test or args.half_amp_diagnostic or args.rpm_diagnostic or args.torque_count_diagnostic or args.reverse_speed_diagnostic) and args.motor != 'NE':
     print(f'WARNING: diagnostic profile for {args.motor} (validated on NE only); '
           f'sign/gains unproven for this wheel', flush=True)
@@ -56,6 +77,12 @@ if args.rpm_diagnostic:
     compile_flags += ['-DESC_RPM_DIAGNOSTIC']
 if args.reverse_speed_diagnostic:
     compile_flags += ['-DESC_REVERSE_SPEED_DIAGNOSTIC']
+if args.ne_low_speed_p2:
+    compile_flags += ['-DESC_NE_LOW_SPEED_P2']
+if args.rpm2_tune:
+    compile_flags += ['-DESC_TUNE_GAIN_SET']
+if args.rpm2_ki4:
+    compile_flags += ['-DESC_RPM2_KI4']
 if args.torque_count_diagnostic:
     compile_flags += ['-DESC_TORQUE_COUNT_DIAGNOSTIC']
 sources = []
@@ -79,6 +106,12 @@ elf = out / ('motor_' + args.motor +
                '_low_current_test.elf' if args.low_current_test else '_telemetry.elf'))
 if args.app_offset:
     elf = out / (elf.stem + '_offset.elf')
+if args.ne_low_speed_p2:
+    elf = out / (elf.stem + '_ne_low_speed_p2.elf')
+if args.rpm2_tune:
+    elf = out / (elf.stem + '_rpm2_tune.elf')
+if args.rpm2_ki4:
+    elf = out / (elf.stem + '_rpm2_ki4.elf')
 ld = root / ('STM32CubeIDE/STM32G431CBUX_FLASH_APP.ld' if args.app_offset
              else 'STM32CubeIDE/STM32G431CBUX_FLASH.ld')
 subprocess.run(['arm-none-eabi-gcc', *flags, '-T' + str(ld),

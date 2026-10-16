@@ -139,6 +139,27 @@
  **************************/
 
 /* ##@@_USER_CODE_START_##@@ */
+#if defined(ESC_RPM2_KI4)
+/* Validate even if ESC_LOW_CURRENT_TEST is missing: otherwise its conditional
+ * include below could silently leave a misconfigured Ki4 build on SDK gains. */
+#include "test_profile.h"
+#endif
+#if defined(ESC_NE_LOW_SPEED_P2)
+/* FR-only comparison: double proportional response without overflowing the
+ * signed 16-bit gain numerator (-18600 * 2 would be outside int16_t).
+ * Keep both divider representations consistent for the SDK's shift/divide
+ * implementations. Integral/current-loop gains and all limits stay unchanged. */
+#if !defined(MOTOR_NE) || defined(MOTOR_SE) || defined(MOTOR_SW) || defined(MOTOR_NW) || \
+    !defined(ESC_LOW_CURRENT_TEST) || !defined(ESC_REVERSE_SPEED_DIAGNOSTIC) || \
+    !defined(ESC_BOOT_OFFSET_APP) || defined(ESC_RPM_DIAGNOSTIC) || \
+    defined(ESC_TORQUE_COUNT_DIAGNOSTIC) || defined(ESC_HALF_AMP_DIAGNOSTIC)
+#error "ESC_NE_LOW_SPEED_P2 requires NE-only, offset-app, guarded RPM2 profile"
+#endif
+#undef SP_KPDIV
+#define SP_KPDIV 512
+#undef SP_KPDIV_LOG
+#define SP_KPDIV_LOG LOG2((512))
+#endif
 #ifdef ESC_LOW_CURRENT_TEST
 #include "test_profile.h"
 /* Opt-in bench profile only. These are reference limits, not peak-current guarantees. */

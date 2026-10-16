@@ -345,9 +345,16 @@ static int TestDriveGuardFault(void)
 
 static int TestDriveGuardSpeed(void)
 {
-  if (!(ESC_TEST_GUARDED_MOTION && test_drive_active != 0U &&
+  /* Bidirectional RPM2 accepts both command endpoints. Equality must not
+   * immediately trip a legal +/-900 RPM target; other profiles keep their
+   * existing at-limit trip behavior. No overspeed margin is added. */
+  const int overspeed = ESC_TEST_RPM_PROFILE && ESC_TEST_RPM_MIN < 0 ?
+      (test_drive_measured_rpm > ESC_TEST_MAX_MOTOR_RPM ||
+       test_drive_measured_rpm < -ESC_TEST_MAX_MOTOR_RPM) :
       (test_drive_measured_rpm >= ESC_TEST_MAX_MOTOR_RPM ||
-       test_drive_measured_rpm <= -ESC_TEST_MAX_MOTOR_RPM)))
+       test_drive_measured_rpm <= -ESC_TEST_MAX_MOTOR_RPM);
+  if (!(ESC_TEST_GUARDED_MOTION && test_drive_active != 0U &&
+      overspeed))
     return 0;
   test_drive_active = 0U;
   test_drive_stop_reason = TEST_STOP_SPEED;
@@ -488,6 +495,45 @@ void TestCalibrationService(void)
       test_calibration_result = 2U;
   }
 }
+
+#if defined(ESC_TUNE_GAIN_SET)
+/* Runtime RAM-only speed-PI numerator update (CAN GAIN_SET, 0x500|dev) for
+ * staged auto-tune sweeps. Only hKpGain/hKiGain change; SP_KPDIV/SP_KIDIV
+ * stay at the compiled values so the integral accumulator limit (scaled by
+ * SP_KIDIV at PID init) never changes. Requires armed + IDLE + no faults,
+ * does NOT consume or refresh the 5 s armed window, and never starts the
+ * motor. RPM2 negated-gain convention: both numerators must stay negative;
+ * magnitude floors reject near-zero gains that would only stall-trip.
+ * RAM-only: any reset restores the compiled ESC_TEST_SPEED_KP/KI defaults.
+ * result: 0=none, 1=applied, 2=state rejected, 3=bounds rejected. */
+volatile int32_t test_speed_kp_gain = ESC_TEST_SPEED_KP;
+volatile int32_t test_speed_ki_gain = ESC_TEST_SPEED_KI;
+volatile uint32_t test_gain_set_result = 0, test_gain_set_count = 0;
+uint32_t TestDriveGainSet(uint32_t packed)
+{
+  int16_t kp = (int16_t)(packed & 0xFFFFU);
+  int16_t ki = (int16_t)(packed >> 16);
+  ++test_gain_set_count;
+  if (test_drive_armed != ESC_TEST_ARM_MAGIC || test_drive_active != 0U ||
+      MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS || MC_GetSTMStateMotor1() != IDLE)
+  {
+    test_gain_set_result = 2U;
+    return 2U;
+  }
+  if (kp == (int16_t)-32768 || ki == (int16_t)-32768 || kp > -1000 || ki > -1)
+  {
+    test_gain_set_result = 3U;
+    return 3U;
+  }
+  PID_SetKP(&PIDSpeedHandle_M1, kp);
+  PID_SetKI(&PIDSpeedHandle_M1, ki);
+  test_speed_kp_gain = kp;
+  test_speed_ki_gain = ki;
+  test_gain_set_result = 1U;
+  return 1U;
+}
+#endif
+/* HARNESS HELPERS END */
 #endif
 
 /* USER CODE END 0 */
@@ -1585,6 +1631,15 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     (void)TestDriveArm(CAN_U32_FROM_PAYLOAD(can_rx_data));
     return;
   }
+#if defined(ESC_TUNE_GAIN_SET)
+  /* GAIN_SET (0x500|dev): armed+IDLE speed-PI numerator update; acceptance
+   * is only proven by test_gain_set_result/test_speed_kp_gain readback. */
+  if (can_rx_header.Identifier == (TEST_GAIN_SET | MOTOR_CAN_ID))
+  {
+    (void)TestDriveGainSet(CAN_U32_FROM_PAYLOAD(can_rx_data));
+    return;
+  }
+#endif
   /* Stop is always accepted for an addressed motor; never refresh the run deadline. */
   if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == MOTOR_STOP)
   {
@@ -1603,6 +1658,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
   uint16_t test_ramp_ms = (uint16_t)(test_data >> 16);
   (void)TestDriveStart(test_rpm, test_ramp_ms);
   return;
+/* HARNESS COMMANDS END */
 #endif
 
   if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == SPEED_WRITE)

@@ -3,6 +3,8 @@
 import contextlib
 import importlib.util
 import io
+import hashlib
+import json
 import pathlib
 import subprocess
 import sys
@@ -14,7 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("keyboard_drive", ROOT / "scripts/keyboard_drive.py")
 kd = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(kd)
-ADDRS = {name: 0x24000000 + index * 32 for index, name in enumerate(kd.FIELDS)}
+ADDRS = {name: 0x24000000 + index * 256 for index, name in enumerate(kd.FIELDS)}
 FLASH = [(0x08000000, bytes(range(256)) * 9), (0x08018000, b"data initializer")]
 
 
@@ -28,6 +30,8 @@ class FakeTarget:
         self.events = []
         self.immediate = immediate
         self.current = None
+        self.block_reads = []
+        self.torn_reads = {}
 
     def read32(self, address):
         self.events.append(("read", address))
@@ -37,6 +41,15 @@ class FakeTarget:
         self.flash_reads.append((address, length))
         self.events.append(("flash", address, length))
         return [self.flash.get(address + offset, 0) for offset in range(length)]
+
+    def read_memory_block32(self, address, length):
+        self.block_reads.append((address, length))
+        self.events.append(("block32", address, length))
+        words = [self.mem.get(address + offset * 4, 0) for offset in range(length)]
+        if self.torn_reads.get(address, 0):
+            self.torn_reads[address] -= 1
+            self.mem[address] = words[0] + 2
+        return words
 
     def flush(self):
         self.events.append(("flush",))
@@ -78,6 +91,17 @@ def requests(target):
     return [command[0] for command in target.commands]
 
 
+def telemetry_row(target, index=0, **changes):
+    row = dict(zip(kd.TELEM_FIELDS, (2, -123, 6, 5, 77, 900, -1088, 544,
+                                   0xF800, 2000, 950, 10, 20)))
+    row.update(changes)
+    base = ADDRS["telem"] + index * 52
+    for offset, name in enumerate(kd.TELEM_FIELDS):
+        target.mem[base + offset * 4] = row[name] & 0xFFFFFFFF
+    target.mem[ADDRS["telem_now"]] = 1000
+    return base
+
+
 class Segment(dict):
     def __init__(self, address, data, *, vaddr=None, kind="PT_LOAD", size=None):
         super().__init__(p_type=kind, p_paddr=address,
@@ -111,7 +135,13 @@ class ResolverTests(unittest.TestCase):
     def test_missing_symbol_fails_instead_of_using_fallback(self):
         with self.assertRaisesRegex(RuntimeError, "missing: ik_drive_fault"):
             self.resolve("\n".join(line for line in self.output.splitlines()
-                                   if not line.endswith("ik_drive_fault")))
+                                    if not line.endswith("ik_drive_fault")))
+
+    def test_both_abi2_telemetry_symbols_are_required(self):
+        for name in ("telem", "telem_now"):
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, "missing: ik_drive_" + name):
+                self.resolve("\n".join(line for line in self.output.splitlines()
+                                       if not line.endswith("ik_drive_" + name)))
 
     def test_missing_elf_fails_before_nm(self):
         with mock.patch.object(kd.subprocess, "run") as run:
@@ -185,13 +215,15 @@ class IdentityTests(unittest.TestCase):
                 self.assertEqual(target.writes, [])
 
     def test_wrong_abi_causes_zero_writes_even_on_exit(self):
-        target = FakeTarget()
-        target.mem[ADDRS["abi"]] = kd.ABI + 1
-        drive = kd.Drive(target, ADDRS)
-        with mock.patch.object(kd, "load_flash_segments", return_value=FLASH):
-            with self.assertRaisesRegex(RuntimeError, "ABI mismatch"):
-                kd.operate(drive, "wrong.elf", mock.Mock())
-        self.assertEqual(target.writes, [])
+        for abi in (0x494B0001, kd.ABI + 1):
+            with self.subTest(abi=abi):
+                target = FakeTarget()
+                target.mem[ADDRS["abi"]] = abi
+                drive = kd.Drive(target, ADDRS)
+                with mock.patch.object(kd, "load_flash_segments", return_value=FLASH):
+                    with self.assertRaisesRegex(RuntimeError, "ABI mismatch"):
+                        kd.operate(drive, "wrong.elf", mock.Mock())
+                self.assertEqual(target.writes, [])
 
     def test_unverified_transport_refuses_even_stop(self):
         target = FakeTarget()
@@ -255,6 +287,195 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(status["rpm"], [123, -456, -(1 << 31), (1 << 31) - 1])
         for name in ("state", "result", "tx_count", "ack_count", "fault", "completed", "sequence"):
             self.assertIn(name, status)
+
+
+class TelemetryTests(unittest.TestCase):
+    def test_unchanged_ram_ages_out_even_when_firmware_clock_freezes(self):
+        target, drive = verified()
+        telemetry_row(target)
+        self.assertTrue(drive.poll_telem(0)['rows'][0]['current_valid'])
+        for now in (1, 10):
+            row = drive.poll_telem(now)['rows'][0]
+            self.assertGreaterEqual(row['speed_age_ms'], 100 + now * 1000)
+            self.assertFalse(row['current_valid'])
+        # A resuming clock alone is not fresh CAN evidence either.
+        target.mem[ADDRS['telem_now']] = 1100
+        self.assertFalse(drive.poll_telem(11)['rows'][0]['current_valid'])
+        telemetry_row(target, speed_tick=1100, current_tick=1100,
+                      speed_count=11, current_count=21)
+        target.mem[ADDRS['telem_now']] = 1100
+        self.assertTrue(drive.poll_telem(12)['rows'][0]['current_valid'])
+
+    def setUp(self):
+        self.target, self.drive = verified()
+
+    def row(self, **changes):
+        telemetry_row(self.target, **changes)
+        return self.drive.poll_telem(0)["rows"][0]
+
+    def test_four_mapping_block_layout_signed_decode_and_flags(self):
+        self.assertEqual(kd.WHEELS, (("FR", "NE", 1), ("BR", "SE", 2),
+                                     ("BL", "SW", 4), ("FL", "NW", 8)))
+        self.assertEqual(kd.TELEM_FIELDS,
+                         ("generation", "rpm", "state", "hall", "hall_changes", "speed_tick",
+                          "iq_counts", "id_counts", "flags", "peak_l1_counts", "current_tick",
+                          "speed_count", "current_count"))
+        for index in range(4):
+            telemetry_row(self.target, index, rpm=-100 - index, iq_counts=-544 * (index + 1))
+        result = self.drive.poll_telem(10)
+        self.assertEqual(self.target.block_reads, [(ADDRS["telem"] + i * 52, 13) for i in range(4)])
+        for index, (row, identity) in enumerate(zip(result["rows"], kd.WHEELS)):
+            self.assertEqual((row["wheel"], row["compass"], row["selector"]), identity)
+            self.assertEqual(row["rpm"], -100 - index)
+            self.assertEqual(row["raw"]["iq_counts"], -544 * (index + 1))
+            self.assertEqual(row["iq_a"], -(index + 1))
+            self.assertEqual(row["id_a"], 1)
+            self.assertEqual(row["peak_l1_counts"], 2000)
+            self.assertTrue(all(row["flags"][name] for name in kd.FLAG_BITS))
+            self.assertEqual(row["flags"]["faults"], 0)
+            block = self.target.events.index(("block32", ADDRS["telem"] + index * 52, 13))
+            self.assertEqual(self.target.events[block + 1], ("read", ADDRS["telem"] + index * 52))
+        self.assertEqual(self.target.writes, [])
+
+    def test_stable_retry_succeeds_on_third_attempt(self):
+        base = telemetry_row(self.target)
+        self.target.torn_reads[base] = 2
+        row = self.drive.poll_telem(0)["rows"][0]
+        self.assertTrue(row["available"])
+        self.assertEqual(row["raw"]["generation"], 6)
+        self.assertEqual(self.target.block_reads.count((base, 13)), 3)
+
+    def test_final_torn_or_odd_is_unavailable_not_previous_row(self):
+        for odd in (False, True):
+            with self.subTest(odd=odd):
+                target, drive = verified()
+                base = telemetry_row(target)
+                self.assertEqual(drive.poll_telem(0)["rows"][0]["rpm"], -123)
+                if odd:
+                    target.mem[base] = 3
+                else:
+                    target.torn_reads[base] = 3
+                row = drive.poll_telem(0.11)["rows"][0]
+                self.assertFalse(row["available"])
+                self.assertIsNone(row["raw"])
+                self.assertIsNone(row["rpm"])
+                self.assertIsNone(row["iq_a"])
+                self.assertEqual(target.block_reads.count((base, 13)), 4)
+
+    def test_zero_reply_counts_are_none_not_measured_zero(self):
+        row = self.row(speed_count=0, current_count=0, rpm=0, iq_counts=0, id_counts=0)
+        for name in ("rpm", "state", "hall", "hall_changes", "iq_counts", "id_counts",
+                     "peak_l1_counts", "speed_age_ms", "current_age_ms", "flags", "iq_a", "id_a"):
+            self.assertIsNone(row[name], name)
+        self.assertEqual(row["raw"]["rpm"], 0)
+        self.assertFalse(row["current_valid"])
+        text = "\n".join(kd.telemetry_lines(row, 0))
+        self.assertIn("MEASURED=--", text)
+        self.assertIn("NO REPLY", text)
+        self.assertIn("INVALID", text)
+
+    def test_independent_reply_ages_and_500ms_boundary(self):
+        row = self.row(speed_tick=500, current_tick=499)
+        self.assertEqual(row["speed_age_ms"], 500)
+        self.assertEqual(row["current_age_ms"], 501)
+        self.assertTrue(row["speed_fresh"])
+        self.assertFalse(row["current_fresh"])
+        self.assertIsNone(row["iq_a"])
+        self.assertEqual(row["iq_counts"], -1088)
+        telemetry_row(self.target, speed_tick=499, current_tick=500,
+                      speed_count=11, current_count=21)
+        row = self.drive.poll_telem(0.11)["rows"][0]
+        self.assertFalse(row["speed_fresh"])
+        self.assertTrue(row["current_fresh"])
+        self.assertIsNone(row["iq_a"])
+        telemetry_row(self.target, speed_tick=500, current_tick=500,
+                      speed_count=12, current_count=22)
+        self.assertTrue(self.drive.poll_telem(0.22)["rows"][0]["current_valid"])
+
+    def test_reply_groups_are_independent_even_before_first_reply(self):
+        row = self.row(speed_count=0)
+        self.assertIsNone(row["rpm"])
+        self.assertIsNone(row["speed_age_ms"])
+        self.assertEqual(row["iq_counts"], -1088)
+        self.assertTrue(row["current_fresh"])
+        self.assertIsNone(row["iq_a"])
+        telemetry_row(self.target, current_count=0)
+        row = self.drive.poll_telem(1)["rows"][0]
+        self.assertEqual(row["rpm"], -123)
+        self.assertTrue(row["speed_fresh"])
+        self.assertIsNone(row["iq_counts"])
+        self.assertIsNone(row["current_age_ms"])
+        self.assertIsNone(row["iq_a"])
+
+    def test_wrap_safe_hal_ages(self):
+        telemetry_row(self.target, speed_tick=0xFFFFFFF0, current_tick=0xFFFFFFE0)
+        self.target.mem[ADDRS["telem_now"]] = 0x10
+        row = self.drive.poll_telem(2)["rows"][0]
+        self.assertEqual(row["speed_age_ms"], 32)
+        self.assertEqual(row["current_age_ms"], 48)
+        self.assertTrue(row["current_valid"])
+
+    def test_expensive_rows_cached_but_monotonic_ages_advance(self):
+        telemetry_row(self.target, speed_tick=510, current_tick=520)
+        first = self.drive.poll_telem(10)
+        second = self.drive.poll_telem(10.08)
+        self.assertEqual(len(self.target.block_reads), 4)
+        self.assertEqual(first["snapshot_monotonic"], 10)
+        self.assertAlmostEqual(second["rows"][0]["speed_age_ms"], 570)
+        self.assertAlmostEqual(second["rows"][0]["current_age_ms"], 560)
+        self.assertFalse(second["rows"][0]["current_valid"])
+        # Reading cache must not mutate the prior sample used by logging.
+        self.assertEqual(first["rows"][0]["speed_age_ms"], 490)
+        self.drive.poll_telem(10.11)
+        self.assertEqual(len(self.target.block_reads), 8)
+
+    def test_read_errors_cannot_leave_fresh_prior_values(self):
+        telemetry_row(self.target)
+        self.drive.poll_telem(0)
+        with mock.patch.object(self.target, "read_memory_block32", side_effect=OSError("probe")):
+            row = self.drive.poll_telem(0.11)["rows"][0]
+        self.assertFalse(row["available"])
+        self.assertEqual(row["read_error"], "probe")
+        self.assertIsNone(row["rpm"])
+        with mock.patch.object(self.drive, "read", side_effect=OSError("tick unavailable")):
+            rows = self.drive.poll_telem(0.22)["rows"]
+        self.assertTrue(all(not row["available"] for row in rows))
+
+    def test_strict_current_gate_each_required_flag_state_fault_and_group(self):
+        invalid = [dict(state=state) for state in (0, 5, 7, 10)]
+        invalid += [dict(flags=0xF800 & ~kd.FLAG_BITS[name]) for name in ("profile", "cal", "active")]
+        invalid += [dict(flags=0xF800 | fault) for fault in (1, 2, 0x400, 0x7FF)]
+        invalid += [dict(speed_count=0), dict(current_count=0), dict(speed_tick=0), dict(current_tick=0)]
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                telemetry_row(self.target, **changes)
+                words = self.target.read_memory_block32(ADDRS["telem"], 13)
+                row = kd.decode_telem(words, kd.WHEELS[0], 1000)
+                self.assertFalse(row["current_valid"])
+                self.assertIsNone(row["iq_a"])
+                self.assertIsNone(row["id_a"])
+                self.assertEqual(row["raw"]["iq_counts"], -1088)
+                self.assertTrue(row["invalid_reasons"])
+        # Armed/everrun are displayed, not additional undocumented conversion gates.
+        row = self.row(flags=0x9800)
+        self.assertTrue(row["current_valid"])
+        self.assertFalse(row["flags"]["armed"])
+        self.assertFalse(row["flags"]["everrun"])
+
+    def test_fast_poll_does_not_read_telemetry(self):
+        self.drive.poll()
+        self.assertEqual(self.target.block_reads, [])
+
+    def test_signed_32bit_extremes_and_real_zero_with_fresh_reply(self):
+        row = self.row(rpm=-(1 << 31), iq_counts=(1 << 31) - 1, id_counts=-(1 << 31))
+        self.assertEqual(row["rpm"], -(1 << 31))
+        self.assertEqual(row["iq_a"], ((1 << 31) - 1) / 544)
+        self.assertEqual(row["id_a"], -(1 << 31) / 544)
+        telemetry_row(self.target, rpm=0, iq_counts=0, id_counts=0,
+                      speed_count=11, current_count=21)
+        row = self.drive.poll_telem(1)["rows"][0]
+        self.assertEqual(row["rpm"], 0)
+        self.assertEqual(row["iq_a"], 0.0)
 
 
 class KeyboardTests(unittest.TestCase):
@@ -417,6 +638,27 @@ class KeyboardTests(unittest.TestCase):
 
 
 class CleanupTests(unittest.TestCase):
+    def test_failed_cleanup_outcomes_are_recorded_without_retry(self):
+        target, drive = verified(immediate=False)
+        events = []
+        drive.logger = mock.Mock()
+        drive.logger.write.side_effect = lambda kind, **data: events.append((kind, data))
+        now = [0.0]
+        def sleep(seconds):
+            now[0] += seconds
+        kd.finish_stop(drive, report=lambda _: None, timeout=0.2,
+                       clock=lambda: now[0], sleep=sleep)
+        self.assertEqual(requests(target), [kd.STOP])
+        failure = [data for kind, data in events if kind == 'cleanup_stop_failed']
+        self.assertEqual(failure[0]['reason'], 'timeout')
+        self.assertEqual(failure[0]['sequence'], 1)
+        events.clear()
+        with mock.patch.object(drive, 'submit', side_effect=OSError('disconnected')):
+            kd.finish_stop(drive, report=lambda _: None)
+        failure = [data for kind, data in events if kind == 'cleanup_stop_failed']
+        self.assertEqual(failure[0]['reason'], 'transport_or_interrupt')
+        self.assertIn('disconnected', failure[0]['error'])
+
     def test_stop_on_normal_exit_exception_and_keyboard_interrupt(self):
         for failure in (None, ValueError("UI failure"), KeyboardInterrupt()):
             with self.subTest(failure=failure):
@@ -477,9 +719,184 @@ class CleanupTests(unittest.TestCase):
         self.assertIn("No retry", reports[-1])
 
 
+class LogAndMonitorTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir="/tmp/opencode")
+        self.addCleanup(self.temp.cleanup)
+        self.elf = pathlib.Path(self.temp.name) / "selected.elf"
+        self.elf.write_bytes(b"explicit ELF identity")
+        self.path = pathlib.Path(self.temp.name) / "events.jsonl"
+
+    def records(self, path=None):
+        return [json.loads(line) for line in (path or self.path).read_text().splitlines()]
+
+    def run_ui(self, drive, frames, monitor_only=False):
+        import types
+        now = [0.0]
+        class Screen:
+            index = 0
+            def nodelay(self, enabled):
+                pass
+            def getch(self):
+                return ord(frames[self.index].pop(0)) if frames[self.index] else -1
+            def erase(self):
+                pass
+            def getmaxyx(self):
+                return 40, 180
+            def addnstr(self, *args):
+                pass
+            def refresh(self):
+                self.index += 1
+                now[0] += 0.11
+        with mock.patch.dict(sys.modules, {"curses": types.SimpleNamespace(flushinp=lambda: None)}), \
+                mock.patch.object(kd.time, "monotonic", side_effect=lambda: now[0]), \
+                mock.patch.object(kd.time, "sleep"):
+            kd.run_ui(Screen(), drive, 0.2, 0.5, monitor_only)
+
+    def test_jsonl_header_sha_units_sample_keys_submissions_and_outcomes(self):
+        target, drive = verified()
+        for index in range(4):
+            telemetry_row(target, index)
+        with kd.JsonlLog(self.path, self.elf) as logger:
+            drive.logger = logger
+            with mock.patch.object(kd, "load_flash_segments", return_value=FLASH):
+                kd.operate(drive, self.elf,
+                           lambda d: self.run_ui(d, [[], ["w"], [], [" "], ["\x1b"]]),
+                           report=lambda text: None)
+        self.assertTrue(logger.stream.closed)
+        records = self.records()
+        header = records[0]
+        self.assertEqual(header["event"], "session")
+        self.assertEqual(header["elf_path"], str(self.elf))
+        self.assertEqual(header["elf_sha256"], hashlib.sha256(self.elf.read_bytes()).hexdigest())
+        self.assertEqual(header["abi"], 0x494B0002)
+        self.assertEqual(header["abi_version"], 2)
+        self.assertEqual(header["units"]["counts_per_amp"], 544)
+        self.assertIn("provisional", " ".join(header["notes"]))
+        self.assertIn("offsets not independently validated", " ".join(header["notes"]))
+        samples = [r for r in records if r["event"] == "sample"]
+        self.assertEqual(len(samples), 4)
+        self.assertEqual(samples[0]["requested_twist"], [0, 0, 0])
+        self.assertEqual(samples[1]["requested_twist"], [0, 200, 0])
+        self.assertEqual(samples[3]["requested_twist"], [0, 0, 0])
+        self.assertEqual(len(samples[0]["telemetry"]["rows"]), 4)
+        self.assertEqual(samples[0]["telemetry"]["rows"][0]["raw"]["iq_counts"], -1088)
+        self.assertTrue(samples[0]["telemetry"]["rows"][0]["current_valid"])
+        self.assertIn("rpm", samples[0]["host_status"])
+        self.assertIn("mailbox_twist", samples[0]["host_status"])
+        self.assertEqual([r["keys"] for r in records if r["event"] == "keys"], [["w"], [" "], ["\x1b"]])
+        for event in ("mailbox_submission", "mailbox_committed", "mailbox_outcome"):
+            self.assertEqual(len([r for r in records if r["event"] == event]), 3)
+        for record in records:
+            self.assertIsInstance(record["monotonic"], (float, int))
+            self.assertIn("+00:00", record["utc"])
+        self.assertEqual(requests(target), [kd.START, kd.STOP, kd.STOP])
+
+    def test_log_is_exclusive_never_truncates_and_default_is_fresh(self):
+        self.path.write_text("user evidence\n")
+        with self.assertRaises(FileExistsError):
+            kd.JsonlLog(self.path, self.elf)
+        self.assertEqual(self.path.read_text(), "user evidence\n")
+        with kd.JsonlLog(None, self.elf) as first, kd.JsonlLog(None, self.elf) as second:
+            self.addCleanup(first.path.unlink)
+            self.addCleanup(second.path.unlink)
+            self.assertNotEqual(first.path, second.path)
+            self.assertEqual(first.path.parent, pathlib.Path("/tmp/opencode"))
+            self.assertRegex(first.path.name, r"^ik-telemetry-\d{8}T\d{6}\.\d+Z-\d+\.jsonl$")
+
+    def test_log_closes_on_body_exception(self):
+        with self.assertRaisesRegex(ValueError, "failure"):
+            with kd.JsonlLog(self.path, self.elf) as logger:
+                raise ValueError("failure")
+        self.assertTrue(logger.stream.closed)
+
+    def test_failed_logging_stops_then_exits_not_drives_without_log(self):
+        target, drive = verified()
+        reports = []
+        with kd.JsonlLog(self.path, self.elf) as logger:
+            drive.logger = logger
+            with mock.patch.object(kd, "load_flash_segments", return_value=FLASH):
+                def body(d):
+                    d.submit(kd.START, (0, 200, 0))
+                    logger.stream.close()  # Persistent I/O failure, including cleanup events.
+                    d.event("sample", requested_twist=(0, 200, 0))
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaisesRegex(RuntimeError, "logging failed"):
+                        kd.operate(drive, self.elf, body, reports.append)
+        self.assertEqual(requests(target), [kd.START, kd.STOP])
+        self.assertIn("transaction completed", reports[-1])
+
+    def test_failed_submission_log_blocks_start_but_not_cleanup_stop(self):
+        target, drive = verified()
+        drive.logger = mock.Mock()
+        drive.logger.write.side_effect = OSError("disk full")
+        # Verification logging failure itself also enters safe STOP cleanup.
+        with mock.patch.object(kd, "load_flash_segments", return_value=FLASH), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(OSError):
+                kd.operate(drive, self.elf, lambda d: d.submit(kd.START), report=lambda text: None)
+        self.assertEqual(requests(target), [kd.STOP])
+        target, drive = verified()
+        drive.logger = mock.Mock()
+        drive.logger.write.side_effect = OSError("disk full")
+        with self.assertRaises(OSError):
+            drive.submit(kd.START)
+        self.assertEqual(target.writes, [])
+
+    def test_readonly_never_prepares_starts_or_stops_even_busy_fault_or_exit(self):
+        for state in (kd.IDLE, kd.BUSY, kd.RUNNING, kd.STOPPING, kd.FAULT):
+            with self.subTest(state=state):
+                target, drive = verified()
+                target.mem[ADDRS["state"]] = state
+                target.mem[ADDRS["sequence"]] = 7
+                with mock.patch.object(kd, "load_flash_segments", return_value=FLASH):
+                    kd.operate(drive, self.elf,
+                               lambda d: self.run_ui(d, [["w", "p", " "], [], ["\x1b"]], True),
+                               monitor_only=True)
+                self.assertEqual(target.writes, [])
+                for command in (kd.PREPARE, kd.START, kd.STOP):
+                    with self.assertRaisesRegex(RuntimeError, "read-only"):
+                        drive.submit(command)
+
+    def test_readonly_zero_motion_readback_logged_without_fake_telemetry_zeros(self):
+        target, drive = verified()
+        with kd.JsonlLog(self.path, self.elf, monitor_only=True) as logger:
+            drive.logger = logger
+            with mock.patch.object(kd, "load_flash_segments", return_value=FLASH):
+                kd.operate(drive, self.elf,
+                           lambda d: self.run_ui(d, [[], ["w", "p", " "], ["\x1b"]], True),
+                           monitor_only=True)
+        records = self.records()
+        self.assertTrue(records[0]["monitor_only"])
+        samples = [r for r in records if r["event"] == "sample"]
+        self.assertEqual(len(samples), 2)
+        self.assertIsNone(samples[0]["requested_twist"])
+        self.assertEqual(samples[0]["host_status"]["rpm"], [0, 0, 0, 0])
+        for row in samples[0]["telemetry"]["rows"]:
+            self.assertIsNone(row["rpm"])
+            self.assertIsNone(row["iq_a"])
+        self.assertFalse(any(r["event"].startswith("mailbox_") for r in records))
+        self.assertEqual(target.writes, [])
+
+    def test_readonly_exception_and_keyboard_interrupt_have_zero_cleanup_writes(self):
+        for failure in (ValueError("failure"), KeyboardInterrupt()):
+            target, drive = verified()
+            def body(d):
+                raise failure
+            with mock.patch.object(kd, "load_flash_segments", return_value=FLASH):
+                with self.assertRaises(type(failure)):
+                    kd.operate(drive, self.elf, body, monitor_only=True)
+            kd.finish_stop(drive, report=lambda text: None)
+            self.assertEqual(target.writes, [])
+
+
 class CliTests(unittest.TestCase):
+    def test_default_elf_selects_verified_high_cap_installation(self):
+        self.assertEqual(kd.DEFAULT_ELF,
+                         ROOT / 'CM7/build/IK-900-reviewed/sfurs_firmware_v2_CM7.elf')
+
     def test_float_ranges_allow_fractional_values_but_not_nan_or_inf(self):
-        for low, high in ((0.05, 0.3), (0.1, 1.0)):
+        for low, high in ((0.05, 5.0), (0.1, 1.0)):
             parse = kd.bounded_float(low, high)
             self.assertEqual(parse(str(low)), low)
             self.assertEqual(parse(str(high)), high)
@@ -491,11 +908,37 @@ class CliTests(unittest.TestCase):
         self.assertEqual(target.commands[0][2], (0, -125, 0))
 
     def test_cli_rejects_invalid_speed_before_probe_import(self):
-        for args in (("--speed", "0.01"), ("--yaw", "1.1")):
+        for args in (("--speed", "0.01"), ("--speed", "5.001"),
+                     ("--speed", "nan"), ("--speed", "inf"), ("--yaw", "1.1")):
             with contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
                     kd.main(list(args))
             self.assertEqual(error.exception.code, 2)
+
+    def test_cli_accepts_tournament_speeds_before_hardware_access(self):
+        self.assertEqual(kd.MAX_LINEAR_SPEED, 5.0)
+        for speed in (0.05, 0.3, 1, 3, 5):
+            with mock.patch.object(kd, "resolve_addrs", side_effect=RuntimeError("parsed offline")):
+                with self.assertRaisesRegex(RuntimeError, "parsed offline"):
+                    kd.main(["--speed", str(speed)])
+
+    def test_high_speed_keys_publish_signed_mmps_and_keep_yaw_independent(self):
+        vectors={"w": (0,5000,0), "s": (0,-5000,0), "a": (-5000,0,0),
+                 "d": (5000,0,0), "q": (0,0,500), "e": (0,0,-500)}
+        for key, expected in vectors.items():
+            target, drive = verified()
+            kd.Controller(drive, speed=5).tick([key], 0)
+            self.assertEqual(target.commands[0][2], expected)
+            self.assertEqual(requests(target), [kd.START])
+
+    def test_help_exposes_log_and_readonly_options_without_probe_import(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as result:
+            kd.main(["--help"])
+        self.assertEqual(result.exception.code, 0)
+        self.assertIn("--log", output.getvalue())
+        self.assertIn("--monitor-only", output.getvalue())
+        self.assertIn("no prepare/start/STOP", output.getvalue())
 
     def test_import_is_hardware_dependency_free(self):
         self.assertNotIn("pyocd", sys.modules)

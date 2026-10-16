@@ -16,6 +16,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "build"
@@ -60,8 +61,17 @@ def main():
             artifacts += [binary, OUT / "updater" / w / "sfurs_firmware_v2_CM7.elf"]
     cmake(OUT / "drive", "-UFWU_IMAGE_FILE", "-DFWU_IMAGE_FILE=")
     artifacts.append(OUT / "drive/sfurs_firmware_v2_CM7.elf")
+    # Hash what gets flashed: an ELF's loadable bytes (its debug sections are
+    # not reproducible between builds), a .bin as is.
     for path in artifacts:
-        print(hashlib.sha256(path.read_bytes()).hexdigest()[:16], path.relative_to(ROOT))
+        if path.suffix == ".elf":
+            with tempfile.TemporaryDirectory() as tmp:
+                image = pathlib.Path(tmp) / "image.bin"
+                run("arm-none-eabi-objcopy", "-O", "binary", path, image)
+                data = image.read_bytes()
+        else:
+            data = path.read_bytes()
+        print(hashlib.sha256(data).hexdigest()[:16], path.relative_to(ROOT))
 
 
 if __name__ == "__main__":

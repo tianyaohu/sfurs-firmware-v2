@@ -9,6 +9,9 @@
   esc_tool.py capture WHEEL [--step-ma 3000] [--out f.json]
                                         current-loop step test: R, L, step
                                         response, PI gains for 0.5/0.8/1 kHz
+  esc_tool.py spin WHEEL --rpm 60 [--seconds 3] [--kp N --ki N] [--log f.jsonl]
+                                        one wheel at a speed setpoint, telemetry
+                                        logged; speed-loop check (motion!)
   esc_tool.py stop                      broadcast STOP; also clears a fault whose
                                         cause is gone (FAULT_OVER -> IDLE)
 
@@ -16,11 +19,15 @@ align turns the wheel about 1/4 revolution forward and back at 2 A: battery
 ON, wheels off the ground. Results are lost on ESC reset; bake them into the
 per-wheel build with build_cli.py --hall-shift. capture holds the rotor with
 d-axis current (1 A, then the step): it may click into position but makes no
-torque; battery ON.
+torque; battery ON. spin streams SPEED_WRITE to one wheel only; --kp/--ki
+are set in RAM first and the firmware defaults (drive_parameters.h) restored
+afterwards; STOP on exit, and the ESC stops itself 0.25 s after the stream.
 """
 import argparse
 import json
 import pathlib
+import re
+import statistics
 import sys
 import time
 
@@ -102,6 +109,66 @@ def capture(link, name, selector, args):
     return a
 
 
+def speed_defaults():
+    text = (pathlib.Path(__file__).resolve().parents[1] /
+            "HW/B-G431B-ESC1/motor_config/Inc/drive_parameters.h").read_text()
+    return tuple(int(re.search(rf"#define PID_SPEED_{k}_DEFAULT\s+(\d+)", text)[1]) for k in ("KP", "KI"))
+
+
+def spin(link, name, index, selector, args):
+    """Speed step on one wheel; returns the steady-state summary."""
+    if abs(args.rpm) > 300 or not 0 < args.seconds <= 10:
+        raise SystemExit("spin: |rpm| <= 300 and 0 < seconds <= 10")
+    kp0, ki0 = speed_defaults()
+    gains = args.kp is not None or args.ki is not None
+    kp = kp0 if args.kp is None else args.kp
+    ki = ki0 if args.ki is None else args.ki
+    rows = []
+    try:
+        if gains:
+            link.send_raw(*ik_link.config_frame(selector, "kp", kp))
+            link.send_raw(*ik_link.config_frame(selector, "ki", ki))
+        word = ((args.ramp_ms & 0xFFFF) << 16) | (args.rpm & 0xFFFF)
+        t0, last_cmd, last_count = time.monotonic(), -1.0, None
+        while (now := time.monotonic() - t0) < args.seconds + 0.6:
+            if now < args.seconds and now - last_cmd >= 0.05:
+                link.send_raw(ik_link.SPEED_WRITE | selector, word)
+                last_cmd = now
+            r = link.rows()[index]
+            if r and r["status_count"] != last_count:  # one entry per fresh reply
+                last_count = r["status_count"]
+                rows.append(dict(t=round(now, 4), cmd=args.rpm if now < args.seconds else 0,
+                                 **{k: r[k] for k in ("rpm", "iq_a", "iq_ref_a", "mc_state",
+                                                      "fault_names", "stop_reason")}))
+            time.sleep(0.005)
+    finally:
+        for _ in range(3):
+            try:
+                link.send_raw(ik_link.MOTOR_STOP | 0x0F, 0)
+            except RuntimeError:
+                pass
+        if gains:
+            time.sleep(0.3)  # CONFIG_SET is accepted only once the wheel is IDLE
+            link.send_raw(*ik_link.config_frame(selector, "kp", kp0))
+            link.send_raw(*ik_link.config_frame(selector, "ki", ki0))
+        if args.log:
+            args.log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    steady = [r for r in rows if args.ramp_ms / 1000 + 0.5 < r["t"] < args.seconds]
+    if not steady:
+        print(f"{name}: no telemetry during the run")
+        return None
+    rpm = [r["rpm"] for r in steady]
+    ref = [r["iq_ref_a"] for r in steady]
+    s = dict(wheel=name, cmd=args.rpm, kp=kp, ki=ki, rpm_mean=statistics.mean(rpm),
+             rpm_sd=statistics.pstdev(rpm), wrong_sign=sum(1 for v in rpm if v * args.rpm < 0),
+             samples=len(rpm), iq_ref_mean=statistics.mean(ref), iq_ref_peak=max(abs(x) for x in ref),
+             faults=sorted({f for r in rows for f in r["fault_names"]}))
+    print(f"{name}: cmd {args.rpm} rpm (kp {kp} ki {ki}): mean {s['rpm_mean']:.1f} sd {s['rpm_sd']:.1f} "
+          f"wrong-sign {s['wrong_sign']}/{s['samples']} | Iq ref mean {s['iq_ref_mean']:.2f} A "
+          f"peak {s['iq_ref_peak']:.2f} A | faults {','.join(s['faults']) or '-'}")
+    return s
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -120,6 +187,14 @@ def main(argv=None):
     p.add_argument("wheel")
     p.add_argument("--step-ma", type=int, default=3000)
     p.add_argument("--out", type=pathlib.Path)
+    p = sub.add_parser("spin")
+    p.add_argument("wheel")
+    p.add_argument("--rpm", type=int, required=True)
+    p.add_argument("--seconds", type=float, default=3.0)
+    p.add_argument("--ramp-ms", type=int, default=300)
+    p.add_argument("--kp", type=int)
+    p.add_argument("--ki", type=int)
+    p.add_argument("--log", type=pathlib.Path)
     args = parser.parse_args(argv)
     session, link = ik_link.Link.open(args.sn, args.elf)
     try:
@@ -137,6 +212,11 @@ def main(argv=None):
         elif args.command == "capture":
             for name, _i, sel in wheels(args.wheel):
                 capture(link, name, sel, args)
+        elif args.command == "spin":
+            targets = wheels(args.wheel)
+            if len(targets) != 1:
+                raise SystemExit("spin: one wheel at a time")
+            spin(link, *targets[0], args)
         elif args.command == "set":
             for name, _i, sel in wheels(args.wheel):
                 link.send_raw(*ik_link.config_frame(sel, args.key, args.value))

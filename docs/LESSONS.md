@@ -27,3 +27,17 @@ what someone does next; this is not a log.
   stops the motor; use attach/HOTPLUG for monitoring.
 - **Compare flashed bytes, not ELF files.** Two builds of the same tree give
   different ELF hashes; `build_all.py` prints hashes of the loadable image.
+- **A frozen telemetry row looks live.** The Nucleo keeps each wheel's last
+  reply; a powered-off ESC still "reads" 4.6 V and FAULT_NOW. Only a row
+  whose reply count advanced is live (`esc_tool.py status` checks this).
+- **USB before battery latches undervolt.** An ESC brought up on its ST-LINK
+  USB sits in undervolt; when the battery comes on it stays in FAULT_OVER.
+  `esc_tool.py stop` clears it once no fault is present.
+- **Idle Iq of ±25 A is not current.** Current offsets are calibrated at each
+  motor start; before that the reading is offset garbage with PWM off.
+- **Speed gains that hold the robot on the ground limit-cycle in free air.**
+  4096/4424 swung a raised wheel ±300 RPM at ±6 A (loud buzz, no rotation);
+  1024/553 is calm in the air but may be too weak loaded. Judge on the ground.
+- **The Workbench motor profile was a placeholder.** Measured dq R is
+  0.30–0.32 Ω (not 0.22), L 135–150 µH (not 110); capture before trusting
+  any motor constant.

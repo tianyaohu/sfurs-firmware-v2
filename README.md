@@ -13,9 +13,11 @@ it from the keyboard over the Nucleo's ST-LINK.
 | `Common/` | Code shared by Nucleo and ESC bootloader: kinematics, CAN-FWU protocol |
 | `HW/B-G431B-ESC1/` | ESC application (`motor_config/`) and CAN bootloader ([README](HW/B-G431B-ESC1/README.md)) |
 | `HW/common/CAN/can_datatypes.h` | Nucleo ↔ ESC CAN protocol |
-| `HW/STM32H5/`, `HW/STM32H7/` | Other boards from the old firmware-v2 repo; not built here |
+| `HW/STM32H7/` | Sensor app for the same Nucleo (FreeRTOS; optical flow, IMU, wheel encoder modules with gtests). Separate CubeMX project, not part of the drive image |
+| `HW/STM32H5/` | Sensor-board bring-up (FreeRTOS skeleton); not built here |
+| `rs_platform/rs_i2t/` | I2T current-limit module with gtests; not used by any firmware yet |
 | `scripts/` | Build, ESC update, drive and setup tools (below) |
-| `tests/` | Host tests; `tests/run_all.py` runs everything |
+| `tests/` | Host tests; `tests/run_all.py` runs them plus the module gtests |
 | `docs/` | [DRIVE](docs/DRIVE.md), [HARDWARE](docs/HARDWARE.md), [CAN_FWU](docs/CAN_FWU.md), [LESSONS](docs/LESSONS.md) |
 | `sfurs_firmware_v2.ioc` | CubeMX source of truth for the Nucleo |
 

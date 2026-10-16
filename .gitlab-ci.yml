@@ -7,6 +7,14 @@
 stages:
   - build
 
+# One pipeline per push: the MR pipeline when an MR is open, else the branch one.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
 variables:
   IMAGE: $CI_REGISTRY_IMAGE/dev
   DOCKER_HOST: tcp://docker:2375
@@ -32,6 +40,3 @@ dev-image:
         docker tag "$IMAGE:$CI_COMMIT_SHORT_SHA" "$IMAGE:latest"
         docker push "$IMAGE:latest"
       fi
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH

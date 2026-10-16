@@ -13,6 +13,7 @@ import math
 COUNTS_PER_AMP = 544
 PWM_HZ = 16000
 TF_KPDIV, TF_KIDIV = 512, 4096
+STEP_WINDOW = 64  # samples (4 ms) after the step judged as step response
 SQRT3 = math.sqrt(3.0)
 
 
@@ -41,11 +42,18 @@ def analyze(info, samples, pre=64, pwm_hz=PWM_HZ):
     r = (v1 - v0) / (i1 - i0)
     v_off = v0 - r * i0
     t = 1.0 / pwm_hz
+    noise = math.sqrt(_mean((x - i0) ** 2 for x in i[8:pre]))
+    # Isolated current-sense spikes (paired +-0.5 A, about every 20 ms on
+    # this hardware) would dominate dI/dt; drop samples far from the local
+    # median. The fit window covers the transient, where the signal is large.
+    def spike(k):
+        window = sorted(i[max(0, k - 2):k + 3])
+        return abs(i[k] - window[len(window) // 2]) > max(4 * noise, 0.1)
     best = None
     for delay in (0, 1, 2):
         xs, ys = [], []
-        for k in range(pre, min(pre + 96, n - 1)):
-            if k - delay < 0:
+        for k in range(pre, min(pre + 32, n - 1)):
+            if k - delay < 0 or spike(k) or spike(k + 1):
                 continue
             xs.append((i[k + 1] - i[k]) / t)
             ys.append(v[k - delay] - r * (i[k] + i[k + 1]) / 2 - v_off)
@@ -58,15 +66,24 @@ def analyze(info, samples, pre=64, pwm_hz=PWM_HZ):
             best = (ell, delay, resid)
     ell, delay = (best[0], best[1]) if best else (float("nan"), None)
 
+    # Step metrics on a 4-sample moving average: single-sample current noise
+    # (tens of mA, the odd spike) would otherwise read as overshoot.
     r0, r1 = ref[pre - 1], ref[pre]
     span = r1 - r0
+    smooth = {k: _mean(i[max(pre, k - 3):k + 1]) for k in range(pre, n)}
     def first(cond):
         return next((k - pre for k in range(pre, n) if cond(i[k])), None)
     rise10 = first(lambda x: (x - r0) >= 0.1 * span)
     rise90 = first(lambda x: (x - r0) >= 0.9 * span)
-    peak = max(i[pre:])
-    outside = [k for k in range(pre, n) if abs(i[k] - r1) > 0.05 * abs(span)]
-    settle = (outside[-1] + 1 - pre) if outside else 0
+    # Overshoot and settling inside STEP_WINDOW after the step; later
+    # excursions are disturbances (counted separately), not step response.
+    end = min(n, pre + STEP_WINDOW)
+    peak = max(smooth[k] for k in range(pre + 4, end))
+    band = max(0.05 * abs(span), 3 * noise)
+    outside = [k for k in range(pre + 4, end)
+               if abs(smooth[k] - r1) > band and not any(spike(j) for j in range(k - 3, k + 1))]
+    settle = (outside[-1] + 1 - pre) if outside else 4
+    disturbances = sum(1 for k in range(end, n) if abs(i[k] - r1) > 5 * max(noise, 0.01))
     us = 1e6 / pwm_hz
     return dict(
         vbus_v=vbus, hold_a=round(r0, 3), step_a=round(r1, 3),
@@ -74,8 +91,9 @@ def analyze(info, samples, pre=64, pwm_hz=PWM_HZ):
         v_offset=v_off,
         rise_us=(rise90 - rise10) * us if rise10 is not None and rise90 is not None else None,
         overshoot_pct=100.0 * (peak - r1) / span if span else 0.0,
-        settle_us=settle * us if settle < n - pre else None,
-        steady_error_a=i1 - r1,
+        settle_us=settle * us if settle < end - pre else None,
+        disturbance_samples=disturbances,
+        steady_error_a=i1 - r1, noise_a=noise, settle_band_a=band,
     )
 
 

@@ -97,8 +97,13 @@ the ground the robot's inertia is part of the plant, so retune there. Tune
 live without reflashing: `scripts/esc_tool.py set all kp 2048` (IDLE only,
 RAM only), then copy good values into `drive_parameters.h`.
 
-Motor constants (`pmsm_motor_parameters.h`, from the Workbench profile, not
-measured on these motors): 8 pole pairs, Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM.
+Motor constants in `pmsm_motor_parameters.h` are the Workbench placeholder
+(Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM). Measured by capture on all four motors:
+dq R 0.30–0.32 Ω (includes switches and shunts), L 135–150 µH, τ ≈ 0.45 ms;
+current PI 4000/4400 is matched to those. Ke is not measured yet. Every
+capture also shows a few current-sense disturbances (a single ~0.5 A false
+sample the loop then reacts to for ~0.3 ms); FDCAN1 runs at NVIC priority 0,
+above the ADC/FOC interrupt (2), which is the first suspect.
 
 ## Kinematics
 

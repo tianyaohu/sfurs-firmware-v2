@@ -55,12 +55,18 @@
 #define REGULATION_EXECUTION_RATE           1 /*!< FOC execution rate in number of PWM cycles */
 #define ISR_FREQUENCY_HZ                    (PWM_FREQUENCY/REGULATION_EXECUTION_RATE) /*!< @brief FOC execution rate in Hz */
 
-/* Gains values for torque and flux control loops */
-#define PID_TORQUE_KP_DEFAULT               3391
-#define PID_TORQUE_KI_DEFAULT               3343
+/* Gains values for torque and flux control loops.
+ * From esc_tool.py capture on all four motors (2026-10-16, 12.0 V): dq
+ * R 0.30-0.32 Ohm, L 135-150 uH. Pole-zero cancellation at ~1 kHz
+ * (Kp = L*wc, Ki = R*wc): 1 -> 3 A step rises in 188-250 us, ~2 %
+ * overshoot, settled in ~0.4 ms. The Workbench values (3391/3343, for a
+ * generic 0.22 Ohm / 110 uH motor) rose in 250-375 us. Tunable over CAN:
+ * CONFIG_SET current_kp / current_ki. */
+#define PID_TORQUE_KP_DEFAULT               4000
+#define PID_TORQUE_KI_DEFAULT               4400
 #define PID_TORQUE_KD_DEFAULT               100
-#define PID_FLUX_KP_DEFAULT                 3391
-#define PID_FLUX_KI_DEFAULT                 3343
+#define PID_FLUX_KP_DEFAULT                 4000
+#define PID_FLUX_KI_DEFAULT                 4400
 #define PID_FLUX_KD_DEFAULT                 100
 
 /* Torque/Flux control loop gains dividers*/

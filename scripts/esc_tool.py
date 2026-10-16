@@ -92,8 +92,10 @@ def capture(link, name, selector, args):
     print(f"{name}: Vbus {a['vbus_v']:.2f} V, Id {a['hold_a']:.2f} -> {a['step_a']:.2f} A")
     print(f"  R {a['r_ohm'] * 1e3:.0f} mOhm  L {a['l_h'] * 1e6:.0f} uH  tau {a['tau_ms']:.2f} ms  "
           f"PWM delay {a['delay_periods']} periods")
-    print(f"  step: rise 10-90% {rise}, overshoot {a['overshoot_pct']:.1f}%, settle 5% {settle}, "
-          f"steady error {a['steady_error_a'] * 1e3:.0f} mA")
+    print(f"  step: rise 10-90% {rise}, overshoot {a['overshoot_pct']:.1f}%, "
+          f"settle {settle} (band {a['settle_band_a'] * 1e3:.0f} mA), "
+          f"steady error {a['steady_error_a'] * 1e3:.0f} mA, noise {a['noise_a'] * 1e3:.0f} mA rms, "
+          f"{a['disturbance_samples']} disturbed samples later")
     for fc in (500, 800, 1000):
         kp, ki = capture_analysis.pi_gains(a["r_ohm"], a["l_h"], a["vbus_v"], fc_hz=fc)
         print(f"  for {fc} Hz: current_kp {kp} current_ki {ki}")

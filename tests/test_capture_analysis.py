@@ -66,6 +66,14 @@ class CaptureAnalysisTest(unittest.TestCase):
         self.assertLess(a["overshoot_pct"], 25)
         self.assertLess(a["rise_us"], 1000)
 
+    def test_current_sense_spikes_ignored(self):
+        info, samples = simulate(0.3, 110e-6, 12.0, 3391, 3343, delay=0)
+        for k, d in ((70, 300), (71, -250), (400, 280), (401, -230)):  # paired spikes, counts
+            samples[k]["id"] += d
+        a = ca.analyze(info, samples)
+        self.assertAlmostEqual(a["l_h"], 110e-6, delta=11e-6)
+        self.assertAlmostEqual(a["r_ohm"], 0.3, delta=0.01)
+
     def test_rejects_flat_capture(self):
         info, samples = simulate(0.3, 1e-4, 12.0, 3391, 3343, step_a=1.0)
         with self.assertRaises(ValueError):

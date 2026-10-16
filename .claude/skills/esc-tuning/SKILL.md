@@ -78,8 +78,11 @@ Read it like this:
   zero steady error. Overshoot is noise-sensitive (±0.05 A rms); trust
   repeated captures, not one number.
 - **Disturbed samples later**: isolated false readings the loop reacts to.
-  A few per capture is the known baseline here (suspect: FDCAN1 NVIC
-  priority 0 above the ADC/FOC interrupt at 2).
+  ~4 per capture is the known baseline here (phase U only; open lead in
+  `docs/DRIVE.md`). To attribute a spike to a phase, use the capture's fixed
+  angle 0: Iα = Id, Iβ = Iq, and MCSDK's Clarke gives ΔIq = −ΔId/√3 when
+  only Ia is wrong. Judge a fix by counting spikes over several captures per
+  wheel before and after (one capture proves nothing; counts vary 1–10).
 - The printed `current_kp/current_ki` for 0.5/0.8/1 kHz come from
   Kp = L·ωc, Ki = R·ωc. With the measured PWM delay 0, 1 kHz is fine; with
   1–2 periods of delay, stay ≤ 0.8 kHz (overshoot grows fast).

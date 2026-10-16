@@ -1,97 +1,58 @@
-# Over-the-CAN Firmware Update (P2–P6)
+# ESC firmware update over CAN
 
-**Current bench procedure:** see [CAN_FWU_BLINK_TEST.md](CAN_FWU_BLINK_TEST.md).
-It supersedes the initial layout below: app capacity is now 110KiB with
-one 2KiB validity page, and the embedded test payload is a motor-disabled
-blinker rather than the motor app. Power-loss recovery is not hardware-tested yet.
+Each ESC keeps a CAN bootloader (`HW/B-G431B-ESC1/bootloader/`, installed
+once over SWD). Applications are installed over CAN from the Nucleo, which
+runs a separate **updater image** carrying one ESC application.
 
-Host: `NUCLEO-H755ZI-Q` (`sfurs_firmware_v2`, CM7). Target: `B-G431B-ESC1`
-(`STM32G431CB`, 128K flash) in `firmware-v2/.../motor_config` (port pending).
+## Procedure
 
-## Flash layout contract
+```sh
+scripts/build_all.py                       # ESC apps, payloads, updaters, drive image
+scripts/esc_update.py NE --battery-off     # one wheel; repeat for SE SW NW
+```
 
-| Region     | Address          | Size | Content                          |
-|------------|------------------|------|----------------------------------|
-| Bootloader | `0x08000000`     | 16K  | CAN-FWU target (`can_fwu_boot`)  |
-| App        | `0x08004000`     | 112K | `motor_config`, `VTOR` += 0x4000 |
+Per wheel: battery OFF, that ESC's ST-LINK USB and the Nucleo USB connected.
+`esc_update.py` backs up the full ESC flash to `esc-backups/update-<W>-<UTC>/`,
+flashes the updater onto the Nucleo, resets the ESC to open the bootloader's
+3 s window, transfers once (no automatic retry), verifies by readback
+(bootloader unchanged, app bytes, metadata, VTOR, app running), then puts the
+drive image back on the Nucleo. `--keep-updater` skips that last step.
 
-G4 pages are 2K; `CAN_FWU_PAGE_SIZE/APP_MAX/APP_OFFSET` enforce this.
-Single source: `Common/Inc/can_fwu_version.h`.
+A failed transfer leaves the bootloader intact: the ESC blinks in boot mode
+and accepts a new transfer. SWD restore of a full backup is the last resort.
 
-## Wire protocol (P2)
+## Layout and protocol
 
-500 kbit/s, `FD_NO_BRS`, 8-byte payloads. FWU owns `0x600..0x6FF`;
-low nibble = wheel device bits (`NE=1, SE=2, SW=4, NW=8`).
-No collision with drive (`0x080/0x100/0x180/0x280/0x300/0x380/0x400`)
-or `STOP 0x780`.
+| Region | Address | Size |
+|---|---|---|
+| Bootloader | `0x08000000` | 16 KiB |
+| Application | `0x08004000` | 110 KiB |
+| Validity metadata | `0x0801F800` | 2 KiB |
+| Boot mailbox (SRAM) | `0x20007FF0` | 16 B |
 
-| ID (host→target) | Payload (LE)              |
-|------------------|---------------------------|
-| `0x600\|dev` ENTER  | magic `CFWU`, img_size    |
-| `0x610\|dev` ERASE  | start_page, num_pages     |
-| `0x620\|dev` DATA   | seq u16 + 6 chunk bytes   |
-| `0x630\|dev` VERIFY | crc32, size               |
-| `0x640\|dev` JUMP   | magic, 0                  |
-| `0x680\|dev` ACK    | status, detail (seq/crc)  |
+IDs `0x600–0x6FF`, low nibble = wheel select bit, 8-byte payloads:
+ENTER `0x600` (magic `CFWU`, size), ERASE `0x610`, DATA `0x620` (u16 seq +
+6 bytes), VERIFY `0x630` (CRC32-IEEE, size), JUMP `0x640`, ACK `0x680`
+(status: 0 OK, 1 REJECT, 2 BAD_SEQ, 3 CRC_MISMATCH, 4 FLASH_ERR, 5 BAD_SIZE).
+100 ms ACK budget per frame, 2 s for erase.
 
-Status: `0 OK, 1 REJECT, 2 BAD_SEQ, 3 CRC_MISMATCH, 4 FLASH_ERR, 5 BAD_SIZE`.
-CRC32-IEEE; `can_fwu_crc32("123456789") == 0xCBF43926` is the test vector.
-Host ACK budget 100 ms per frame (matches bench); target idles out after 2 s.
+The bootloader only jumps to an app with committed metadata and a matching
+CRC; an app written over SWD alone does not boot. A running app reboots into
+the bootloader on `0x650|dev` with payload `BOOT 01 dev ~dev 00` when idle.
 
-## Safety (P5) — read before any powered run
+## Updater image (Nucleo)
 
-1. Bench must be `BENCH_IDLE`; `RUNNING/ARMED` refuse. Target ENTER
-   refuses unless its motor reports stopped.
-2. Transfers start only from an explicit debugger request
-   (`can_fwu_request`); nothing is periodic or automatic.
-3. `STOP 0x78F x3` first; battery discipline per `WHEEL_BENCH.md`.
-4. Any timeout/corruption latches FAULT; session restarts at ENTER.
-5. SWD stays the recovery path: full 128K backups live in `esc-backups/`.
-   Never mass-erase, never touch option bytes without sign-off.
+Built with `-DFWU_IMAGE_FILE=<payload.c>` (from `scripts/fwu_image.py`).
+Debugger words: `can_fwu_dev`, `can_fwu_request` (write 1),
+`can_fwu_result` (1 active, 2 rejected, 3 done, 4 failed). Holding B1 for 3 s
+from power-up also starts one update. ENTER repeats every 300 ms until the
+bootloader answers; after that any failure latches until a new request.
 
-## G4 port checklist (follows this branch)
+## Code
 
-- [ ] New `motor_config` linker: `FLASH ORIGIN 0x08004000 LENGTH 112K`,
-      `VECT_TAB_OFFSET 0x4000`, early `SCB->VTOR` relocate.
-- [ ] Bootloader project at `0x08000000` (~16K): FDCAN1 `PA11/PB9 AF9`
-      500k `FD_NO_BRS`, `can_fwu_boot` + `HAL_FLASHEx_Erase` /
-      `HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD)` backend,
-      motor-stopped hook, flash-readback verify before JUMP.
-- [ ] Widen the app's exact-match CAN mask filter to accept `0x600|dev`.
-- [ ] Bench-test ENTER→ERASE→DATA→VERIFY→JUMP on one wheel (NE) first.
-
-## Motor app image (offset build → embedded payload)
-
-The blink path above stays as-is for acceptance; a motor application uses
-the same wire path with a different embedded payload:
-
-1. Build the motor app as an offset ELF: `FLASH ORIGIN 0x08004000
-   LENGTH 110K` (see `tests/esc_blink/app.ld` for the slot shape),
-   `.isr_vector` at `0x08004000`, last 16 bytes of SRAM reserved for the
-   boot mailbox (`0x20007FF0`, never stack/data/bss).
-2. Generate the Nucleo payload (validates slot size, SRAM entry SP, reset
-   vector, and IEEE CRC32 against the canonical headers):
-   ```sh
-   python3 scripts/fwu_image.py --elf motor_app.elf \
-     --output CM7/Core/Src/fwu_test_image.c
-   # or from a raw binary starting at the vector table:
-   python3 scripts/fwu_image.py --bin motor_app.bin \
-     --output CM7/Core/Src/fwu_test_image.c
-   ```
-   Oversized images, non-SRAM/misaligned entry SPs, and out-of-image
-   reset targets are rejected before anything is written.
-3. Rebuild the Nucleo firmware with the generated file compiled in place
-   of the blink-generated payload, then run the standard update
-   (`docs/CAN_FWU_BLINK_TEST.md` one-cable sequence, `can_fwu_request=1`
-   while bench IDLE) and the SWD readback/CRC comparison.
-4. Host gate: `python3 tests/test_fwu_motor_image.py`.
-
-## Files
-
-- `Common/Inc/can_fwu_protocol.h`, `Common/Src/can_fwu_protocol.c` — P2
-- `Common/Inc/can_fwu_boot.h`, `Common/Src/can_fwu_boot.c` — P3 target
-- `CM7/Core/Inc/can_fwu_host.h`, `CM7/Core/Src/can_fwu_host.c` — P4 host
-- `CM7/Core/Src/main.c` — dormant wiring: ACK dispatch + debugger pump
-- `tests/test_can_fwu.py` — CRC, 10 KiB loopback + jump, corruption,
-  motor-active, seq/timeout gates
-- Follow-up: USB-CDC image staging to feed `can_fwu_host_begin`.
+- `Common/{Inc,Src}/can_fwu_protocol.*`: wire format, CRC (shared).
+- `Common/{Inc,Src}/can_fwu_boot.*`: target session; vendored copy in
+  `HW/B-G431B-ESC1/bootloader/` (keep in sync manually).
+- `CM7/Core/Src/can_fwu_host.c`: host session; `fwu_updater.c`: request logic.
+- Tests: `tests/test_can_fwu.py`, `test_fwu_updater.py`, `test_fwu_*`,
+  `HW/B-G431B-ESC1/bootloader/tests/run_tests.py`.

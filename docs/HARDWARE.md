@@ -1,0 +1,46 @@
+# Hardware and tools
+
+## Boards
+
+- **Nucleo-H755ZI-Q** (STM32H755): only the CM7 core runs firmware; CM4 is
+  unused. ST-LINK V3 on CN1. LEDs: LD1 green PB0 alive, LD2 yellow PE1 drive
+  running / FWU activity, LD3 red PB14 CAN TX failure / FWU fault.
+- **4 × B-G431B-ESC1** (STM32G431CB, 128 KiB flash), one per wheel, one CAN
+  bus. Flash: CAN bootloader 16 KiB at `0x08000000`, app 110 KiB at
+  `0x08004000`, validity page at `0x0801F800`.
+- **Motors**: 8 pole pairs, Hall sensors (120°), direct drive, 65.5 mm omni
+  wheels. **Battery**: 3S, ~12.4 V full.
+
+## Wheel map
+
+| Robot wheel | ESC build | CAN select | ESC ST-LINK serial | CAN termination |
+|---|---|---|---|---|
+| FR | `MOTOR_NE` | 1 | `066AFF525266555067075126` | on |
+| BR | `MOTOR_SE` | 2 | `0667FF525266555067073424` | on |
+| BL | `MOTOR_SW` | 4 | `066FFF525266555067073058` | off |
+| FL | `MOTOR_NW` | 8 | `066AFF515266555067023255` | off |
+
+Nucleo ST-LINK: `002200364142500620353451`. FR and FL serials differ in only a
+few characters; check the full serial before any write.
+
+## Tools on the lab PC
+
+- ARM GCC 10.3: `/tmp/opencode/cm7-toolchain/root/usr/bin` (temporary
+  extraction; `scripts/build_all.py` adds it to PATH if present). Otherwise
+  install `gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build`.
+- `~/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
+- pyOCD (`~/.local/bin`) and pyelftools for the Python tools.
+- ESC flash backups: `/home/fh/sfurs_firmware/esc-backups/` (outside git).
+  `*-original-20261012.bin` are the boards as received (previous engineer's
+  sensorless image, no bootloader).
+
+## Safety rules
+
+- **Battery OFF to flash an ESC**, ON only for alignment and motion.
+- Wheels off the ground for alignment and first runs after any firmware change.
+- One program per probe: close `keyboard_drive.py` / `esc_tool.py` before
+  flashing or attaching another tool.
+- Never mass-erase, change option bytes, or flash CM4.
+- Back up an ESC's full flash before overwriting it (`esc_update.py` does).
+- Attach to a running ESC only with pyOCD `connect_mode=attach` or CLI
+  `mode=HOTPLUG`; a normal connect resets it.

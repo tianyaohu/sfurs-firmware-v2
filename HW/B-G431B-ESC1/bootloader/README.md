@@ -1,19 +1,9 @@
 # B-G431B-ESC1 CAN bootloader
 
-Current layout: 16KiB boot, 110KiB app, final 2KiB validity page at
-`0x0801F800`. The new boot check requires committed validity metadata and
-flash CRC, not just an SRAM-range stack pointer. The old SWD application
-does not have that record and remains unbootable until a verified CAN
-transfer commits it. See `sfurs_firmware_v2/docs/CAN_FWU_BLINK_TEST.md`
-for the current non-motor acceptance test; the original instructions below
-describe the earlier prototype.
-
-One-time SWD install at `0x08000000` (16K). Every later update arrives
-over CAN from the Nucleo. App linked at `0x08004000` (110K).
-
-Protocol: `sfurs_firmware_v2` `docs/CAN_FWU.md` + `Common/` stack
-(`can_fwu_protocol.*`, `can_fwu_boot.*` vendored here from
-`sfurs_firmware_v2@f6ebd2e`; re-vendor after protocol changes).
+Installed once over SWD at `0x08000000`; every application update then
+arrives over CAN from the Nucleo (`docs/CAN_FWU.md`, `scripts/esc_update.py`).
+Protocol sources are vendored from `Common/` (`can_fwu_protocol.*`,
+`can_fwu_boot.*`); re-vendor after protocol changes.
 
 ## Layout
 
@@ -60,11 +50,8 @@ Send a standard-ID CAN FD data frame, BRS off, DLC exactly 8:
 
 This command has no ACK and does not reuse the update ACK format. The ISR
 only queues it. Admission and the main-loop reset both require MCSDK IDLE,
-zero measured speed, no current/occurred fault, no direct command and no
-unexecuted buffered command. Diagnostic builds additionally require no arm,
-active drive, start permit, calibration or direct request. Ordinary firmware
-has no arm latch; idle with no queued drive/start is its disarmed state.
-Queued entry suppresses subsequent CAN drive commands until main processes it.
+zero measured speed, no current fault and no running or queued drive
+command or Hall alignment (`drive_app_idle()`). Queued entry suppresses subsequent CAN drive commands until main processes it.
 Unsafe requests are dropped, not deferred until the motor stops.
 
 The app publishes the mailbox and uses DSB + `NVIC_SystemReset()` in main,
@@ -74,7 +61,7 @@ cause and matching device/magic/complements, then stays listening without the
 3-second auto-jump deadline. Explicit verified JUMP still works. A later reset
 without another request restores the normal deadline.
 
-### ABI for the blink port
+### ABI for other applications
 
 Copy `boot_entry.h` and reserve `0x20007FF0..0x20007FFF` as NOLOAD in the
 blink linker too; RAM ends and `_estack` must be `0x20007FF0`. Do not write
@@ -111,11 +98,11 @@ hardware. Remote entry is not authenticated; physical CAN access is trusted.
 CLI=~/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI
 $CLI -c port=SWD sn=<esc-probe> -r32 0x08000000 0x20000 esc-backup-before-boot.bin
 $CLI -c port=SWD sn=<esc-probe> -w /tmp/boot/boot_NE.elf -v
-$CLI -c port=SWD sn=<esc-probe> -w /tmp/app/motor_NE_telemetry_offset.elf -v -rst
+$CLI -c port=SWD sn=<esc-probe> -w /tmp/app/motor_NE_drive_offset.elf -v -rst
 ```
 
-Expect: red LED blinks 2 Hz for 3 s, then app runs (previous
-telemetry behaviour on CAN). If the LED blinks forever, the app image
+Expect: red LED blinks 2 Hz for 3 s, then stays in boot (no validity
+metadata yet); run `scripts/esc_update.py` to commit the app. If the LED blinks forever, the app image
 is missing/invalid — perform a verified CAN update; SWD programming the app
 alone does not create validity metadata. The bootloader is intact.
 

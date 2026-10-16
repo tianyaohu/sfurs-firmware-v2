@@ -1,72 +1,64 @@
-# Agent coordination and firmware safety
+# Working in this repo
 
-## Before starting work: declare an independent lane
+Firmware for an omni-wheel robot: Nucleo-H755 (CM7) drive + four
+B-G431B-ESC1 wheel controllers on CAN. Start with `README.md`; system details
+are in `docs/DRIVE.md`, `docs/HARDWARE.md`, `docs/CAN_FWU.md`.
 
-Before editing, building artifacts for hardware, or accessing a probe:
+## Priorities
 
-1. Read applicable `AGENTS.md` files and relevant `.opencode/skills/` runbooks.
-2. Inspect `git status`, current branch, and `git worktree list`. Preserve
-   dirty/untracked files; they may belong to the user or another agent.
-3. State the task, owned files, worktree path, branch/base, checks to run,
-   and intended merge destination. Identify active agents and shared resources.
-4. Ensure the lane is non-overlapping with other agents. If scope, ownership,
-   or merge direction is unclear, ask the user before proceeding.
+1. Working code over paperwork. Spend effort on the change and its tests,
+   not on describing the session.
+2. Fix causes, not symptoms. If a module is a pile of patches and flags,
+   rewrite it cleanly instead of adding another layer.
+3. Keep one way to do each thing. No parallel build profiles, diagnostic
+   `#ifdef` variants or duplicate scripts; use runtime configuration
+   (e.g. CAN `CONFIG_SET`) or a short-lived branch for experiments, and delete
+   what you replaced.
 
-Each coding agent must use its **own branch and worktree**, normally based on
-the agreed integration tip. Do not share a working tree/index, switch another
-agent's branch, or edit its owned files. A worktree isolates files, not physical
-hardware, shared buses, or external build-output directories.
+## Documentation rules
 
-Delegations must name the lane and boundaries explicitly. Parallelize only
-independent work. Read-only reviewers may inspect another checkout, but cannot
-silently become its editor or hardware owner.
+- Docs describe the system **as it is now**. Edit the relevant doc in the
+  same commit as the behaviour change; delete text that is no longer true.
+- Do not add session logs, handoff notes, run records, per-experiment docs,
+  RCA write-ups or "status" sections. Put test and hardware evidence briefly
+  in the commit message or PR description.
+- A hard-won fact that should change future behaviour gets one line in
+  `docs/LESSONS.md`. Nothing else.
+- Code comments explain *why*, not what the next line does.
+- Reports to the user: results, failures and decisions needed; keep them short.
 
-## Integration / merge direction
+## Code and tests
 
-- Current hardware integration lane: branch `hw-session`, worktree
-  `/home/fh/sfurs_firmware/Project1/sfurs-hw-session`.
-- Feature/fix lanes merge **into `hw-session` first**, after review and tests;
-  the designated integrator performs those merges with a clean index.
-- Agreed next integration direction: **`hw-session` → `develop`**, only when
-  the user approves. Do not assume authorization to merge to `main` or push.
-- A new task must confirm this direction still applies, rather than treating
-  the above paths/branches as permanent policy.
-- Commit only owned, reviewed changes with explicit file staging. Do not
-  sweep other agents' work into a commit. No automatic branch/worktree deletion,
-  force removal, reset, or remote cleanup.
+- Nucleo: our code lives in `CM7/Core/Src/*.c` modules and `USER CODE`
+  sections of CubeMX files. ESC: `motor_config/Src/drive_app.c`, `USER CODE`
+  sections, and the parameter headers listed in `HW/B-G431B-ESC1/README.md`.
+- New C logic gets a host test that compiles the real source against fakes
+  (pattern: `tests/test_esc_drive_app.py`). `python3 tests/run_all.py` must
+  pass before committing; `scripts/build_all.py` must build without warnings.
+- Anything addressed per wheel is tested for all four wheels.
 
-## Hardware ownership is exclusive
+## Git
 
-- Before hardware access, announce the target wheel/probe, operation, power
-  requirements, and owner. Confirm other agents and the TUI have released it.
-  A free process list alone is not agreement with another active agent.
-- Only one owner may command the shared CAN bus/Nucleo at a time. A second
-  agent can do offline work; live work waits for explicit release/handoff.
-  Distinct worktrees do not make simultaneous flashes or CAN commands safe.
-- Confirm the attached probe serial and selected wheel before writes. Quit
-  the TUI before debugger access. Resolve RAM addresses from the **flashed**
-  ELF; rebuilding in another lane does not update the board.
-- Motor battery **OFF for ESC flashing**, ON for calibration/motion checks.
-  Obtain a fresh confirmation after cable/power changes; never guess from
-  ambiguous wording such as “wheel on.” Use HOTPLUG for ESC RAM access.
-- Back up unknown ESC flash before overwriting. Do not alter option bytes,
-  mass-erase, flash CM4, or command wheel motion without authorization.
-- Release probe sessions and report power/target state and pending requests
-  at handoff. Do not leave FWU retry loops or queued motion unattended.
+- Each agent works on its own branch and worktree; never edit another
+  agent's worktree or switch its branch.
+- Integration branch: `hw-session`. Merging to `develop`/`main` and any push
+  need the user's approval.
+- Stage files explicitly; commit only your own changes. No force-push,
+  reset, or deletion of branches/worktrees you did not create unless asked.
+- Build outputs, backups and generated payloads stay out of git.
 
-## Evidence and regression rules
+## Hardware
 
-- CAN TX ACK and host ARMED/RUNNING are **not** target acceptance or motion.
-  Distinguish installed image, calibration, arming, actual rotation, and faults.
-- Calibration is RAM-only and resets invalidate prior CAL results. Auto-CAL
-  completion must never automatically RUN or write offsets to flash.
-- Shared per-wheel changes need all-four-wheel tests and layer-by-layer
-  addressing review. Do not generalize success on one wheel to the others.
-- Separate measured findings from hypotheses. Log recurring incidents and
-  remaining defects in `docs/` and cross-link the relevant skill.
-- Record exact build configuration, payload identity, tests, and hardware
-  evidence. Keep generated wheel payloads/build outputs out of source commits;
-  keep backup binaries outside Git with provenance sidecars.
-- Current open issues: target-ready TUI handshake and manual CAN-CAL byte
-  order; see `docs/NE_SE_POST_ROLLOUT_RCA.md`. A rollout/documentation commit
-  must not claim these defects are fixed.
+Read `docs/HARDWARE.md` first. In short:
+
+- Ask before touching hardware and say what you will do (board, probe,
+  operation, power state needed). Only one agent or tool uses a probe or the
+  CAN bus at a time.
+- The user must confirm the battery state before each hardware step and
+  again after any cable or power change; never infer it.
+- Battery OFF to flash an ESC. Wheels off the ground for alignment and the
+  first run after any firmware change. Motion only when the user asks for it.
+- Check the full probe serial before writing. Back up an ESC's flash before
+  overwriting. Never mass-erase, change option bytes or flash CM4.
+- Leave the hardware stopped and probes released when you finish, and tell
+  the user the power and firmware state.

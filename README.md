@@ -1,34 +1,42 @@
 # sfurs_firmware_v2
 
-Successor to `firmware-v2` for the NUCLEO-H755ZI-Q (STM32H755, dual-core CM7 + CM4).
-
-Source of truth for CubeMX configuration is `sfurs_firmware_v2.ioc`.
-Generated HAL/Drivers are committed; `build/` directories and `.mxproject`
-are ignored.
+Firmware for the SFURS omni-wheel robot: a Nucleo-H755ZI-Q (CM7) runs the
+drive, four B-G431B-ESC1 boards run the wheel motors over CAN, and a PC drives
+it from the keyboard over the Nucleo's ST-LINK.
 
 ## Layout
 
-- `CM7/` — primary application core (wheel bench, CAN sender, ESC interface)
-- `CM4/` — secondary core
-- `Common/` — shared code
-- `Drivers/` — CubeMX-generated HAL / CMSIS
-- `tests/` — host-side Python tests (`tests/test_wheel_*.py`)
+| Path | Contents |
+|---|---|
+| `CM7/` | Nucleo application. Ours: `Core/Src/{main.c USER CODE, ik_drive.c, ik_telemetry.c, fwu_updater.c, can_fwu_host.c}` |
+| `CM4/` | Second core, unused (CubeMX skeleton) |
+| `Common/` | Code shared by Nucleo and ESC bootloader: kinematics, CAN-FWU protocol |
+| `HW/B-G431B-ESC1/` | ESC application (`motor_config/`) and CAN bootloader ([README](HW/B-G431B-ESC1/README.md)) |
+| `HW/common/CAN/can_datatypes.h` | Nucleo ↔ ESC CAN protocol |
+| `HW/STM32H5/`, `HW/STM32H7/` | Other boards from the old firmware-v2 repo; not built here |
+| `scripts/` | Build, ESC update, drive and setup tools (below) |
+| `tests/` | Host tests; `tests/run_all.py` runs everything |
+| `docs/` | [DRIVE](docs/DRIVE.md), [HARDWARE](docs/HARDWARE.md), [CAN_FWU](docs/CAN_FWU.md), [LESSONS](docs/LESSONS.md) |
+| `sfurs_firmware_v2.ioc` | CubeMX source of truth for the Nucleo |
 
-## Build
+## Quick start
 
-See `.opencode/skills/nucleo-h755-build/SKILL.md` for the supported
-build/flash flow (CM7 / CM4, ST-LINK probe selection, STM32CubeProgrammer).
+```sh
+scripts/build_all.py                          # everything into build/ (no hardware)
+python3 tests/run_all.py                      # host tests (no hardware)
+scripts/esc_update.py NE --battery-off        # install ESC app over CAN, per wheel
+scripts/esc_tool.py align all                 # battery ON, wheels raised
+scripts/keyboard_drive.py --speed 0.5         # WASD move, QE rotate, X quit
+```
 
-## Omni-wheel keyboard IK
+Read [docs/HARDWARE.md](docs/HARDWARE.md) before touching hardware.
 
-See [keyboard IK setup](docs/KEYBOARD_IK.md) for the separate, opt-in CM7
-IK image and keyboard TUI, and [geometry notes](docs/OMNI_KINEMATICS.md)
-for provisional measurements. The normal single-wheel TUI is unchanged.
-The current ESC interface requires stopping before changing direction;
-continuous steering is not implemented.
+## Builds
 
-## Relationship to firmware-v2
+- Nucleo drive image: `cmake --preset Debug` in `CM7/` (or `build_all.py`).
+- Nucleo ESC-updater image: same with `-DFWU_IMAGE_FILE=<payload.c>`.
+- ESC app: `HW/B-G431B-ESC1/motor_config/build_cli.py` (GCC, no CubeIDE).
 
-This repository is intended to eventually replace the old `firmware-v2`
-repository. Until that cutover, `firmware-v2` remains the reference for
-B-G431B-ESC1 motor-config work; this repo holds the new H755 bench firmware.
+Generated HAL/CMSIS (`Drivers/`) and MCSDK sources are committed; `build/`
+directories are ignored. Keep application code in CubeMX `USER CODE` sections
+or in our own files so regeneration does not erase it.

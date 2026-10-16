@@ -13,12 +13,15 @@
 
 ## Wheel map
 
-| Robot wheel | ESC build | CAN select | ESC ST-LINK serial | CAN termination |
-|---|---|---|---|---|
-| FR | `MOTOR_NE` | 1 | `066AFF525266555067075126` | on |
-| BR | `MOTOR_SE` | 2 | `0667FF525266555067073424` | on |
-| BL | `MOTOR_SW` | 4 | `066FFF525266555067073058` | off |
-| FL | `MOTOR_NW` | 8 | `066AFF515266555067023255` | off |
+| Robot wheel | ESC build | CAN select | ESC ST-LINK serial | CAN termination | Hall shift |
+|---|---|---|---|---|---|
+| FR | `MOTOR_NE` | 1 | `066AFF525266555067075126` | on | -60° |
+| BR | `MOTOR_SE` | 2 | `0667FF525266555067073424` | on | -64° |
+| BL | `MOTOR_SW` | 4 | `066FFF525266555067073058` | off | -59° |
+| FL | `MOTOR_NW` | 8 | `066AFF515266555067023255` | off | -62° |
+
+Hall shifts measured with `esc_tool.py align` (2026-10-16, battery on); build
+with `build_all.py --shift NE=-60 SE=-64 SW=-59 NW=-62`.
 
 Nucleo ST-LINK: `002200364142500620353451`. FR and FL serials differ in only a
 few characters; check the full serial before any write.

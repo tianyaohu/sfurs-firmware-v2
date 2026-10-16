@@ -103,19 +103,3 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
         $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${CMAKE_PROJECT_NAME}.bin
     COMMENT "Converting ELF → BIN"
 )
-
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-    COMMAND st-flash write
-        $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${CMAKE_PROJECT_NAME}.bin
-        0x08000000
-    COMMENT "Flashing ${CMAKE_PROJECT_NAME}.bin to STM32"
-)
-
-
-
-
-
-
-
-
-

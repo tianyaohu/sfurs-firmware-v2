@@ -36,7 +36,7 @@
 #define M1_SS_MEAS_ERRORS_BEFORE_FAULTS     3 /*!< Number of speed measurement errors before main sensor goes in fault */
 
 /****** Hall sensors ************/
-#define HALL_AVERAGING_FIFO_DEPTH           16 /*!< depth of the FIFO used to average  mechanical speed in 0.1Hz resolution */
+#define HALL_AVERAGING_FIFO_DEPTH           6 /* one electrical turn: less lag at low speed */ /*!< depth of the FIFO used to average  mechanical speed in 0.1Hz resolution */
 #define HALL_MTPA                            false
 
 /* USER CODE BEGIN angle reconstruction M1 */
@@ -72,18 +72,24 @@
 #define TF_KDDIV_LOG                        LOG2((8192))
 #define TFDIFFERENTIAL_TERM_ENABLING        DISABLE
 
-#define PID_SPEED_KP_DEFAULT                2325/(SPEED_UNIT/10) /* Workbench compute the gain for 01Hz unit*/
-#define PID_SPEED_KI_DEFAULT                9/(SPEED_UNIT/10) /* Workbench compute the gain for 01Hz unit*/
-#define PID_SPEED_KD_DEFAULT                0/(SPEED_UNIT/10) /* Workbench compute the gain for 01Hz unit*/
+/* Speed PI in current counts (544/A) per RPM of error (SPEED_UNIT = U_RPM).
+ * Kp 4096/256 = 16 counts/RPM: a 100 RPM error asks for ~3 A.
+ * Ki 4424/16384 per 1 ms: a held 30 RPM error adds ~15 A/s, so a stalled
+ * wheel reaches full torque in a fraction of a second. Tunable over CAN
+ * CONFIG_SET without reflashing. Positive: +Iq accelerates in +Hall
+ * direction once HALL_PHASE_SHIFT is measured (CAN HALL_ALIGN). */
+#define PID_SPEED_KP_DEFAULT                4096
+#define PID_SPEED_KI_DEFAULT                4424
+#define PID_SPEED_KD_DEFAULT                0
 
 /* Speed control loop */
 #define SPEED_LOOP_FREQUENCY_HZ             (uint16_t)1000 /*!<Execution rate of speed regulation loop (Hz) */
 
 /* Speed PID parameter dividers */
-#define SP_KPDIV                            1024
+#define SP_KPDIV                            256
 #define SP_KIDIV                            16384
 #define SP_KDDIV                            16
-#define SP_KPDIV_LOG                        LOG2((1024))
+#define SP_KPDIV_LOG                        LOG2((256))
 #define SP_KIDIV_LOG                        LOG2((16384))
 #define SP_KDDIV_LOG                        LOG2((16))
 
@@ -92,17 +98,17 @@
 /* USER CODE END PID_SPEED_INTEGRAL_INIT_DIV */
 
 #define SPD_DIFFERENTIAL_TERM_ENABLING      DISABLE
-#define IQMAX_A                             3
+#define IQMAX_A                             6
 
 /* Default settings */
 #define DEFAULT_CONTROL_MODE                MCM_SPEED_MODE
-#define DEFAULT_TARGET_SPEED_RPM            1071
+#define DEFAULT_TARGET_SPEED_RPM            0
 #define DEFAULT_TARGET_SPEED_UNIT           (DEFAULT_TARGET_SPEED_RPM*SPEED_UNIT/U_RPM)
 #define DEFAULT_TORQUE_COMPONENT_A          0
 #define DEFAULT_FLUX_COMPONENT_A            0
 
 /**************************    FIRMWARE PROTECTIONS SECTION   *****************/
-#define OV_VOLTAGE_THRESHOLD_V              14 /*!< Over-voltage threshold */
+#define OV_VOLTAGE_THRESHOLD_V              18 /*!< Over-voltage threshold: 3S pack plus braking headroom */
 #define UD_VOLTAGE_THRESHOLD_V              8 /*!< Under-voltage threshold */
 #ifdef NOT_IMPLEMENTED
 #define ON_OVER_VOLTAGE                     TURN_OFF_PWM /*!< TURN_OFF_PWM, TURN_ON_R_BRAKE or TURN_ON_LOW_SIDES */
@@ -139,45 +145,6 @@
  **************************/
 
 /* ##@@_USER_CODE_START_##@@ */
-#if defined(ESC_RPM2_KI4)
-/* Validate even if ESC_LOW_CURRENT_TEST is missing: otherwise its conditional
- * include below could silently leave a misconfigured Ki4 build on SDK gains. */
-#include "test_profile.h"
-#endif
-#if defined(ESC_NE_LOW_SPEED_P2)
-/* FR-only comparison: double proportional response without overflowing the
- * signed 16-bit gain numerator (-18600 * 2 would be outside int16_t).
- * Keep both divider representations consistent for the SDK's shift/divide
- * implementations. Integral/current-loop gains and all limits stay unchanged. */
-#if !defined(MOTOR_NE) || defined(MOTOR_SE) || defined(MOTOR_SW) || defined(MOTOR_NW) || \
-    !defined(ESC_LOW_CURRENT_TEST) || !defined(ESC_REVERSE_SPEED_DIAGNOSTIC) || \
-    !defined(ESC_BOOT_OFFSET_APP) || defined(ESC_RPM_DIAGNOSTIC) || \
-    defined(ESC_TORQUE_COUNT_DIAGNOSTIC) || defined(ESC_HALF_AMP_DIAGNOSTIC)
-#error "ESC_NE_LOW_SPEED_P2 requires NE-only, offset-app, guarded RPM2 profile"
-#endif
-#undef SP_KPDIV
-#define SP_KPDIV 512
-#undef SP_KPDIV_LOG
-#define SP_KPDIV_LOG LOG2((512))
-#endif
-#ifdef ESC_LOW_CURRENT_TEST
-#include "test_profile.h"
-/* Opt-in bench profile only. These are reference limits, not peak-current guarantees. */
-#undef IQMAX_A
-#define IQMAX_A ESC_TEST_IQMAX_A
-#if defined(ESC_RPM_DIAGNOSTIC) || defined(ESC_REVERSE_SPEED_DIAGNOSTIC)
-/* Experimental low-speed trial only; not validated closed-loop tuning.
- * Preserve SDK speed-unit scaling and existing PI divisors/anti-windup limits. */
-#undef PID_SPEED_KP_DEFAULT
-#define PID_SPEED_KP_DEFAULT (ESC_TEST_SPEED_KP/(SPEED_UNIT/10))
-#undef PID_SPEED_KI_DEFAULT
-#define PID_SPEED_KI_DEFAULT (ESC_TEST_SPEED_KI/(SPEED_UNIT/10))
-#endif
-#undef DEFAULT_TARGET_SPEED_RPM
-#define DEFAULT_TARGET_SPEED_RPM 0
-#undef OV_VOLTAGE_THRESHOLD_V
-#define OV_VOLTAGE_THRESHOLD_V 18
-#endif
 /* ##@@_USER_CODE_END_##@@ */
 
 #endif /*DRIVE_PARAMETERS_H*/

@@ -23,13 +23,10 @@
 /* USER CODE BEGIN Includes */
 #include "can_datatypes.h"
 #include "motor_controller_can.h"
+#include "drive_app.h"
 #include "mc_api.h"
 #ifdef ESC_BOOT_OFFSET_APP
 #include "boot_entry.h"
-#include "mc_config.h"
-#endif
-#ifdef ESC_LOW_CURRENT_TEST
-#include "parameters_conversion.h"
 #endif
 /* USER CODE END Includes */
 
@@ -78,54 +75,13 @@ DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
-
-FDCAN_TxHeaderTypeDef can_tx_header;
-FDCAN_RxHeaderTypeDef can_rx_header;
-FDCAN_FilterTypeDef   can_filter_config;
-uint8_t             can_tx_data[8];
-uint8_t             can_rx_data[8];
+static FDCAN_TxHeaderTypeDef can_tx_header;
+static FDCAN_RxHeaderTypeDef can_rx_header;
+/* HAL copies up to 64 bytes before the callback can inspect the DLC. */
+static uint8_t can_rx_data[64];
 #ifdef ESC_BOOT_OFFSET_APP
-/* HAL copies up to 64 bytes before the callback can inspect DLC. */
-static uint8_t boot_can_rx_data[64];
 static volatile uint8_t boot_entry_pending;
 #endif
-static volatile uint8_t telemetry_pending = 0;
-static uint8_t telemetry_hall_state = 0;
-static uint32_t telemetry_hall_changes = 0;
-volatile uint32_t telemetry_reply_count = 0;
-#ifdef ESC_LOW_CURRENT_TEST
-/* Deliberately disarmed at boot. Arming is a separate, explicit debugger action. */
-volatile uint32_t test_drive_armed = 0;
-volatile uint32_t test_drive_run_count = 0; /* Completed start count, diagnostics only. */
-volatile uint32_t test_drive_active = 0;
-volatile uint32_t test_drive_start_tick = 0;
-volatile uint32_t test_drive_stop_reason = 0; /* TEST_STOP_* above. */
-volatile int32_t test_drive_iq = 0;
-volatile int32_t test_drive_id = 0;
-volatile uint32_t test_drive_peak_l1 = 0;
-volatile uint32_t test_calibration_request = 0; /* Explicit CAL1 (TEST_REQ_CAL1). */
-volatile uint32_t test_calibration_result = 0; /* 0=none,1=pending,2=done,3=rejected,4=failed */
-volatile uint32_t test_calibration_valid = 0;
-volatile uint32_t test_drive_current_valid = 0;
-/* Opt-in torque diagnostic only: DARM, DRUN, DSTP. Never set automatically. */
-volatile uint32_t test_direct_request = 0;
-volatile uint32_t test_direct_result = 0; /* 1=armed,2=rejected,3=started,4=start rejected,5=STOP */
-volatile uint32_t test_direct_last_request = 0;
-volatile int32_t test_drive_iq_reference = 0;
-volatile int32_t test_drive_id_reference = 0;
-volatile int32_t test_drive_measured_rpm = 0;
-volatile int32_t test_drive_hall_net_edges = 0;
-volatile uint32_t test_drive_hall_edges = 0;
-volatile uint32_t test_drive_hall_invalid = 0;
-static volatile uint32_t test_drive_hall_last_tick = 0;
-volatile uint32_t test_profile_reference_limit_ma = (uint32_t)(ESC_TEST_REFERENCE_A * 1000);
-static volatile uint32_t test_calibration_tick = 0;
-static volatile uint32_t test_drive_arm_tick = 0;
-static volatile uint8_t test_current_pending = 0;
-static volatile uint8_t test_monitor_ready = 0;
-static volatile uint32_t test_drive_start_permit = 0;
-#endif
-
 
 /* USER CODE END PV */
 
@@ -158,21 +114,9 @@ static void MX_NVIC_Init(void);
 #ifdef ESC_BOOT_OFFSET_APP
 static int BootEntrySafe(void)
 {
-  /* Inspect pending commands without consuming MCSDK command-state flags.
-   * Ordinary firmware has no persistent arm latch: IDLE + no direct/buffered
-   * start/drive/calibration command is its disarmed state. */
-  if (MC_GetSTMStateMotor1() != IDLE ||
-      MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS ||
-      MC_GetOccurredFaultsMotor1() != MC_NO_FAULTS ||
-      Mci[0].DirectCommand != MCI_NO_COMMAND ||
-      Mci[0].CommandState == MCI_COMMAND_NOT_ALREADY_EXECUTED ||
-      MC_GetMecSpeedAverageMotor1() != 0) return 0;
-#ifdef ESC_LOW_CURRENT_TEST
-  if (test_drive_armed || test_drive_active || test_drive_start_permit ||
-      test_direct_request || test_calibration_request ||
-      test_calibration_result == 1U) return 0;
-#endif
-  return 1;
+  return drive_app_idle() && MC_GetSTMStateMotor1() == IDLE &&
+         MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS &&
+         MC_GetMecSpeedAverageMotor1() == 0;
 }
 
 static void BootEntryPoll(void)
@@ -190,351 +134,14 @@ static void BootEntryPoll(void)
   __set_PRIMASK(primask);
 }
 #endif
-#ifdef ESC_LOW_CURRENT_TEST
-/* Explicit diagnostic request words (ASCII): CAL1, DARM, DRUN, DSTP. */
-#define TEST_REQ_CAL1 0x43414C31U
-#define TEST_REQ_DARM 0x4441524DU
-#define TEST_REQ_DRUN 0x4452554EU
-#define TEST_REQ_DSTP 0x44535450U
-/* Stop reasons: 1=timeout, 2=CAN/direct stop, 3=start rejected,
- * 4=sampled current, 5=sampled speed, 6=fault/calibration loss,
- * 7=invalid Hall, 8=turn-count target, 9=Hall stall. */
-#define TEST_STOP_TIMEOUT 1U
-#define TEST_STOP_REQUESTED 2U
-#define TEST_STOP_START_REJECTED 3U
-#define TEST_STOP_CURRENT 4U
-#define TEST_STOP_SPEED 5U
-#define TEST_STOP_FAULT 6U
-#define TEST_STOP_HALL_INVALID 7U
-#define TEST_STOP_COUNT 8U
-#define TEST_STOP_STALL 9U
-bool TestDriveConsumeStartPermit(void)
-{
-  if (test_drive_start_permit == 0U) return false;
-  test_drive_start_permit = 0U;
-  return true;
-}
 
-/* IRQ-fed Hall sector counts, not polling-derived revolutions. Positive order
- * matches the SDK Hall decoder. Physical pole pairs/counting need validation. */
-void TestDriveHallTransition(uint8_t previous, uint8_t next)
+static int CanSend8(uint32_t id, const uint8_t data[8])
 {
-  static const uint8_t positive_next[7] = {0, 3, 6, 2, 5, 1, 4};
-  if ((!ESC_TEST_RPM_PROFILE && !ESC_TEST_COUNT_PROFILE) || test_drive_active == 0U) return;
-  if (previous < 1U || previous > 6U || next < 1U || next > 6U ||
-      (positive_next[previous] != next && positive_next[next] != previous)) {
-    ++test_drive_hall_invalid;
-    return;
-  }
-  ++test_drive_hall_edges;
-  test_drive_hall_last_tick = HAL_GetTick();
-  test_drive_hall_net_edges += positive_next[previous] == next ? 1 : -1;
+  FDCAN_TxHeaderTypeDef header = can_tx_header;
+  header.Identifier = id;
+  return HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) != 0U &&
+         HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &header, (uint8_t *)data) == HAL_OK;
 }
-
-bool TestDriveArm(uint32_t magic)
-{
-  if (magic != ESC_TEST_ARM_MAGIC ||
-      test_drive_active != 0U || MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS)
-    return false;
-  if (MC_GetSTMStateMotor1() == FAULT_OVER) (void)MC_AcknowledgeFaultMotor1();
-  if (MC_GetSTMStateMotor1() != IDLE) return false;
-  /* Auto-CAL (ESC_TEST_AUTO_CAL_ON_ARM==1, default on all wheels): first ARM
-   * with no valid offsets starts the same RAM-only measurement as manual
-   * CAL1 (result 1=pending). Retry ARM after pending->done (result 2/valid
-   * 1). Never starts the motor here; faults/non-IDLE/active above still
-   * hard-reject. */
-  if (test_calibration_valid == 0U || test_calibration_result != 2U)
-  {
-    if (ESC_TEST_AUTO_CAL_ON_ARM != 0U && test_calibration_result != 1U)
-    {
-      test_calibration_valid = 0U;
-      test_calibration_tick = HAL_GetTick();
-      test_calibration_result = 1U;
-      if (!MC_StartPolarizationOffsetsMeasurementMotor1()) test_calibration_result = 3U;
-    }
-    return false;
-  }
-  test_drive_arm_tick = HAL_GetTick();
-  test_drive_armed = ESC_TEST_ARM_MAGIC;
-  return true;
-}
-
-/* Shared by CAN and direct diagnostics: 0=preflight rejected, 1=started,
- * 2=SDK start rejected. Every accepted start consumes ARM and increments the
- * run counter; repeats need a fresh ARM after standstill/cooldown. */
-uint32_t TestDriveStart(int16_t value, uint16_t ramp_ms)
-{
-  if (test_drive_armed != ESC_TEST_ARM_MAGIC ||
-      test_calibration_result != 2U || test_calibration_valid == 0U ||
-      MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS || MC_GetSTMStateMotor1() != IDLE)
-    return 0U;
-  if (ESC_TEST_TORQUE_PROFILE)
-  {
-    if (value <= 0 || value > (int16_t)(ESC_TEST_REFERENCE_A * CURRENT_CONV_FACTOR) ||
-        ramp_ms < 200U || ramp_ms > 500U) return 0U;
-  }
-  else if (ESC_TEST_RPM_PROFILE) {
-    /* Negated-gain profile: bounded bidirectional range. Reverse was
-     * validated; forward is stabilized by the same sign argument but must
-     * be proven on hardware starting at +60. Exact 0 rejected (no motion,
-     * would only stall-trip). Ramp stays exactly 500 ms. */
-    if (value == 0 || value < ESC_TEST_RPM_MIN || value > ESC_TEST_RPM_MAX ||
-        ramp_ms != 500U) return 0U;
-  }
-  else if (value < 12 || value > 60 || ramp_ms < 500U || ramp_ms > 1000U) return 0U;
-  test_drive_armed = 0U;
-  ++test_drive_run_count;
-  test_drive_peak_l1 = 0U;
-  test_drive_hall_net_edges = 0;
-  test_drive_hall_edges = test_drive_hall_invalid = 0U;
-  test_drive_start_tick = HAL_GetTick();
-  test_drive_hall_last_tick = test_drive_start_tick;
-  if (ESC_TEST_TORQUE_PROFILE) MC_ProgramTorqueRampMotor1(value, ramp_ms);
-  else MC_ProgramSpeedRampMotor1(RPM_2_SPEED_UNIT(value), ramp_ms);
-  test_drive_active = 1U;
-  test_drive_start_permit = 1U;
-  bool started = MC_StartMotor1();
-  test_drive_start_permit = 0U;
-  if (!started)
-  {
-    test_drive_active = 0U;
-    test_drive_stop_reason = TEST_STOP_START_REJECTED;
-    return 2U;
-  }
-  return 1U;
-}
-
-void TestDirectService(void)
-{
-  uint32_t request = test_direct_request;
-  if (request == 0U) return;
-  test_direct_request = 0U;
-  test_direct_last_request = request;
-  if (!ESC_TEST_GUARDED_MOTION) { test_direct_result = 2U; return; }
-  if (request == TEST_REQ_DSTP)
-  {
-    test_drive_armed = test_drive_active = 0U;
-    test_drive_stop_reason = TEST_STOP_REQUESTED;
-    (void)MC_StopMotor1();
-    test_direct_result = 5U;
-  }
-  else if (request == TEST_REQ_DARM) /* DARM */
-    test_direct_result = TestDriveArm(ESC_TEST_ARM_MAGIC) ? 1U : 2U;
-  else if (request == TEST_REQ_DRUN) /* DRUN: fixed profile reference */
-  {
-    uint32_t started = ESC_TEST_RPM_PROFILE ? TestDriveStart(ESC_TEST_TARGET_RPM, 500U) :
-        TestDriveStart((int16_t)(ESC_TEST_REFERENCE_A * CURRENT_CONV_FACTOR), 200U);
-    test_direct_result = started == 1U ? 3U : started == 2U ? 4U : 2U;
-  }
-  else test_direct_result = 2U;
-}
-
-/* Single-responsibility guard helpers: each checks one stop condition and
- * stops the drive with its TEST_STOP_* reason. TestDriveSafetyTick keeps the
- * original evaluation order so stop-reason priority is unchanged. */
-static int TestDriveGuardFault(void)
-{
-  if (!(ESC_TEST_GUARDED_MOTION && test_drive_active != 0U &&
-      (test_calibration_valid == 0U || MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS)))
-    return 0;
-  test_drive_active = test_drive_armed = 0U;
-  test_drive_stop_reason = TEST_STOP_FAULT;
-  (void)MC_StopMotor1();
-  return 1;
-}
-
-static int TestDriveGuardSpeed(void)
-{
-  /* Bidirectional RPM2 accepts both command endpoints. Equality must not
-   * immediately trip a legal +/-900 RPM target; other profiles keep their
-   * existing at-limit trip behavior. No overspeed margin is added. */
-  const int overspeed = ESC_TEST_RPM_PROFILE && ESC_TEST_RPM_MIN < 0 ?
-      (test_drive_measured_rpm > ESC_TEST_MAX_MOTOR_RPM ||
-       test_drive_measured_rpm < -ESC_TEST_MAX_MOTOR_RPM) :
-      (test_drive_measured_rpm >= ESC_TEST_MAX_MOTOR_RPM ||
-       test_drive_measured_rpm <= -ESC_TEST_MAX_MOTOR_RPM);
-  if (!(ESC_TEST_GUARDED_MOTION && test_drive_active != 0U &&
-      overspeed))
-    return 0;
-  test_drive_active = 0U;
-  test_drive_stop_reason = TEST_STOP_SPEED;
-  (void)MC_StopMotor1();
-  return 1;
-}
-
-static int TestDriveGuardHallInvalid(void)
-{
-  if (!((ESC_TEST_RPM_PROFILE || ESC_TEST_COUNT_PROFILE) && test_drive_active != 0U &&
-      test_drive_hall_invalid != 0U))
-    return 0;
-  test_drive_active = test_drive_armed = 0U;
-  test_drive_stop_reason = TEST_STOP_HALL_INVALID;
-  (void)MC_StopMotor1();
-  return 1;
-}
-
-static int TestDriveGuardStall(void)
-{
-  if (!((ESC_TEST_RPM_PROFILE || ESC_TEST_COUNT_PROFILE) && test_drive_active != 0U &&
-      (uint32_t)(HAL_GetTick() - test_drive_hall_last_tick) >= ESC_TEST_HALL_STALL_MS))
-    return 0;
-  test_drive_active = test_drive_armed = 0U;
-  test_drive_stop_reason = TEST_STOP_STALL; /* No valid Hall progress, including startup. */
-  (void)MC_StopMotor1();
-  return 1;
-}
-
-static int TestDriveGuardCount(void)
-{
-  if (!(ESC_TEST_COUNT_PROFILE && test_drive_active != 0U &&
-      (test_drive_hall_net_edges >= (int32_t)ESC_TEST_TARGET_NET_EDGES ||
-      test_drive_hall_net_edges <= -(int32_t)ESC_TEST_TARGET_NET_EDGES)))
-    return 0;
-  test_drive_active = test_drive_armed = 0U;
-  test_drive_stop_reason = TEST_STOP_COUNT; /* Turn-count target reached. */
-  (void)MC_StopMotor1();
-  return 1;
-}
-
-static int TestDriveGuardCurrent(qd_t measured)
-{
-  uint32_t l1;
-  if (!(test_drive_active != 0U && test_drive_current_valid != 0U))
-    return 0;
-  l1 = (uint32_t)(measured.q < 0 ? -(int32_t)measured.q : measured.q) +
-       (uint32_t)(measured.d < 0 ? -(int32_t)measured.d : measured.d);
-  if (l1 > test_drive_peak_l1) test_drive_peak_l1 = l1;
-  /* Conservative L1 magnitude, sampled at SysTick rate; not peak protection. */
-  if (l1 < (uint32_t)(ESC_TEST_SAMPLED_STOP_A * CURRENT_CONV_FACTOR))
-    return 0;
-  test_drive_active = 0U;
-  test_drive_stop_reason = TEST_STOP_CURRENT;
-  (void)MC_StopMotor1();
-  return 1;
-}
-
-static int TestDriveGuardTimeout(void)
-{
-  if (!(test_drive_active != 0U &&
-      (uint32_t)(HAL_GetTick() - test_drive_start_tick) >= ESC_TEST_TIMEOUT_MS))
-    return 0;
-  test_drive_active = 0U;
-  test_drive_stop_reason = TEST_STOP_TIMEOUT;
-  (void)MC_StopMotor1();
-  return 1;
-}
-
-/* Called from SysTick, independent of CAN reception and the application loop. */
-void TestDriveSafetyTick(void)
-{
-  if (test_monitor_ready == 0U) return;
-  PolarizationOffsets_t offsets;
-  test_calibration_valid = MC_GetPolarizationOffsetsMotor1(&offsets) ? 1U : 0U;
-  test_drive_current_valid = test_calibration_valid != 0U &&
-      MC_GetSTMStateMotor1() == RUN && MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS;
-  if (test_drive_armed != 0U &&
-      (uint32_t)(HAL_GetTick() - test_drive_arm_tick) >= 5000U)
-    test_drive_armed = 0U;
-  qd_t measured = {0};
-  if (test_drive_current_valid != 0U) measured = MC_GetIqdMotor1();
-  test_drive_iq = measured.q;
-  test_drive_id = measured.d;
-  qd_t reference = MC_GetIqdrefMotor1();
-  test_drive_iq_reference = reference.q;
-  test_drive_id_reference = reference.d;
-  test_drive_measured_rpm = SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
-  (void)TestDriveGuardFault();
-  (void)TestDriveGuardSpeed();
-  (void)TestDriveGuardHallInvalid();
-  (void)TestDriveGuardStall();
-  (void)TestDriveGuardCount();
-  (void)TestDriveGuardCurrent(measured);
-  (void)TestDriveGuardTimeout();
-  if (test_calibration_result == 1U &&
-      (uint32_t)(HAL_GetTick() - test_calibration_tick) >= 1000U)
-  {
-    test_calibration_result = 4U;
-    (void)MC_StopMotor1();
-  }
-}
-
-/* Calibration-only SDK path returns to IDLE, never grants a start permit. */
-void TestCalibrationService(void)
-{
-  uint32_t request = test_calibration_request;
-  if (request != 0U)
-  {
-    test_calibration_request = 0U;
-    if (request != TEST_REQ_CAL1 || test_drive_active != 0U ||
-        test_drive_armed != 0U ||
-        test_calibration_result == 1U || MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS)
-    {
-      if (test_calibration_result != 1U) test_calibration_result = 3U;
-      return;
-    }
-    if (MC_GetSTMStateMotor1() == FAULT_OVER) (void)MC_AcknowledgeFaultMotor1();
-    if (MC_GetSTMStateMotor1() != IDLE)
-    {
-      test_calibration_result = 3U;
-      return;
-    }
-    test_calibration_valid = 0U;
-    test_calibration_tick = HAL_GetTick();
-    test_calibration_result = 1U;
-    if (!MC_StartPolarizationOffsetsMeasurementMotor1()) test_calibration_result = 3U;
-    return;
-  }
-  if (test_calibration_result == 1U)
-  {
-    if (MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS)
-    {
-      test_calibration_result = 4U;
-      (void)MC_StopMotor1();
-    }
-    else if (MC_GetSTMStateMotor1() == IDLE && test_calibration_valid != 0U)
-      test_calibration_result = 2U;
-  }
-}
-
-#if defined(ESC_TUNE_GAIN_SET)
-/* Runtime RAM-only speed-PI numerator update (CAN GAIN_SET, 0x500|dev) for
- * staged auto-tune sweeps. Only hKpGain/hKiGain change; SP_KPDIV/SP_KIDIV
- * stay at the compiled values so the integral accumulator limit (scaled by
- * SP_KIDIV at PID init) never changes. Requires armed + IDLE + no faults,
- * does NOT consume or refresh the 5 s armed window, and never starts the
- * motor. RPM2 negated-gain convention: both numerators must stay negative;
- * magnitude floors reject near-zero gains that would only stall-trip.
- * RAM-only: any reset restores the compiled ESC_TEST_SPEED_KP/KI defaults.
- * result: 0=none, 1=applied, 2=state rejected, 3=bounds rejected. */
-volatile int32_t test_speed_kp_gain = ESC_TEST_SPEED_KP;
-volatile int32_t test_speed_ki_gain = ESC_TEST_SPEED_KI;
-volatile uint32_t test_gain_set_result = 0, test_gain_set_count = 0;
-uint32_t TestDriveGainSet(uint32_t packed)
-{
-  int16_t kp = (int16_t)(packed & 0xFFFFU);
-  int16_t ki = (int16_t)(packed >> 16);
-  ++test_gain_set_count;
-  if (test_drive_armed != ESC_TEST_ARM_MAGIC || test_drive_active != 0U ||
-      MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS || MC_GetSTMStateMotor1() != IDLE)
-  {
-    test_gain_set_result = 2U;
-    return 2U;
-  }
-  if (kp == (int16_t)-32768 || ki == (int16_t)-32768 || kp > -1000 || ki > -1)
-  {
-    test_gain_set_result = 3U;
-    return 3U;
-  }
-  PID_SetKP(&PIDSpeedHandle_M1, kp);
-  PID_SetKI(&PIDSpeedHandle_M1, ki);
-  test_speed_kp_gain = kp;
-  test_speed_ki_gain = ki;
-  test_gain_set_result = 1U;
-  return 1U;
-}
-#endif
-/* HARNESS HELPERS END */
-#endif
 
 /* USER CODE END 0 */
 
@@ -587,68 +194,38 @@ int main(void)
   /* Initialize interrupts */
   MX_NVIC_Init();
   /* USER CODE BEGIN 2 */
-#ifdef ESC_LOW_CURRENT_TEST
-  test_monitor_ready = 1U;
-#endif
+  drive_app_init();
 
-  /* Telemetry replies never issue a motor start or setpoint command. */
   can_tx_header.IdType = FDCAN_STANDARD_ID;
   can_tx_header.TxFrameType = FDCAN_DATA_FRAME;
-  can_tx_header.DataLength = FDCAN_DLC_BYTES_4;
+  can_tx_header.DataLength = FDCAN_DLC_BYTES_8;
   can_tx_header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
   can_tx_header.BitRateSwitch = FDCAN_BRS_OFF;
   can_tx_header.FDFormat = FDCAN_FD_CAN;
   can_tx_header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
   can_tx_header.MessageMarker = 0x00;
 
-  can_filter_config.IdType = FDCAN_STANDARD_ID;
-  can_filter_config.FilterIndex = 0U;
-  can_filter_config.FilterType = FDCAN_FILTER_MASK;
-  can_filter_config.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-  can_filter_config.FilterID1 = MOTOR_CAN_ID;
-  can_filter_config.FilterID2 = MOTOR_CAN_ID;
-
-  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &can_filter_config) != HAL_OK)
+  /* Accept every standard ID carrying this motor's select bit. */
+  FDCAN_FilterTypeDef filter = {0};
+  filter.IdType = FDCAN_STANDARD_ID;
+  filter.FilterIndex = 0U;
+  filter.FilterType = FDCAN_FILTER_MASK;
+  filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+  filter.FilterID1 = MOTOR_CAN_ID;
+  filter.FilterID2 = MOTOR_CAN_ID;
+  if (HAL_FDCAN_ConfigFilter(&hfdcan1, &filter) != HAL_OK ||
+      HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT,
+                                   FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK ||
+      HAL_FDCAN_Start(&hfdcan1) != HAL_OK ||
+      HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK)
   {
     Error_Handler();
   }
 
-  if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,
-                                   FDCAN_REJECT,
-                                   FDCAN_REJECT,
-                                   FDCAN_REJECT_REMOTE,
-                                   FDCAN_REJECT_REMOTE) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  #ifdef MOTOR_NE
-  	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET);
-  #endif
-
-  #ifdef MOTOR_SE
-  	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET);
-  #endif
-
-  #ifdef MOTOR_SW
-  	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
-  #endif
-
-  #ifdef MOTOR_NW
-  	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
-  #endif
-
-  /* USER CODE END 2 */
+  /* Board LED (PC14): on for the right-side wheels, off for the left. */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14,
+                    (MOTOR_CAN_ID & (MOTOR_NE_CAN_ID | MOTOR_SE_CAN_ID)) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+/* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -661,69 +238,7 @@ int main(void)
 #ifdef ESC_BOOT_OFFSET_APP
     BootEntryPoll();
 #endif
-#ifdef ESC_LOW_CURRENT_TEST
-    TestCalibrationService();
-    TestDirectService();
-#endif
-    uint8_t hall =
-        (HAL_GPIO_ReadPin(M1_HALL_H1_GPIO_Port, M1_HALL_H1_Pin) == GPIO_PIN_SET ? 1U : 0U) |
-        (HAL_GPIO_ReadPin(M1_HALL_H2_GPIO_Port, M1_HALL_H2_Pin) == GPIO_PIN_SET ? 2U : 0U) |
-        (HAL_GPIO_ReadPin(M1_HALL_H3_GPIO_Port, M1_HALL_H3_Pin) == GPIO_PIN_SET ? 4U : 0U);
-    static uint8_t hall_initialized = 0;
-    if (hall_initialized != 0U && hall != telemetry_hall_state)
-    {
-      ++telemetry_hall_changes;
-    }
-    hall_initialized = 1U;
-    telemetry_hall_state = hall;
-
-#ifdef ESC_LOW_CURRENT_TEST
-    if (test_current_pending != 0U && HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) != 0U)
-    {
-      FDCAN_TxHeaderTypeDef reply = can_tx_header;
-      uint8_t data[8];
-      uint16_t flags = (uint16_t)(MC_GetCurrentFaultsMotor1() | 0x8000U |
-          (test_drive_armed != 0U ? 0x4000U : 0U) |
-          (test_drive_run_count != 0U ? 0x2000U : 0U) |
-          (test_drive_active != 0U ? 0x1000U : 0U) |
-          (test_calibration_valid != 0U ? 0x0800U : 0U));
-      reply.Identifier = TEST_CURRENT_REPLY | MOTOR_CAN_ID;
-      reply.DataLength = FDCAN_DLC_BYTES_8;
-      CAN_PAYLOAD_FROM_U32(data, (uint32_t)(uint16_t)test_drive_iq |
-                               ((uint32_t)(uint16_t)test_drive_id << 16));
-      uint32_t peak = test_drive_peak_l1 > 65535U ? 65535U : test_drive_peak_l1;
-      CAN_PAYLOAD_FROM_U32(&data[4], (uint32_t)flags | (peak << 16));
-      if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &reply, data) == HAL_OK)
-        test_current_pending = 0U;
-    }
-#endif
-
-    /* Send outside the CAN ISR. A full TX FIFO defers the reply. */
-    if (telemetry_pending != 0U && HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) != 0U)
-    {
-      FDCAN_TxHeaderTypeDef reply = can_tx_header;
-      uint8_t data[8];
-      int16_t rpm = SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
-      reply.Identifier = SPEED_READ_REPLY | MOTOR_CAN_ID;
-      reply.DataLength = FDCAN_DLC_BYTES_8;
-      data[0] = (uint8_t)((uint16_t)rpm & 0xFFU);
-      data[1] = (uint8_t)((uint16_t)rpm >> 8);
-      data[2] = (uint8_t)MC_GetSTMStateMotor1();
-      data[3] = telemetry_hall_state;
-      CAN_PAYLOAD_FROM_U32(&data[4], telemetry_hall_changes);
-      if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &reply, data) == HAL_OK)
-      {
-        telemetry_pending = 0U;
-        ++telemetry_reply_count;
-      }
-    }
-	MCI_State_t s = MC_GetSTMStateMotor1();
-	if ((s == FAULT_OVER) && (MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS))
-	{
-#ifndef ESC_LOW_CURRENT_TEST
-	  (void)MC_AcknowledgeFaultMotor1();
-#endif
-	}
+    drive_app_poll(CanSend8);
   }
   /* USER CODE END 3 */
 }
@@ -1558,138 +1073,27 @@ static void MX_GPIO_Init(void)
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
-  if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0U)
+  if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0U ||
+      HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &can_rx_header, can_rx_data) != HAL_OK ||
+      can_rx_header.IdType != FDCAN_STANDARD_ID ||
+      can_rx_header.RxFrameType != FDCAN_DATA_FRAME)
   {
-	  return;
+    return;
   }
-
 #ifdef ESC_BOOT_OFFSET_APP
-  uint8_t *rx_payload = boot_can_rx_data;
-#else
-  uint8_t *rx_payload = can_rx_data;
-#endif
-  if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &can_rx_header, rx_payload) != HAL_OK)
-  {
-	  return;
-  }
-
-#ifdef ESC_BOOT_OFFSET_APP
-  if (boot_entry_pending) return; /* No drive command may race queued reset. */
-  if (can_rx_header.IdType == FDCAN_STANDARD_ID &&
-      can_rx_header.RxFrameType == FDCAN_DATA_FRAME &&
-      can_rx_header.FDFormat == FDCAN_FD_CAN &&
+  if (boot_entry_pending) return; /* No drive command may race a queued reset. */
+  if (can_rx_header.FDFormat == FDCAN_FD_CAN &&
       can_rx_header.BitRateSwitch == FDCAN_BRS_OFF &&
       can_rx_header.DataLength == FDCAN_DLC_BYTES_8 &&
-      esc_boot_request_valid(can_rx_header.Identifier, rx_payload, MOTOR_CAN_ID)) {
+      esc_boot_request_valid(can_rx_header.Identifier, can_rx_data, MOTOR_CAN_ID))
+  {
     if (BootEntrySafe()) boot_entry_pending = 1U;
     return;
   }
 #endif
-  if ((can_rx_header.IdType != FDCAN_STANDARD_ID) ||
-      (can_rx_header.RxFrameType != FDCAN_DATA_FRAME) ||
-      (can_rx_header.DataLength != FDCAN_DLC_BYTES_4))
+  if (can_rx_header.DataLength == FDCAN_DLC_BYTES_4)
   {
-	  return;
-  }
-
-  if ((can_rx_header.Identifier & MOTOR_CAN_ID) == 0U)
-  {
-	  return;
-  }
-
-#ifdef ESC_BOOT_OFFSET_APP
-  for (unsigned i = 0; i < 4U; ++i) can_rx_data[i] = rx_payload[i];
-#endif
-
-  if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == SPEED_READ)
-  {
-      telemetry_pending = 1U;
-      return;
-  }
-
-#ifdef ESC_LOW_CURRENT_TEST
-  if (can_rx_header.Identifier == (TEST_CURRENT_READ | MOTOR_CAN_ID))
-  {
-    test_current_pending = 1U;
-    return;
-  }
-  /* CAN CAL1 (0x480|dev, payload "CAL1"): request the RAM-only offset
-   * measurement via TestCalibrationService. Accepted only when MCI is IDLE
-   * with no faults; otherwise ignored. The service keeps its own gating
-   * (active/armed/pending rejections) untouched. */
-  if (can_rx_header.Identifier == (TEST_CAL_REQ | MOTOR_CAN_ID))
-  {
-    if (CAN_U32_FROM_PAYLOAD(can_rx_data) == TEST_REQ_CAL1 &&
-        MC_GetSTMStateMotor1() == IDLE && MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS)
-      test_calibration_request = TEST_REQ_CAL1;
-    return;
-  }
-  /* Explicit arming may acknowledge a cleared USB-only undervoltage fault.
-   * Never arm through a present fault. Accepted starts are counted, never latched. */
-  if (can_rx_header.Identifier == (TEST_ARM | MOTOR_CAN_ID))
-  {
-    (void)TestDriveArm(CAN_U32_FROM_PAYLOAD(can_rx_data));
-    return;
-  }
-#if defined(ESC_TUNE_GAIN_SET)
-  /* GAIN_SET (0x500|dev): armed+IDLE speed-PI numerator update; acceptance
-   * is only proven by test_gain_set_result/test_speed_kp_gain readback. */
-  if (can_rx_header.Identifier == (TEST_GAIN_SET | MOTOR_CAN_ID))
-  {
-    (void)TestDriveGainSet(CAN_U32_FROM_PAYLOAD(can_rx_data));
-    return;
-  }
-#endif
-  /* Stop is always accepted for an addressed motor; never refresh the run deadline. */
-  if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == MOTOR_STOP)
-  {
-    test_drive_armed = 0U;
-    test_drive_active = 0U;
-    test_drive_stop_reason = 2U;
-    (void)MC_StopMotor1();
-    return;
-  }
-  /* Diagnostic torque uses a distinct command; legacy speed/button frames are
-   * ignored. Default old 0.25 A profile retains its bounded speed command. */
-  uint32_t test_command = ESC_TEST_TORQUE_PROFILE ? ESC_TEST_TORQUE_COMMAND : SPEED_WRITE;
-  if (can_rx_header.Identifier != (test_command | MOTOR_CAN_ID)) return;
-  uint32_t test_data = CAN_U32_FROM_PAYLOAD(can_rx_data);
-  int16_t test_rpm = (int16_t)(test_data & 0xFFFFU);
-  uint16_t test_ramp_ms = (uint16_t)(test_data >> 16);
-  (void)TestDriveStart(test_rpm, test_ramp_ms);
-  return;
-/* HARNESS COMMANDS END */
-#endif
-
-  if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == SPEED_WRITE)
-  {
-	  uint32_t rx_data = CAN_U32_FROM_PAYLOAD(can_rx_data);
-	  int16_t final_speed_rpm = (int16_t)(rx_data & 0xFFFFU);
-	  uint16_t duration_ms = (uint16_t)((rx_data >> 16) & 0xFFFFU);
-	  MC_ProgramSpeedRampMotor1(RPM_2_SPEED_UNIT(final_speed_rpm), duration_ms);
-
-	  if (MC_GetSTMStateMotor1() == IDLE)
-	  {
-		  (void)MC_StartMotor1();
-	  }
-  }
-  else if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == TORQUE_WRITE)
-  {
-	  uint32_t rx_data = CAN_U32_FROM_PAYLOAD(can_rx_data);
-	  int16_t final_torque = (int16_t)(rx_data & 0xFFFFU);
-	  uint16_t duration_ms = (uint16_t)((rx_data >> 16) & 0xFFFFU);
-      MC_ProgramTorqueRampMotor1(final_torque, duration_ms);
-
-	  if (MC_GetSTMStateMotor1() == IDLE)
-	  {
-		  (void)MC_StartMotor1();
-	  }
-  }
-  else if (CAN_COMMAND_FROM_ID(can_rx_header.Identifier) == MOTOR_STOP)
-  {
-	  MC_StopMotor1();
-  } else {
-	  // just do nothing if we do not recognize the command
+    drive_app_can_rx(can_rx_header.Identifier, can_rx_data, 4U);
   }
 }
 

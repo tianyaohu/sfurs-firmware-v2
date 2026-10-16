@@ -43,12 +43,9 @@
 
 #define MOTOR_VOLTAGE_CONSTANT  3.0 /*!< Volts RMS ph-ph /kRPM */
 #define MOTOR_MAX_SPEED_RPM     2976 /*!< Maximum rated speed  */
-#ifdef ESC_LOW_CURRENT_TEST
-#include "test_profile.h"
-#define NOMINAL_CURRENT_A       ESC_TEST_REFERENCE_A
-#else
-#define NOMINAL_CURRENT_A       3
-#endif
+/* Torque ceiling seen by the speed controller; drive_app.c derates it to
+ * 3 A by I2T (previous engineer's ea7b1a0 limits). */
+#define NOMINAL_CURRENT_A       6
 
 #define ID_DEMAG_A              -3 /*!< Demagnetization current */
 
@@ -63,11 +60,15 @@
                                                  It can be either DEGREES_120 or
                                                  DEGREES_60 */
 
+#ifdef HALL_PHASE_SHIFT_OVERRIDE /* per-wheel value measured by CAN HALL_ALIGN */
+#define HALL_PHASE_SHIFT        HALL_PHASE_SHIFT_OVERRIDE
+#else
 #define HALL_PHASE_SHIFT        120 /*!< Define here in degrees
                                                  the electrical phase shift between
                                                  the low to high transition of
                                                  signal H1 and the maximum of
                                                  the Bemf induced on phase A */
+#endif
 /*** Quadrature encoder ***/
 #define M1_ENCODER_PPR          400  /*!< Number of pulses per
                                             revolution */

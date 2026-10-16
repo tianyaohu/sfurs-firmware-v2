@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Build the CubeIDE linked source list with GCC, without installing CubeIDE.
+"""Build the ESC firmware with GCC, without installing CubeIDE.
 
-Usage: python3 build_cli.py --motor NE --output /path/to/build
-Does not flash hardware or modify motor parameters.
+Usage: python3 build_cli.py --motor NE --output /path/to/build [--app-offset]
+                            [--hall-shift DEG]
+Compiles the CubeIDE linked source list (which includes Src/drive_app.c).
+Does not flash hardware.
 """
 import argparse
 import pathlib
@@ -16,42 +18,12 @@ parser.add_argument('--app-offset', action='store_true',
                     help='Link the app at 0x08004000 (110K) under the CAN '
                          'bootloader and enable safe remote boot entry; '
                          'the bootloader sets VTOR before jumping.')
-profiles = parser.add_mutually_exclusive_group()
-profiles.add_argument('--low-current-test', action='store_true',
-                     help='Build disarmed NE-only 0.25 A / 60 RPM one-shot test profile')
-profiles.add_argument('--half-amp-diagnostic', action='store_true',
-                      help='Build disarmed NE-only 1.5 A reference / 2000 ms torque diagnostic (legacy option name)')
-profiles.add_argument('--rpm-diagnostic', action='store_true',
-                      help='Build disarmed NE-only 60 RPM / experimental speed PI / 3 A / 10000 ms validation')
-profiles.add_argument('--torque-count-diagnostic', action='store_true',
-                      help='Build disarmed NE-only 1.5 A torque / 14400-edge (300-turn) count stop / 180 s backup')
-profiles.add_argument('--reverse-speed-diagnostic', action='store_true',
-                       help='Build disarmed RPM2 profile: +/-900 RPM bounds / '
-                            '-100 RPM default / negated PI / 3 A / 30 s backup')
-parser.add_argument('--ne-low-speed-p2', action='store_true',
-                    help='FR-only RPM2 comparison: double proportional response; '
-                         'requires --motor NE --reverse-speed-diagnostic --app-offset')
-parser.add_argument('--rpm2-tune', action='store_true',
-                    help='RPM2 + RAM-only CAN GAIN_SET (0x500|dev) for auto-tune '
-                         'sweeps; requires --motor NE --reverse-speed-diagnostic '
-                          '--app-offset')
-parser.add_argument('--rpm2-ki4', action='store_true',
-                    help='Opt-in RPM2 candidate: Ki -288/16384, original Kp and '
-                         'guards; requires --reverse-speed-diagnostic --app-offset')
+parser.add_argument('--hall-shift', type=int, metavar='DEG',
+                    help='HALL_PHASE_SHIFT measured for this wheel by CAN '
+                         'HALL_ALIGN (default: generated 120)')
 args = parser.parse_args()
-if args.rpm2_ki4 and (not args.reverse_speed_diagnostic or not args.app_offset):
-    parser.error('--rpm2-ki4 requires --reverse-speed-diagnostic --app-offset')
-if args.rpm2_ki4 and (args.ne_low_speed_p2 or args.rpm2_tune):
-    parser.error('--rpm2-ki4 cannot be combined with another gain experiment')
-if args.ne_low_speed_p2 and (args.motor != 'NE' or not args.reverse_speed_diagnostic or not args.app_offset):
-    parser.error('--ne-low-speed-p2 requires --motor NE --reverse-speed-diagnostic --app-offset')
-if args.rpm2_tune and (args.motor != 'NE' or not args.reverse_speed_diagnostic or not args.app_offset):
-    parser.error('--rpm2-tune requires --motor NE --reverse-speed-diagnostic --app-offset')
-if args.rpm2_tune and args.ne_low_speed_p2:
-    parser.error('--rpm2-tune and --ne-low-speed-p2 are mutually exclusive')
-if (args.low_current_test or args.half_amp_diagnostic or args.rpm_diagnostic or args.torque_count_diagnostic or args.reverse_speed_diagnostic) and args.motor != 'NE':
-    print(f'WARNING: diagnostic profile for {args.motor} (validated on NE only); '
-          f'sign/gains unproven for this wheel', flush=True)
+if args.hall_shift is not None and not -360 < args.hall_shift < 360:
+    parser.error('--hall-shift must be in (-360, 360) degrees')
 root = pathlib.Path(__file__).resolve().parent
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -69,22 +41,8 @@ compile_flags = flags + ['-Ofast', '-g3', '-std=gnu11', '-ffunction-sections',
 compile_flags += ['-I' + str(root / folder) for folder in includes]
 if args.app_offset:
     compile_flags += ['-DESC_BOOT_OFFSET_APP', '-I' + str(root.parent / 'bootloader')]
-if args.low_current_test or args.half_amp_diagnostic or args.rpm_diagnostic or args.torque_count_diagnostic or args.reverse_speed_diagnostic:
-    compile_flags += ['-DESC_LOW_CURRENT_TEST']
-if args.half_amp_diagnostic:
-    compile_flags += ['-DESC_HALF_AMP_DIAGNOSTIC']
-if args.rpm_diagnostic:
-    compile_flags += ['-DESC_RPM_DIAGNOSTIC']
-if args.reverse_speed_diagnostic:
-    compile_flags += ['-DESC_REVERSE_SPEED_DIAGNOSTIC']
-if args.ne_low_speed_p2:
-    compile_flags += ['-DESC_NE_LOW_SPEED_P2']
-if args.rpm2_tune:
-    compile_flags += ['-DESC_TUNE_GAIN_SET']
-if args.rpm2_ki4:
-    compile_flags += ['-DESC_RPM2_KI4']
-if args.torque_count_diagnostic:
-    compile_flags += ['-DESC_TORQUE_COUNT_DIAGNOSTIC']
+if args.hall_shift is not None:
+    compile_flags += [f'-DHALL_PHASE_SHIFT_OVERRIDE={args.hall_shift}']
 sources = []
 for link in ET.parse(root / 'STM32CubeIDE/.project').findall('.//link'):
     uri = link.findtext('locationURI', '')
@@ -98,20 +56,7 @@ for source in sources:
     subprocess.run(['arm-none-eabi-gcc', *compile_flags, '-c', str(source),
                     '-o', str(obj)], check=True)
     objects.append(str(obj))
-elf = out / ('motor_' + args.motor +
-              ('_torque_count_diagnostic.elf' if args.torque_count_diagnostic else
-               '_reverse_speed_diagnostic.elf' if args.reverse_speed_diagnostic else
-               '_rpm_diagnostic.elf' if args.rpm_diagnostic else
-               '_half_amp_diagnostic.elf' if args.half_amp_diagnostic else
-               '_low_current_test.elf' if args.low_current_test else '_telemetry.elf'))
-if args.app_offset:
-    elf = out / (elf.stem + '_offset.elf')
-if args.ne_low_speed_p2:
-    elf = out / (elf.stem + '_ne_low_speed_p2.elf')
-if args.rpm2_tune:
-    elf = out / (elf.stem + '_rpm2_tune.elf')
-if args.rpm2_ki4:
-    elf = out / (elf.stem + '_rpm2_ki4.elf')
+elf = out / f"motor_{args.motor}_drive{'_offset' if args.app_offset else ''}.elf"
 ld = root / ('STM32CubeIDE/STM32G431CBUX_FLASH_APP.ld' if args.app_offset
              else 'STM32CubeIDE/STM32G431CBUX_FLASH.ld')
 subprocess.run(['arm-none-eabi-gcc', *flags, '-T' + str(ld),
@@ -120,4 +65,6 @@ subprocess.run(['arm-none-eabi-gcc', *flags, '-T' + str(ld),
                 '-Wl,-Map=' + str(out / 'motor.map'), *objects,
                 '-Wl,--start-group', '-lc', '-lm', '-Wl,--end-group',
                 '-o', str(elf)], check=True)
+subprocess.run(['arm-none-eabi-objcopy', '-O', 'binary', str(elf),
+                str(elf.with_suffix('.bin'))], check=True)
 print(elf)

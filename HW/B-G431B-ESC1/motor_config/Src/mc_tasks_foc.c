@@ -36,7 +36,7 @@
 #include "mc_app_hooks.h"
 
 /* USER CODE BEGIN Includes */
-#include "test_profile.h"
+#include "drive_app.h"
 
 /* USER CODE END Includes */
 
@@ -130,13 +130,8 @@ __weak void FOC_Init(void)
     FOCVars[M1].Iqdref = STC_GetDefaultIqdref(pSTC[M1]);
     FOCVars[M1].UserIdref = STC_GetDefaultIqdref(pSTC[M1]).d;
 
-    /* Guarded diagnostics set their reference only in TestDriveStart().
-     * Do not queue an implicit drive command at boot: it would also prevent
-     * safe remote FWU entry before the first operator-requested run. */
-#if !ESC_TEST_GUARDED_MOTION
-    MCI_ExecSpeedRamp(&Mci[M1],
-    STC_GetMecSpeedRefUnitDefault(pSTC[M1]),0); /* First command to STC */
-#endif
+    /* No implicit speed command at boot: drive_app.c starts the motor only on
+     * a CAN SPEED_WRITE, and a queued command would block safe boot entry. */
 
     /* USER CODE BEGIN MCboot 2 */
 
@@ -535,6 +530,11 @@ inline uint16_t FOC_CurrControllerM1(void)
   SpeednPosFdbk_Handle_t *speedHandle;
   speedHandle = STC_GetSpeedSensor(pSTC[M1]);
   hElAngle = SPD_GetElAngle(speedHandle);
+  /* Hall alignment (drive_app.c) imposes the electrical angle. */
+  if (drive_align_force != 0U)
+  {
+    hElAngle = drive_align_angle;
+  }
   PWMC_GetPhaseCurrents(pwmcHandle[M1], &Iab);
   Ialphabeta = MCM_Clarke(Iab);
   Iqd = MCM_Park(Ialphabeta, hElAngle);

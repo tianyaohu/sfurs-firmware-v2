@@ -320,10 +320,6 @@ __weak void MCI_SetCurrentReferences_F(MCI_Handle_t *pHandle, qd_f_t IqdRef)
   */
 __weak bool MCI_StartMotor(MCI_Handle_t *pHandle)
 {
-#ifdef ESC_LOW_CURRENT_TEST
-  extern bool TestDriveConsumeStartPermit(void);
-  if (!TestDriveConsumeStartPermit()) return false;
-#endif
   bool retVal = false;
 #ifdef NULL_PTR_CHECK_MC_INT
   if (MC_NULL == pHandle)
@@ -386,10 +382,6 @@ __weak bool MCI_StartMotor(MCI_Handle_t *pHandle)
   */
 __weak bool MCI_StartWithPolarizationMotor(MCI_Handle_t* pHandle)
 {
-#ifdef ESC_LOW_CURRENT_TEST
-  /* Alternate start paths are disabled in the one-shot test profile. */
-  return false;
-#endif
   bool retVal = false;
 #ifdef NULL_PTR_CHECK_MC_INT
   if (MC_NULL == pHandle)

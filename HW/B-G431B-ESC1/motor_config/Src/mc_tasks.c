@@ -180,8 +180,6 @@ __weak void MC_RunMotorControlTasks(void)
       /* Applicative hook at end of Medium Frequency for Motor 1 */
       MC_APP_PostMediumFrequencyHook_M1();
 
-#ifndef ESC_LOW_CURRENT_TEST
-      /* Bench profile excludes UART tuning/control, which could bypass reference limits. */
       MCP_Over_UartA.rxBuffer = MCP_Over_UartA.pTransportLayer->fRXPacketProcess(MCP_Over_UartA.pTransportLayer,
                                                                                 &MCP_Over_UartA.rxLength);
       if ( 0U == MCP_Over_UartA.rxBuffer)
@@ -206,7 +204,6 @@ __weak void MC_RunMotorControlTasks(void)
         }
       }
 
-#endif
       /* USER CODE BEGIN MC_Scheduler 1 */
 
       /* USER CODE END MC_Scheduler 1 */

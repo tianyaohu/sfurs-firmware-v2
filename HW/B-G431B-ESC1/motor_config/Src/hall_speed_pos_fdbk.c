@@ -444,10 +444,6 @@ __weak void *HALL_TIMx_CC_IRQHandler(void *pHandleVoid)
                                     | (LL_GPIO_IsInputPinSet(pHandle->H3Port, pHandle->H3Pin) << 1U)
                                     | LL_GPIO_IsInputPinSet(pHandle->H1Port, pHandle->H1Pin));
   }
-#if defined(ESC_RPM_DIAGNOSTIC) || defined(ESC_TORQUE_COUNT_DIAGNOSTIC) || defined(ESC_REVERSE_SPEED_DIAGNOSTIC)
-  extern void TestDriveHallTransition(uint8_t previous, uint8_t next);
-  TestDriveHallTransition(bPrevHallState, pHandle->HallState);
-#endif
   if (pHandle->SensorIsReliable)
   {
     switch (pHandle->HallState)

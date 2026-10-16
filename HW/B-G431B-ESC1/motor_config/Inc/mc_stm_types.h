@@ -213,7 +213,7 @@ __STATIC_INLINE uint16_t LL_ADC_REG_ReadConversionData12L(const ADC_TypeDef *ADC
  *
  * @{
  */
-#define SPEED_UNIT U_01HZ
+#define SPEED_UNIT U_RPM /* 1 RPM resolution for low wheel speeds */
 
 /* USER CODE END DEFINITIONS */
 /*!< Convenient macro to convert user friendly RPM into SpeedUnit used by MC API */

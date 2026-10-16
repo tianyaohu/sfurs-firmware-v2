@@ -5,10 +5,7 @@ import subprocess
 import tempfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
-# Regression for the hardware failure: CRC initialization took 162-191ms;
-# enqueue must receive a fresh clock, not the pre-CRC loop timestamp.
-main_source = (root / 'CM7/Core/Src/main.c').read_text()
-assert 'now = HAL_GetTick();\n      can_fwu_host_poll(&fwu_host, now);' in main_source
+# Fresh-clock-after-CRC regression: tests/test_fwu_updater.py scenario 4.
 harness = r'''
 #include "can_fwu_protocol.h"
 #include "can_fwu_boot.h"

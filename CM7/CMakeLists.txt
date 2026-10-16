@@ -58,55 +58,35 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add sources to executable
-option(NUCLEO_MOTOR_ENABLED "Enable explicit wheel bench ARM/RUN commands" OFF)
-option(NUCLEO_IK_ENABLED "Exclusive keyboard IK mode (no bench/CAL/FWU pump)" OFF)
-if(NUCLEO_IK_ENABLED)
-    if(NOT NUCLEO_MOTOR_ENABLED)
-        message(FATAL_ERROR "IK requires NUCLEO_MOTOR_ENABLED=ON")
+# Two images from one source tree:
+#   default                      streaming omni drive (scripts/keyboard_drive.py)
+#   -DFWU_IMAGE_FILE=<payload.c> ESC updater carrying one ESC application
+#                                (payload from scripts/fwu_image.py)
+set(FWU_IMAGE_FILE "" CACHE FILEPATH "ESC payload C file; selects the updater image")
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../HW/common/CAN)
+if(FWU_IMAGE_FILE)
+    get_filename_component(FWU_PAYLOAD "${FWU_IMAGE_FILE}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(NOT EXISTS "${FWU_PAYLOAD}")
+        message(FATAL_ERROR "FWU payload does not exist: ${FWU_PAYLOAD}")
     endif()
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NUCLEO_IK_ENABLED=1)
+    message(STATUS "Nucleo image: ESC updater, payload ${FWU_PAYLOAD}")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NUCLEO_DRIVE=0)
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        Core/Src/fwu_updater.c
+        Core/Src/can_fwu_host.c
+        "${FWU_PAYLOAD}"
+        ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_protocol.c
+    )
+else()
+    message(STATUS "Nucleo image: streaming omni drive")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NUCLEO_DRIVE=1)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Src/ik_drive.c
         Core/Src/ik_telemetry.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/rover_kinematics.c
     )
 endif()
-if(NUCLEO_MOTOR_ENABLED)
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE FWU_BLINK_BENCH_ONLY=0U)
-else()
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE FWU_BLINK_BENCH_ONLY=1U)
-endif()
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-set(FWU_IMAGE_FILE "" CACHE FILEPATH "Generated FWU payload C file (empty selects blink test)")
-if(FWU_IMAGE_FILE)
-    get_filename_component(FWU_PAYLOAD "${FWU_IMAGE_FILE}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
-    if(NOT EXISTS "${FWU_PAYLOAD}")
-        message(FATAL_ERROR "FWU payload does not exist: ${FWU_PAYLOAD}")
-    endif()
-else()
-set(FWU_BLINK_DIR "${CMAKE_CURRENT_BINARY_DIR}/esc-blink")
-add_custom_command(
-    OUTPUT "${FWU_BLINK_DIR}/fwu_blink_image.c"
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/esc_blink/build.py"
-        --cc "${CMAKE_C_COMPILER}" --output "${FWU_BLINK_DIR}"
-    DEPENDS ../tests/esc_blink/build.py ../tests/esc_blink/main.c
-        ../tests/esc_blink/app.ld ../tests/esc_blink/can_boot.c
-        ../tests/esc_blink/can_boot.h ../Common/Inc/boot_entry.h
-    VERBATIM
-)
-set(FWU_PAYLOAD "${FWU_BLINK_DIR}/fwu_blink_image.c")
-endif()
-message(STATUS "FWU payload: ${FWU_PAYLOAD}")
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
-    Core/Src/wheel_bench.c
-    Core/Src/can_cal_sender.c
-    Core/Src/can_fwu_host.c
-    "${FWU_PAYLOAD}"
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_protocol.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_boot.c
-)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE

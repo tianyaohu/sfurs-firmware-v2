@@ -1,166 +1,117 @@
 #include "ik_drive.h"
+#include "can_datatypes.h"
 #include "rover_kinematics.h"
-#include "wheel_bench.h"
+#include <math.h>
 
 volatile const uint32_t ik_drive_abi = IK_DRIVE_ABI;
 volatile int32_t ik_drive_vx_mmps, ik_drive_vy_mmps, ik_drive_omega_mradps;
-volatile uint32_t ik_drive_request, ik_drive_sequence, ik_drive_completed;
-volatile uint32_t ik_drive_state, ik_drive_result;
-volatile int32_t ik_drive_rpm[4];
-volatile uint32_t ik_drive_tx_count, ik_drive_ack_count, ik_drive_fault;
+volatile uint32_t ik_drive_enable, ik_drive_heartbeat;
+volatile int32_t ik_drive_accel_rpmps;
+volatile uint32_t ik_drive_raw_id, ik_drive_raw_data, ik_drive_raw_seq;
+volatile uint32_t ik_drive_state, ik_drive_raw_done;
+volatile int32_t ik_drive_target_rpm[4], ik_drive_rpm[4];
+volatile uint32_t ik_drive_tx_count, ik_drive_tx_fail, ik_drive_bad_input;
 
-static uint32_t operation, sequence, seen_sequence, pending_tick, stop_tick;
-static unsigned index, stop_count;
-static int pending;
+static uint32_t last_heartbeat, heartbeat_tick, period_tick, hold_tick, stop_frames;
+static int heartbeat_seen;
+static float command[4];
 
-int ik_drive_transport_idle(void)
+static int send_counted(int (*send)(uint32_t, const uint8_t[4]), uint32_t id, const uint8_t d[4])
 {
-  return !pending && ik_drive_sequence == seen_sequence &&
-         (ik_drive_state == IK_IDLE || ik_drive_state == IK_RUNNING ||
-          ik_drive_state == IK_FAULT);
+  if (send(id, d)) { ++ik_drive_tx_count; return 1; }
+  ++ik_drive_tx_fail;
+  return 0;
 }
 
-static void begin_stop(uint32_t now)
+/* Target wheel RPM for the requested twist; zero when disabled or invalid. */
+static void targets(int drive, float target[4])
 {
-  if (pending) wheel_bench_abort();
-  pending = 0;
-  operation = IK_STOP;
-  stop_count = 0;
-  stop_tick = now - 50U;
-  ik_drive_state = IK_STOPPING;
-}
-
-static void fault(uint32_t reason, uint32_t now)
-{
-  if (ik_drive_fault == 0U) ik_drive_fault = reason;
-  begin_stop(now);
-}
-
-static void finish(void)
-{
-  if (ik_drive_fault != 0U) {
-    ik_drive_state = IK_FAULT;
-    ik_drive_result = IK_TX_FAULT;
-  } else {
-    ik_drive_state = operation == IK_START ? IK_RUNNING : IK_IDLE;
-    ik_drive_result = IK_SENT;
+  for (unsigned i = 0; i < 4U; ++i) target[i] = 0.0f;
+  if (!drive) return;
+  const int32_t vx = ik_drive_vx_mmps, vy = ik_drive_vy_mmps, omega = ik_drive_omega_mradps;
+  if (vx < -IK_DRIVE_MAX_LINEAR_MMPS || vx > IK_DRIVE_MAX_LINEAR_MMPS ||
+      vy < -IK_DRIVE_MAX_LINEAR_MMPS || vy > IK_DRIVE_MAX_LINEAR_MMPS ||
+      omega < -IK_DRIVE_MAX_OMEGA_MRADPS || omega > IK_DRIVE_MAX_OMEGA_MRADPS ||
+      !rover_ik(rover_ik_provisional, vx / 1000.0f, vy / 1000.0f, omega / 1000.0f, target, 0)) {
+    ++ik_drive_bad_input;
+    for (unsigned i = 0; i < 4U; ++i) target[i] = 0.0f;
   }
-  ik_drive_completed = sequence;
 }
 
-void ik_drive_tick(uint32_t now)
+/* Move every wheel toward its target; the wheel needing the largest change
+ * moves at the acceleration limit and the others proportionally, so the
+ * body accelerates along the commanded twist instead of curving. */
+static void slew(const float target[4])
 {
-  /* The debugger publishes sequence LAST. Never clear the request mailbox:
-   * a CPU read-then-clear could erase a concurrent SWD STOP write. */
-  const uint32_t published = ik_drive_sequence;
-  const uint32_t request = published != seen_sequence ? ik_drive_request : 0U;
-  if (published != seen_sequence) seen_sequence = published;
-  if (request == IK_STOP) {
-    sequence = published;
-    begin_stop(now);
-  } else if (request != 0U) {
-    const uint32_t requested_sequence = published;
-    if ((request != IK_PREPARE && request != IK_START) ||
-        ik_drive_state != IK_IDLE || ik_drive_fault != 0U) {
-      ik_drive_result = IK_REJECTED;
-      ik_drive_completed = requested_sequence;
-    } else {
-      float target[4];
-      const int32_t vx = ik_drive_vx_mmps;
-      const int32_t vy = ik_drive_vy_mmps;
-      const int32_t omega = ik_drive_omega_mradps;
-      if (request == IK_START &&
-          (vx < -IK_DRIVE_MAX_LINEAR_MMPS || vx > IK_DRIVE_MAX_LINEAR_MMPS ||
-           vy < -IK_DRIVE_MAX_LINEAR_MMPS || vy > IK_DRIVE_MAX_LINEAR_MMPS ||
-           omega < -1000 || omega > 1000 ||
-           !rover_ik(rover_ik_provisional, vx / 1000.0f, vy / 1000.0f,
-                     omega / 1000.0f, target, 0))) {
-        ik_drive_result = IK_BAD_TARGET;
-        ik_drive_completed = requested_sequence;
-      } else {
-        sequence = requested_sequence;
-        operation = request;
-        index = 0;
-        ik_drive_result = IK_NONE;
-        ik_drive_state = IK_BUSY;
-        if (request == IK_START) {
-          int moving = 0;
-          for (unsigned i = 0; i < 4; ++i) {
-            /* No second left-side mirror; model returns raw motor RPM. */
-            ik_drive_rpm[i] = (int32_t)(target[i] + (target[i] < 0 ? -0.5f : 0.5f));
-            moving |= ik_drive_rpm[i] != 0;
-          }
-          if (!moving) begin_stop(now);
-        }
+  const int32_t accel = ik_drive_accel_rpmps > 0 ? ik_drive_accel_rpmps : IK_DRIVE_DEFAULT_ACCEL_RPMPS;
+  const float max_step = (float)accel * (float)IK_DRIVE_PERIOD_MS / 1000.0f;
+  float largest = 0.0f;
+  for (unsigned i = 0; i < 4U; ++i) {
+    const float delta = fabsf(target[i] - command[i]);
+    if (delta > largest) largest = delta;
+  }
+  const float scale = largest > max_step ? max_step / largest : 1.0f;
+  for (unsigned i = 0; i < 4U; ++i) {
+    command[i] = scale >= 1.0f ? target[i] : command[i] + (target[i] - command[i]) * scale;
+    ik_drive_target_rpm[i] = (int32_t)lroundf(target[i]);
+    ik_drive_rpm[i] = (int32_t)lroundf(command[i]);
+  }
+}
+
+void ik_drive_tick(uint32_t now, int (*send)(uint32_t id, const uint8_t data[4]))
+{
+  const uint32_t heartbeat = ik_drive_heartbeat;
+  if (heartbeat != last_heartbeat) {
+    last_heartbeat = heartbeat;
+    heartbeat_tick = now;
+    heartbeat_seen = 1;
+  }
+  const int fresh = heartbeat_seen && (uint32_t)(now - heartbeat_tick) < IK_DRIVE_HEARTBEAT_MS;
+  const int drive = fresh && ik_drive_enable != 0U;
+
+  if (ik_drive_state == IK_STOPPED) {
+    if (!drive) {
+      const uint32_t raw_seq = ik_drive_raw_seq;
+      if (raw_seq != ik_drive_raw_done) {
+        uint8_t data[4];
+        const uint32_t word = ik_drive_raw_data;
+        CAN_PAYLOAD_FROM_U32(data, word);
+        if (send_counted(send, ik_drive_raw_id & 0x7FFU, data)) ik_drive_raw_done = raw_seq;
       }
-    }
-  }
-
-  if (pending) {
-    const int status = wheel_bench_poll();
-    if (status == BENCH_TX_PENDING && (uint32_t)(now - pending_tick) < 100U) return;
-    if (status == BENCH_TX_PENDING) wheel_bench_abort();
-    pending = 0;
-    if (status == BENCH_TX_OK) ++ik_drive_ack_count;
-    if (operation == IK_STOP) {
-      if (status != BENCH_TX_OK && ik_drive_fault == 0U)
-        ik_drive_fault = status == BENCH_TX_PENDING ? 3U : 2U;
-      ++stop_count;
-      stop_tick = now;
-    } else if (status != BENCH_TX_OK) {
-      fault(status == BENCH_TX_PENDING ? 3U : 2U, now);
-    } else {
-      ++index;
-    }
-  }
-
-  if (operation == IK_STOP && ik_drive_state == IK_STOPPING) {
-    if (stop_count >= 3U) {
-      /* Existing ESC STOP permanency is 400 ms. Match the bench's extra
-       * 250 ms re-arm quiet after that, measured from the final STOP ACK. */
-      if (ik_drive_fault == 0U && (uint32_t)(now - stop_tick) < 650U) return;
-      for (unsigned i = 0; i < 4; ++i) ik_drive_rpm[i] = 0;
-      finish();
       return;
     }
-    if ((uint32_t)(now - stop_tick) < 50U) return;
-    const uint8_t zero[4] = {0};
-    if (wheel_bench_send(0x78FU, zero)) {
-      ++ik_drive_tx_count;
-      pending_tick = now;
-      pending = 1;
+    ik_drive_state = IK_DRIVING;
+    period_tick = now - IK_DRIVE_PERIOD_MS;
+  }
+  if ((uint32_t)(now - period_tick) < IK_DRIVE_PERIOD_MS) return;
+  period_tick = now;
+
+  if (ik_drive_state == IK_STOPPING) {
+    if (drive) {
+      ik_drive_state = IK_DRIVING;
     } else {
-      if (ik_drive_fault == 0U) ik_drive_fault = 1U;
-      ++stop_count;
-      stop_tick = now;
+      const uint8_t zero[4] = {0};
+      if (send_counted(send, MOTOR_STOP | 0x0FU, zero) && ++stop_frames >= IK_DRIVE_STOP_FRAMES)
+        ik_drive_state = IK_STOPPED;
+      return;
     }
-    return;
   }
 
-  if (ik_drive_state != IK_BUSY) return;
-  /* Four ARM frames, then four SPEED frames for START. PREPARE is ARM-only.
-   * Skip zero speed targets: the guarded ESC rejects a zero START. */
-  while (index >= 4U && index < 8U && ik_drive_rpm[index - 4U] == 0) ++index;
-  if (index >= (operation == IK_PREPARE ? 4U : 8U)) {
-    finish();
-    return;
+  float target[4];
+  targets(drive, target);
+  slew(target);
+  int moving = drive;
+  for (unsigned i = 0; i < 4U; ++i) {
+    const uint16_t rpm = (uint16_t)(int16_t)ik_drive_rpm[i];
+    const uint8_t data[4] = {(uint8_t)rpm, (uint8_t)(rpm >> 8),
+                             (uint8_t)IK_DRIVE_PERIOD_MS, 0U}; /* ESC ramps over one period */
+    (void)send_counted(send, SPEED_WRITE | (1U << i), data);
+    moving |= ik_drive_rpm[i] != 0;
   }
-  const uint32_t selector = 1U << (index % 4U);
-  uint32_t id = 0x400U | selector;
-  uint8_t data[4] = {0x32, 0x4D, 0x50, 0x52};
-  if (index >= 4U) {
-    const uint16_t rpm = (uint16_t)(int16_t)ik_drive_rpm[index - 4U];
-    id = 0x080U | selector;
-    data[0] = (uint8_t)rpm;
-    data[1] = (uint8_t)(rpm >> 8);
-    data[2] = 0xF4;
-    data[3] = 0x01;
+  if (moving) {
+    hold_tick = now;
+  } else if ((uint32_t)(now - hold_tick) >= IK_DRIVE_HOLD_MS) {
+    ik_drive_state = IK_STOPPING;
+    stop_frames = 0U;
   }
-  if (!wheel_bench_send(id, data)) {
-    fault(1U, now);
-    return;
-  }
-  ++ik_drive_tx_count;
-  pending_tick = now;
-  pending = 1;
 }

@@ -6,10 +6,9 @@
 extern "C" {
 #endif
 
-/* P4: Nucleo-side updater session. Transport is injected so host tests
- * can fake it; firmware passes wheel_bench_send/poll/abort. The session
- * never starts on its own: begin() requires an explicit request plus a
- * bench-idle gate evaluated by the caller (P5 safety). */
+/* Nucleo-side updater session. Transport is injected so host tests can fake
+ * it; firmware passes main.c's FDCAN send/poll/abort. The session never
+ * starts on its own: fwu_updater.c calls begin() only on an explicit request. */
 enum can_fwu_host_state {
   FWU_H_IDLE = 0,
   FWU_H_ENTER_SENT,

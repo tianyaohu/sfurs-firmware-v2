@@ -4,7 +4,8 @@
   esc_tool.py status                    print all four wheels once
   esc_tool.py align FR|BR|BL|FL|all     measure + apply Hall phase shift (RAM)
   esc_tool.py set WHEEL KEY VALUE       KEY: kp, ki, shift (deg), iqmax_ma (RAM)
-  esc_tool.py stop                      broadcast STOP
+  esc_tool.py stop                      broadcast STOP; also clears a fault whose
+                                        cause is gone (FAULT_OVER -> IDLE)
 
 align turns the wheel about 1/4 revolution forward and back at 2 A: battery
 ON, wheels off the ground. Results are lost on ESC reset; bake them into the

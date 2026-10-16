@@ -228,6 +228,14 @@ int main(int argc, char **argv) {
     rx(MOTOR_STOP | 1U, 0); tick(5);
     assert(drive_app.align_result == ESC_ALIGN_ABORTED && !drive_align_force && state == IDLE);
     assert(fabs(shift_deg() - 120.0) < 0.01 && drive_app_idle());
+  } else if (scenario == 9) { /* undervolt latched on USB power: STOP clears it once gone */
+    state = FAULT_OVER; cur_faults = 4; occ_faults = 4; tick(1);
+    rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2);
+    assert(drive_app.align_phase == 0 && drive_app.rejected == 1); /* align needs IDLE */
+    rx(MOTOR_STOP | 0xFU, 0); tick(1); assert(acks == 0 && state == FAULT_OVER); /* still present */
+    cur_faults = 0;
+    rx(MOTOR_STOP | 0xFU, 0); tick(1); assert(acks == 1 && state == IDLE && starts == 0);
+    rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2); assert(drive_align_force && starts == 1);
   }
   return 0;
 }
@@ -284,6 +292,9 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_stop_aborts_alignment(self):
         self.run_scenario(8)
+
+    def test_stop_clears_finished_fault(self):
+        self.run_scenario(9)
 
 
 if __name__ == "__main__":

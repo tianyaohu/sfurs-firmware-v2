@@ -279,10 +279,16 @@ void drive_app_tick(void)
   }
   if (stop_received) {
     drive_app.fault_latched = 0U;
-    if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING)
+    if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING) {
       align_finish(ESC_ALIGN_ABORTED);
-    else if (state != IDLE)
+    } else if (state == FAULT_OVER) {
+      /* Clear a fault whose cause is gone (e.g. undervolt latched on USB power
+       * before the battery came on); align and boot entry need IDLE. */
+      if (MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS) (void)MC_AcknowledgeFaultMotor1();
+      state = (uint16_t)MC_GetSTMStateMotor1();
+    } else if (state != IDLE) {
       stop(ESC_STOP_COMMAND);
+    }
     drive_app.active = 0U;
   }
   align_tick(state);

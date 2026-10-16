@@ -1,5 +1,0 @@
-/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/esc.c:57:6:esc_boot	1
-/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/esc.c:81:6:esc_pwm_stop	1
-/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/esc.c:89:13:esc_pwm_run	17
-/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/esc.c:246:6:esc_pwm_control	52
-/home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/esc.c:597:6:TIM2_IRQHandler	3

@@ -5,8 +5,10 @@
 - `bootloader/`: CAN bootloader ([README](bootloader/README.md)).
 - `Inc/motor_controller_can.h`: maps the `MOTOR_NE|SE|SW|NW` build macro to
   the CAN select bit.
-- `ElectronicSpeedControl_ESC-G4/`, `bldc_24V_9.5Apk.json`: older Workbench
-  project and profile kept for reference; not built.
+- `bldc_24V_9.5Apk.json`: older Workbench motor profile kept for reference.
+- `motor_config/Drivers/CMSIS/DSP` keeps only `Include/` (on the include
+  path; no DSP functions are linked). Workbench regeneration may restore the
+  rest; delete it again.
 
 ## Build
 

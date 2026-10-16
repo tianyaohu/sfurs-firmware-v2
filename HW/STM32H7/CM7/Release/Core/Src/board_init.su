@@ -1,6 +1,0 @@
-../Core/Src/board_init.c:34:6:Peripherals_Init	8	static
-../Core/Src/board_init.c:60:6:SystemClock_Config	120	static
-../Core/Src/board_init.c:109:6:MX_FDCAN1_Init	8	static
-../Core/Src/board_init.c:150:6:MX_GPIO_Init	56	static
-../Core/Src/board_init.c:22:6:Board_Init	8	static
-../Core/Src/board_init.c:201:6:MX_SPI2_Init	8	static

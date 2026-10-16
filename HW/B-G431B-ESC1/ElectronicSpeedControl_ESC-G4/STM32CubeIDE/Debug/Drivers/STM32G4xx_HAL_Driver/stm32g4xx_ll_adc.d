@@ -1,2 +1,0 @@
-Drivers/STM32G4xx_HAL_Driver/stm32g4xx_ll_adc.o: \
- /home/samuel/SFU_Robot_Soccer/sfurs/firmwarev2/HW/B-G431B-ESC1/ElectronicSpeedControl_ESC-G4/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_adc.c

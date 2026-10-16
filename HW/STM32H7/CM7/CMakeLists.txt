@@ -66,6 +66,7 @@ enable_language(C ASM)
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ${CMAKE_CURRENT_SOURCE_DIR}/optical_flow
+    ${CMAKE_CURRENT_SOURCE_DIR}/IMU
 )
 
 # Add sources to executable
@@ -74,6 +75,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/sysmain.c
     Core/Src/board_init.c
     optical_flow/optical_flow.c
+    IMU/sensor_board.c
 )
 
 # Link directories setup

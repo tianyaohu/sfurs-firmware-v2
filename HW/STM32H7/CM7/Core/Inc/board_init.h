@@ -59,6 +59,7 @@ void MX_GPIO_Init(void);
  */
 void MX_SPI2_Init(void);
 
+void MX_SPI6_Init(void);
 
 #ifdef __cplusplus
 }

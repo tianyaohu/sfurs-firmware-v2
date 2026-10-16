@@ -7,8 +7,10 @@ Needs: motor battery OFF, that wheel's ESC ST-LINK USB and the Nucleo USB
 connected, no other tool holding either probe. Artifacts from build_all.py.
 
 1. Full 128 KiB backup of the ESC to esc-backups/update-<W>-<UTC>/.
-2. If the installed app is one this tool installed before, check from RAM
-   that Vbus < 8 V and the motor is idle.
+2. Identify the installed app by its flash bytes (build/esc/*, or the ELFs in
+   esc-backups/known-apps/) and read from its RAM that it is running, Vbus is
+   below 8 V and the motor is not driving; refuse otherwise. Checked again
+   just before the transfer.
 3. Flash the Nucleo updater image for this wheel, verify its payload.
 4. Reset the ESC to open its bootloader window; one CAN transfer, no retry.
 5. Read back: bootloader unchanged, app bytes, metadata, VTOR, 1 kHz hook alive.
@@ -90,26 +92,49 @@ def program_nucleo(elf, log):
         raise RuntimeError(f"Nucleo programming failed, see {log}")
 
 
-def installed_app_elf(flash_sha):
-    """ELF of an app this tool installed before, matched by full-flash hash."""
-    for record in sorted(BACKUPS.glob("*/session.json"), reverse=True):
-        d = json.loads(record.read_text())
-        if d.get("complete") and d.get("after_sha256") == flash_sha and d.get("app_elf"):
-            if pathlib.Path(d["app_elf"]).is_file():
-                return pathlib.Path(d["app_elf"])
-    return None
+def flash_matches(elf, flash):
+    """True if every loaded section of the ELF equals the flash bytes at its load
+    address (segments also cover header padding, so compare sections)."""
+    from elftools.elf.elffile import ELFFile
+    with open(elf, "rb") as f:
+        e = ELFFile(f)
+        loads = [s for s in e.iter_segments() if s["p_type"] == "PT_LOAD" and s["p_filesz"]]
+        checked = 0
+        for sec in e.iter_sections():
+            if not sec["sh_flags"] & 2 or sec["sh_type"] == "SHT_NOBITS" or not sec["sh_size"]:
+                continue  # not SHF_ALLOC, or no file bytes
+            seg = next((s for s in loads if s["p_offset"] <= sec["sh_offset"] and
+                        sec["sh_offset"] + sec["sh_size"] <= s["p_offset"] + s["p_filesz"]), None)
+            if seg is None:
+                continue
+            lma = seg["p_paddr"] + sec["sh_offset"] - seg["p_offset"] - 0x08000000
+            if not 0 <= lma <= len(flash) - sec["sh_size"] or flash[lma:lma + sec["sh_size"]] != sec.data():
+                return False
+            checked += 1
+        return checked > 0
 
 
-def check_idle_unpowered(target, elf):
-    s = symbols(elf, ("BusVoltageSensor_M1", "Mci"))
+def installed_app_elf(flash):
+    candidates = sorted(BUILD.glob("esc/*/motor_*_drive_offset.elf")) + \
+        sorted((BACKUPS / "known-apps").glob("*.elf"))
+    return next((elf for elf in candidates if flash_matches(elf, flash)), None)
+
+
+def check_battery_off(target, elf):
+    """Read the running app's own Vbus measurement (MCSDK) over SWD."""
+    s = symbols(elf, ("BusVoltageSensor_M1", "Mci", "uwTick"))
+    t0 = target.read32(s["uwTick"][0])
+    time.sleep(0.05)
+    if target.read32(s["uwTick"][0]) == t0:
+        raise RuntimeError("ESC app is not running, so its Vbus reading is stale")
     sensor = bytes(target.read_memory_block8(*s["BusVoltageSensor_M1"]))
     vbus = struct.unpack_from("<H", sensor, 6)[0] * struct.unpack_from("<H", sensor, 2)[0] / 65536
     state = bytes(target.read_memory_block8(*s["Mci"]))[1]
     if vbus >= 8:
         raise RuntimeError(f"Vbus {vbus:.1f} V: battery is ON; switch it off")
-    if state not in (0, 11):
+    if state not in (0, 10, 11):  # IDLE, FAULT_NOW (USB undervolt), FAULT_OVER
         raise RuntimeError(f"motor state {state}, not idle")
-    return dict(vbus_v=round(vbus, 2), mc_state=state)
+    return dict(vbus_v=round(vbus, 2), mc_state=state, app_elf=elf.name)
 
 
 def main():
@@ -137,7 +162,7 @@ def main():
     out.mkdir(parents=True)
     session = dict(wheel=w, selector=selector, esc_probe=esc_sn, app_elf=str(app_elf),
                    app_sha256=sha(app), app_crc32=f"{crc:08X}", app_bytes=len(app),
-                   battery_off_confirmed=True, complete=False)
+                   battery_off_confirmed=args.battery_off, complete=False)
     save = lambda: (out / "session.json").write_text(json.dumps(session, indent=2))
     save()
 
@@ -148,11 +173,14 @@ def main():
         (out / "before.bin").write_bytes(before)
         session["before_sha256"] = sha(before)
         save()
-        known = installed_app_elf(sha(before))
+        known = installed_app_elf(before)
         if known:
-            session["before_state"] = check_idle_unpowered(es.target, known)
+            session["before_state"] = check_battery_off(es.target, known)
+        elif args.battery_off:
+            session["before_state"] = "unidentified app; operator confirmed battery OFF"
         else:
-            session["before_state"] = "unknown app; relying on operator battery-off confirmation"
+            raise RuntimeError("installed app is unidentified, so Vbus can't be read; "
+                               f"confirm the battery is OFF and rerun with --battery-off (backup in {out})")
     finally:
         es.close()
     save()
@@ -169,6 +197,8 @@ def main():
             raise RuntimeError("updater payload does not match the built ESC app")
         es.open()
         try:
+            if known:  # battery may have been switched on while the Nucleo was flashed
+                check_battery_off(es.target, known)
             t.write32(addr["can_fwu_dev"], selector)
             t.write32(addr["can_fwu_request"], 1)
             from pyocd.core.target import Target

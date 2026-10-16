@@ -9,9 +9,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 HARNESS = r'''
 #include "fwu_updater.h"
 #include "boot_entry.h"
+#include "can_fwu_boot.h"
 #include "can_tx_status.h"
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 const uint8_t fwu_test_image[64] = {0};
 const uint32_t fwu_test_image_size = 64U, fwu_test_image_crc = 0U;
 static uint32_t clock_now; static unsigned sends; static uint32_t sent_id; static uint8_t sent[8];
@@ -20,6 +22,14 @@ static int send(uint32_t id, const uint8_t d[8]) { sent_id = id; for (int i = 0;
 static int poll(void) { return CAN_TX_OK; }
 static void abort_tx(void) {}
 static void tick(uint32_t now, int button) { clock_now = now; fwu_updater_tick(now, button); }
+static uint8_t esc_flash[CAN_FWU_APP_MAX];
+static int esc_erase(uint32_t page, uint32_t n, void *ctx) {
+  (void)ctx; memset(&esc_flash[page * CAN_FWU_PAGE_SIZE], 0xFF, n * CAN_FWU_PAGE_SIZE); return 0;
+}
+static int esc_program(uint32_t off, uint64_t dw, void *ctx) {
+  (void)ctx; for (int k = 0; k < 8; ++k) esc_flash[off + k] = (uint8_t)(dw >> (8 * k)); return 0;
+}
+static int esc_stopped(void *ctx) { (void)ctx; return 1; }
 int main(int argc, char **argv) {
   assert(argc == 2);
   const struct can_fwu_transport io = { send, poll, abort_tx };
@@ -58,6 +68,28 @@ int main(int argc, char **argv) {
     for (uint32_t t = 0; t < 2000; t += 10) tick(t, 1);
     for (uint32_t t = 2000; t < 9000; t += 10) tick(t, t > 2500);
     assert(sends == 0);
+  } else if (scenario == 7) { /* full transfer longer than the ENTER retry period, ACKs
+                                 after the tick as in main.c: DONE must latch */
+    const struct can_fwu_flash_ops ops = { esc_erase, esc_program, esc_stopped, 0 };
+    struct can_fwu_boot esc;
+    can_fwu_boot_init(&esc, 1, &ops);
+    can_fwu_request = 1;
+    unsigned seen = 0, done_sends = 0;
+    uint32_t ack_id = 0, ack_due = 0; uint8_t ack[8]; int ack_pending = 0;
+    for (uint32_t t = 1000; t < 20000; ++t) {
+      tick(t, 0);
+      assert(sends - seen <= 1);
+      if (sends != seen && esc.state != FWU_B_JUMP_PENDING) { /* after JUMP the app ignores FWU */
+        ack_pending = can_fwu_boot_frame(&esc, sent_id, sent, t, &ack_id, ack);
+        ack_due = t + 25U; /* ESC answers 25 ms later: whole session > 300 ms */
+      }
+      seen = sends;
+      if (ack_pending && t == ack_due) { ack_pending = 0; fwu_updater_rx(ack_id, ack, t); }
+      if (fwu_host.state == FWU_H_DONE && !done_sends) done_sends = sends;
+    }
+    assert(esc.state == FWU_B_JUMP_PENDING && esc.received == 64);
+    assert(fwu_host.state == FWU_H_DONE && can_fwu_result == 3);
+    assert(done_sends && sends == done_sends); /* no ENTER after completion */
   }
   return 0;
 }
@@ -75,6 +107,7 @@ class FwuUpdaterTest(unittest.TestCase):
                         "-I", str(ROOT / "Common/Inc"), "-I", str(ROOT / "CM7/Core/Inc"),
                         str(tmp / "t.c"), str(ROOT / "CM7/Core/Src/fwu_updater.c"),
                         str(ROOT / "CM7/Core/Src/can_fwu_host.c"),
+                        str(ROOT / "Common/Src/can_fwu_boot.c"),
                         str(ROOT / "Common/Src/can_fwu_protocol.c"), "-o", str(cls.exe)], check=True)
 
     @classmethod
@@ -92,6 +125,7 @@ class FwuUpdaterTest(unittest.TestCase):
     def test_fresh_clock_after_begin(self): self.check(4)
     def test_button_hold_arms(self): self.check(5)
     def test_button_released_early_never_arms(self): self.check(6)
+    def test_completed_transfer_does_not_restart(self): self.check(7)
 
 
 if __name__ == "__main__":

@@ -101,9 +101,10 @@ void fwu_updater_tick(uint32_t now, int button_held)
 {
   boot_request_tick(now);
   request_tick(now, button_held);
-  /* ENTER retries are unbounded: the bootloader answers ENTER from any state. */
-  if (armed && (fresh || fwu_host.state == FWU_H_IDLE || fwu_host.state == FWU_H_DONE ||
-                enter_unanswered()) &&
+  /* ENTER retries are unbounded: the bootloader answers ENTER from any state.
+   * Only a new request or an unanswered ENTER starts a session; a DONE session
+   * must not restart (its ACK arrives in fwu_updater_rx, after this tick). */
+  if (armed && (fresh || enter_unanswered()) &&
       (uint32_t)(now - last_try) >= ENTER_RETRY_MS) {
     last_try = now;
     fresh = 0;

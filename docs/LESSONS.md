@@ -25,3 +25,5 @@ what someone does next; this is not a log.
   wheels in host tests for anything addressed per wheel.
 - **Attach, don't connect.** A normal SWD connect resets a running ESC and
   stops the motor; use attach/HOTPLUG for monitoring.
+- **Compare flashed bytes, not ELF files.** Two builds of the same tree give
+  different ELF hashes; `build_all.py` prints hashes of the loadable image.

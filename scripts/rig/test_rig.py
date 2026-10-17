@@ -127,6 +127,16 @@ class RigTests(unittest.TestCase):
         self.assertLess(abs(moved - np.hypot(300, 200)), 3)
         self.assertLess(abs(turned + 45), 1)
 
+    def test_drive_summary_straightness(self):
+        from rig_measure import path_summary
+        ys = np.linspace(0, 500, 51)
+        path = [dict(x_mm=float(12 * np.sin(np.pi * y / 500)), y_mm=float(y), reliable=y < 400) for y in ys]
+        s = path_summary(path, (500.0, 3.0, np.array([0.0, 500.0, 1.0])), target_mm=490, tolerance_mm=20)
+        self.assertAlmostEqual(s["max_sideways_mm"], 12, places=6)
+        self.assertAlmostEqual(s["error_mm"], 10)
+        self.assertTrue(s["pass"])
+        self.assertEqual(s["frames_outside_reliable"], 11)
+
     def test_distorted_video_end_to_end(self):
         calibration, floor, render, _ = camera_scene()
         with tempfile.TemporaryDirectory(prefix="rig-test-") as tmp:

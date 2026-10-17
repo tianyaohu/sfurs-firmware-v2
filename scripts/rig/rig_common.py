@@ -38,7 +38,9 @@ def open_source(camera=0, video=None, exposure=50):
                             (cv2.CAP_PROP_FRAME_WIDTH, 1280),
                             (cv2.CAP_PROP_FRAME_HEIGHT, 720), (cv2.CAP_PROP_FPS, 30),
                             (cv2.CAP_PROP_AUTO_EXPOSURE, 1),
-                            (cv2.CAP_PROP_EXPOSURE, exposure), (cv2.CAP_PROP_BUFFERSIZE, 1)):
+                            (cv2.CAP_PROP_EXPOSURE, exposure),
+                            # 1 buffer halves this UVC webcam to 15 fps (measured); 2 keeps 30 fps, <=1 frame stale.
+                            (cv2.CAP_PROP_BUFFERSIZE, 2)):
             if not cap.set(prop, value):
                 print(f"camera: property {prop} refused {value}")
         print("camera: requested MJPG 1280x720@30, manual exposure", exposure,

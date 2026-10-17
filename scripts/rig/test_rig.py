@@ -137,6 +137,14 @@ class RigTests(unittest.TestCase):
         self.assertTrue(s["pass"])
         self.assertEqual(s["frames_outside_reliable"], 11)
 
+    def test_trial_report_directions(self):
+        from rig_measure import direction_label, trial_report
+        self.assertEqual([direction_label(np.array(v)) for v in ([5, 1, 0], [-5, 1, 0], [1, 5, 0], [1, -5, 0])],
+                         ["+x", "-x", "+y", "-y"])
+        lines = trial_report([(212.0, np.array([212., 0, 1])), (208.0, np.array([0., -208, 0]))], 210)
+        self.assertIn("mean error +0.0 mm", lines[3])
+        self.assertIn("+x: 1 trial(s), mean error +2.0 mm", "\n".join(lines))
+
     def test_distorted_video_end_to_end(self):
         calibration, floor, render, _ = camera_scene()
         with tempfile.TemporaryDirectory(prefix="rig-test-") as tmp:

@@ -8,7 +8,8 @@
 Uses only the lens calibration and the printed tag size. Press r to set the reference
 pose; the displacement then prints once per second. q quits. With --log, every frame after
 r is recorded and a drive summary is printed on quit: distance, sideways drift from a straight
-line, heading change, and pass/fail against --target-mm.
+line, heading change, and pass/fail against --target-mm. With --known-mm, press m after each
+move to record an accuracy trial; quitting prints errors per direction.
 
   uv run scripts/rig/rig_measure.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml
   uv run scripts/rig/rig_measure.py --calibration ... --log /tmp/drive.jsonl --target-mm 500
@@ -62,6 +63,28 @@ def displacement(ref, cur):
     return float(np.hypot(d[0], d[1])), float(np.degrees(np.arctan2(rel[1, 0], rel[0, 0]))), d
 
 
+def direction_label(d):
+    """Nearest axis of the reference tag frame the move went along: +x, -x, +y or -y."""
+    if abs(d[0]) >= abs(d[1]):
+        return "+x" if d[0] > 0 else "-x"
+    return "+y" if d[1] > 0 else "-y"
+
+
+def trial_report(trials, known_mm):
+    """Lines summarising accuracy trials (distance_mm, d) against a known distance."""
+    lines = [f"{'#':>2} {'dir':>3} {'measured':>9} {'error':>7} {'out-of-plane':>12}"]
+    for i, (dist_mm, d) in enumerate(trials, 1):
+        lines.append(f"{i:>2} {direction_label(d):>3} {dist_mm:9.1f} {dist_mm - known_mm:+7.1f} {d[2]:+12.1f}")
+    errors = np.array([t[0] - known_mm for t in trials])
+    lines.append(f"known {known_mm:g} mm, {len(trials)} trials: mean error {errors.mean():+.1f} mm "
+                 f"({100 * errors.mean() / known_mm:+.1f}%), worst {errors[np.argmax(abs(errors))]:+.1f} mm")
+    for label in ("+x", "-x", "+y", "-y"):
+        e = [t[0] - known_mm for t in trials if direction_label(t[1]) == label]
+        if e:
+            lines.append(f"  {label}: {len(e)} trial(s), mean error {np.mean(e):+.1f} mm")
+    return lines
+
+
 def path_summary(path, end, target_mm=None, tolerance_mm=None):
     """Straight-drive metrics from per-frame (x, y) in the reference plane, mm, and the
     averaged final displacement `end` = (distance, yaw_deg, d)."""
@@ -90,13 +113,14 @@ def main():
     p.add_argument("--log", type=Path, help="record every frame after r; print a drive summary on quit")
     p.add_argument("--target-mm", type=float, help="commanded distance, for the summary")
     p.add_argument("--tolerance-mm", type=float, default=20)
+    p.add_argument("--known-mm", type=float, help="true distance for accuracy trials (press m after each move)")
     p.add_argument("--reliable-px", type=float, default=250,
                    help="calibration is trusted within this radius of the image center")
     args = p.parse_args()
     _, K, dist = camera_model(args.calibration)
     detector = cv2.aruco.ArucoDetector(april_dictionary())
     cap = open_source(args.camera, None, args.exposure)
-    recent, ref, path = deque(maxlen=args.average), None, []
+    recent, ref, path, trials = deque(maxlen=args.average), None, [], []
     last_print = 0.0
 
     def averaged():
@@ -144,6 +168,11 @@ def main():
             key = cv2.waitKey(1) & 255
             if key == ord("q"):
                 break
+            if key == ord("m") and args.known_mm and ref is not None and len(recent) == recent.maxlen:
+                dist_mm, _, d = displacement(ref, averaged())
+                trials.append((dist_mm, d))
+                print(f"trial {len(trials)}: {direction_label(d)} measured {dist_mm:.1f} mm, error "
+                      f"{dist_mm - args.known_mm:+.1f} mm, out-of-plane {d[2]:+.1f} mm", flush=True)
             if key == ord("r") and len(recent) == recent.maxlen:
                 ref = averaged()
                 path.clear()
@@ -151,6 +180,8 @@ def main():
     finally:
         cap.release()
         cv2.destroyAllWindows()
+    if trials:
+        print("\n".join(trial_report(trials, args.known_mm)))
     if args.log and ref is not None:
         if len(recent) < recent.maxlen:
             print("drive summary skipped: tag was not visible and still at the end")

@@ -26,7 +26,7 @@ CAN FD frames without BRS. ID = command | select bits (NE 1, SE 2, SW 4, NW 8).
 | `0x100` → `0x280` STATUS | poll/reply | i16 RPM, i16 Iq, i16 Iq ref (544 counts/A), u8 MCSDK state, u8 flags |
 | `0x300` → `0x380` DIAG | poll/reply | u16 Vbus cV, u16 occurred faults, i16 Hall shift °, u8 align result, u8 I²t % |
 | `0x480` HALL_ALIGN | → ESC | `"HALN"` |
-| `0x500` CONFIG_SET | → ESC | u16 key (1 Kp, 2 Ki, 3 Hall shift °, 4 Iq max mA), i16 value |
+| `0x500` CONFIG_SET | → ESC | u16 key (1 Kp, 2 Ki, 3 Hall shift °, 4 Iq max mA, 5/6 current Kp/Ki, 7/8 friction feed-forward static/kinetic mA), i16 value |
 | `0x780` STOP | → ESC | any |
 | `0x600–0x6FF` | | firmware update ([CAN_FWU.md](CAN_FWU.md)) |
 
@@ -96,6 +96,18 @@ Hall speed estimate itself scatters by about ±25 RPM whatever the gains. On
 the ground the robot's inertia is part of the plant, so retune there. Tune
 live without reflashing: `scripts/esc_tool.py set all kp 2048` (IDLE only,
 RAM only), then copy good values into `drive_parameters.h`.
+
+Friction feed-forward (`drive_speed_iq_ref` in `drive_app.c`, called from
+`FOC_CalcCurrRef`): on the ground each wheel needs 2.2–3.2 A before it turns
+(free air 0.1 A), which a PI loop only reaches by winding up its integrator —
+slow starts, then overshoot to 2–3× the command. In speed mode the Iq
+reference is the PI output plus sign(speed ref) × ff, with ff = static value at
+standstill fading linearly to the kinetic value at 30 RPM, clamped to the
+current limit (including I²t derate). Both default to 0 (`FRICTION_FF_*` in
+`drive_parameters.h`); tune with `esc_tool.py pulse --ff-static MA
+--ff-kinetic MA`, which drives the robot out and back and reports per-wheel
+breakaway time. Ground ladder without feed-forward: Kp 4096 / Ki 1100 is the
+best stable pair; Ki 2200 at Kp 4096 limit-cycles at the 6 A limit.
 
 Motor constants in `pmsm_motor_parameters.h` are the Workbench placeholder
 (Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM). Measured by capture on all four motors:

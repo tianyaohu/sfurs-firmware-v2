@@ -5,7 +5,8 @@
   esc_tool.py align FR|BR|BL|FL|all     measure + apply Hall phase shift (RAM)
   esc_tool.py set WHEEL KEY VALUE       KEY: kp, ki (speed PI), current_kp,
                                         current_ki (Id+Iq PI), shift (deg),
-                                        iqmax_ma (RAM)
+                                        iqmax_ma, ff_static_ma, ff_kinetic_ma
+                                        (friction feed-forward) (RAM)
   esc_tool.py capture WHEEL [--step-ma 3000] [--out f.json]
                                         current-loop step test: R, L, step
                                         response, PI gains for 0.5/0.8/1 kHz
@@ -13,7 +14,7 @@
                                         one wheel at a speed setpoint, telemetry
                                         logged; speed-loop check (motion!)
   esc_tool.py pulse [--axis vy] [--speed 0.2] [--seconds 1.5] [--reps 3]
-                    [--kp N --ki N] [--log f.jsonl]
+                    [--kp N --ki N] [--ff-static MA --ff-kinetic MA] [--log f.jsonl]
                                         scripted ground drive out and back,
                                         per-wheel breakaway time (motion!)
   esc_tool.py stop                      broadcast STOP; also clears a fault whose
@@ -28,7 +29,8 @@ are set in RAM first and the firmware defaults (drive_parameters.h) restored
 afterwards; STOP on exit, and the ESC stops itself 0.25 s after the stream.
 pulse drives the whole robot through the Nucleo (same path as keyboard_drive):
 each rep goes out along --axis for --seconds and back, so it ends near where
-it started; gains as for spin. Kill it (Ctrl-C) or switch the battery off to
+it started; gains and friction feed-forward are set in RAM on all four wheels
+and the drive_parameters.h defaults restored afterwards. Kill it (Ctrl-C) or switch the battery off to
 stop: the Nucleo brakes 0.3 s after the heartbeat stops.
 """
 import argparse
@@ -117,10 +119,19 @@ def capture(link, name, selector, args):
     return a
 
 
-def speed_defaults():
+def firmware_defaults():
+    """RAM-tunable values the ESC boots with, from drive_parameters.h."""
     text = (pathlib.Path(__file__).resolve().parents[1] /
             "HW/B-G431B-ESC1/motor_config/Inc/drive_parameters.h").read_text()
-    return tuple(int(re.search(rf"#define PID_SPEED_{k}_DEFAULT\s+(\d+)", text)[1]) for k in ("KP", "KI"))
+    get = lambda name: int(re.search(rf"#define {name}\s+(\d+)", text)[1])
+    return dict(kp=get("PID_SPEED_KP_DEFAULT"), ki=get("PID_SPEED_KI_DEFAULT"),
+                ff_static_ma=get("FRICTION_FF_STATIC_MA_DEFAULT"),
+                ff_kinetic_ma=get("FRICTION_FF_KINETIC_MA_DEFAULT"))
+
+
+def speed_defaults():
+    d = firmware_defaults()
+    return d["kp"], d["ki"]
 
 
 def spin(link, name, index, selector, args):
@@ -219,10 +230,10 @@ def breakaway_summary(starts):
 def pulse(link, args):
     if not 0 < args.speed <= 0.3 or not 0 < args.seconds <= 3 or not 1 <= args.reps <= 10:
         raise SystemExit("pulse: 0 < speed <= 0.3 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
-    kp0, ki0 = speed_defaults()
-    gains = args.kp is not None or args.ki is not None
-    kp = kp0 if args.kp is None else args.kp
-    ki = ki0 if args.ki is None else args.ki
+    defaults = firmware_defaults()
+    asked = dict(kp=args.kp, ki=args.ki, ff_static_ma=args.ff_static, ff_kinetic_ma=args.ff_kinetic)
+    changed = {k: v for k, v in asked.items() if v is not None and v != defaults[k]}
+    used = {**defaults, **changed}
     v = round(args.speed * 1000)
     plan = []  # (end time, twist)
     t = 0.5
@@ -233,10 +244,9 @@ def pulse(link, args):
             t += args.seconds + 1.0
     log, last_counts = [], [None] * 4
     try:
-        if gains:
-            for _name, _i, sel in wheels("all"):
-                link.send_raw(*ik_link.config_frame(sel, "kp", kp))
-                link.send_raw(*ik_link.config_frame(sel, "ki", ki))
+        for _name, _i, sel in wheels("all"):
+            for key, value in changed.items():
+                link.send_raw(*ik_link.config_frame(sel, key, value))
         link.write("accel_rpmps", 0)
         t0, next_cmd = time.monotonic(), 0.0
         while (now := time.monotonic() - t0) < t:
@@ -259,17 +269,18 @@ def pulse(link, args):
         deadline = time.monotonic() + 3.0
         while link.read("state") != 0 and time.monotonic() < deadline:
             time.sleep(0.05)
-        if gains:
+        if changed:
             time.sleep(0.3)  # CONFIG_SET is accepted only once the wheels are IDLE
             for _name, _i, sel in wheels("all"):
-                link.send_raw(*ik_link.config_frame(sel, "kp", kp0))
-                link.send_raw(*ik_link.config_frame(sel, "ki", ki0))
+                for key in changed:
+                    link.send_raw(*ik_link.config_frame(sel, key, defaults[key]))
         if args.log:
             args.log.write_text("".join(json.dumps(e) + "\n" for e in log))
     s = breakaway_summary(breakaways(log))
     faults = sorted({f for e in log for fs in e["faults"] if fs for f in fs})
     vbus = [x for e in log for x in e["vbus_v"] if x]
-    print(f"pulse {args.axis} {args.speed} m/s x{args.reps} (kp {kp} ki {ki}): "
+    print(f"pulse {args.axis} {args.speed} m/s x{args.reps} (kp {used['kp']} ki {used['ki']} "
+          f"ff {used['ff_static_ma']}/{used['ff_kinetic_ma']} mA): "
           f"faults {','.join(faults) or '-'}, Vbus min {min(vbus) if vbus else 0:.2f} V")
     ms = lambda x: f"{x * 1000:.0f}" if x is not None else "-"
     for name, _e, _s in ik_link.WHEELS:
@@ -314,6 +325,8 @@ def main(argv=None):
     p.add_argument("--reps", type=int, default=3)
     p.add_argument("--kp", type=int)
     p.add_argument("--ki", type=int)
+    p.add_argument("--ff-static", type=int, help="friction feed-forward at standstill, mA")
+    p.add_argument("--ff-kinetic", type=int, help="friction feed-forward once moving, mA")
     p.add_argument("--log", type=pathlib.Path)
     args = parser.parse_args(argv)
     session, link = ik_link.Link.open(args.sn, args.elf)

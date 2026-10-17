@@ -37,6 +37,7 @@
 
 /* USER CODE BEGIN Includes */
 #include "drive_app.h"
+#include "mc_api.h"
 
 /* USER CODE END Includes */
 
@@ -450,6 +451,15 @@ __weak void FOC_CalcCurrRef(uint8_t bMotor)
   /* Exit critical section */
   __enable_irq();
   /* USER CODE BEGIN FOC_CalcCurrRef 1 */
+  if (INTERNAL == FOCVars[bMotor].bDriveInput)
+  {
+    const int16_t q = drive_speed_iq_ref(FOCVars[bMotor].hTeref,
+                                         (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()),
+                                         (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1()));
+    __disable_irq();
+    FOCVars[bMotor].Iqdref.q = q;
+    __enable_irq();
+  }
 
   /* USER CODE END FOC_CalcCurrRef 1 */
 }

@@ -90,6 +90,13 @@
 #define PID_SPEED_KI_DEFAULT                553
 #define PID_SPEED_KD_DEFAULT                0
 
+/* Friction feed-forward (drive_app.h), mA. Off until tuned on the ground:
+ * breakaway there takes 2.2-3.2 A per wheel, which the PI alone only reaches
+ * by integrator windup (slow start, then overshoot). CAN CONFIG_SET keys
+ * FF_STATIC_MA / FF_KINETIC_MA. */
+#define FRICTION_FF_STATIC_MA_DEFAULT       0
+#define FRICTION_FF_KINETIC_MA_DEFAULT      0
+
 /* Speed control loop */
 #define SPEED_LOOP_FREQUENCY_HZ             (uint16_t)1000 /*!<Execution rate of speed regulation loop (Hz) */
 

@@ -28,9 +28,10 @@ few characters; check the full serial before any write.
 
 ## Tools on the lab PC
 
-- ARM GCC 10.3: `/tmp/opencode/cm7-toolchain/root/usr/bin` (temporary
-  extraction; `scripts/build_all.py` adds it to PATH if present). Otherwise
-  install `gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build`.
+- ARM GCC 10.3 (Debian packages extracted without root) in
+  `~/.local/opt/arm-gcc`, with wrappers in `~/.local/bin` that add the newlib
+  headers; ninja from `pip install --user ninja`. On a fresh PC just install
+  `gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build`.
 - `~/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
 - pyOCD (`~/.local/bin`) and pyelftools for the Python tools.
 - ESC flash backups: `/home/fh/sfurs_firmware/esc-backups/` (outside git).

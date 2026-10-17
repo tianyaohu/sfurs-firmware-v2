@@ -12,7 +12,13 @@
  * voltage and over-temperature:
  *  - command watchdog: no SPEED_WRITE for ESC_COMMAND_TIMEOUT_MS -> stop;
  *  - I2T: sustained current above nominal derates the current limit;
- *  - a fault while driving latches off until STOP or a command gap. */
+ *  - a fault while driving latches off until STOP or a command gap.
+ *
+ * Friction feed-forward: in speed mode the Iq reference is the speed PI
+ * output plus sign(speed ref) * ff, where ff is ff_static at standstill and
+ * fades linearly to ff_kinetic at FRICTION_FADE_RPM, clamped to the current
+ * limit. It supplies the breakaway current up front so the integrator does
+ * not have to wind up to it. */
 
 struct drive_app_state {
   uint32_t now_ms, last_command_ms;
@@ -28,6 +34,7 @@ struct drive_app_state {
   uint32_t align_edges_fwd, align_edges_back, align_wrong_dir;
   int32_t align_error_mean; /* s16 degrees added to the previous shift */
   uint32_t capture_phase, capture_status; /* ESC_CAPTURE_* */
+  int32_t ff_static_counts, ff_kinetic_counts;
   uint32_t speed_commands, status_replies, rejected;
 };
 extern volatile struct drive_app_state drive_app;
@@ -43,6 +50,11 @@ extern volatile int16_t drive_align_angle;
 void drive_capture_isr_ref(int16_t *id_ref);
 void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
                              int16_t id_ref, int16_t el_angle);
+
+/* Speed-mode Iq reference = PI output + friction feed-forward. Called from
+ * FOC_CalcCurrRef (medium-frequency task) with the ramped speed reference and
+ * the measured speed. */
+int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm);
 
 void drive_app_init(void);
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length);

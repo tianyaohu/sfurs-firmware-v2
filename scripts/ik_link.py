@@ -33,7 +33,8 @@ CAPTURE_STATUS = {0: "none", 1: "running", 2: "done", 3: "aborted", 4: "rejected
 CAPTURE_HEADER = ("frames", "source", "status", "vbus_centivolts", "samples")
 CAPTURE_CHANNELS = ("id", "iq", "vd", "vq", "id_ref", "angle")
 HALL_ALIGN_MAGIC = 0x4E4C4148
-CONFIG_KEYS = {"kp": 1, "ki": 2, "shift": 3, "iqmax_ma": 4, "current_kp": 5, "current_ki": 6}
+CONFIG_KEYS = {"kp": 1, "ki": 2, "shift": 3, "iqmax_ma": 4, "current_kp": 5, "current_ki": 6,
+               "ff_static_ma": 7, "ff_kinetic_ma": 8}
 
 SCALARS = ("abi", "vx_mmps", "vy_mmps", "omega_mradps", "enable", "heartbeat",
            "accel_rpmps", "raw_id", "raw_data", "raw_seq", "state", "raw_done",

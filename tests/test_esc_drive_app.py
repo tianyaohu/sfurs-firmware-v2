@@ -68,6 +68,8 @@ extern uint32_t fake_validity[8];
 #define IQMAX_A 6
 #define IQMAX (IQMAX_A * CURRENT_CONV_FACTOR)
 #define MAX_APPLICATION_SPEED_RPM 2976
+#define FRICTION_FF_STATIC_MA_DEFAULT 0
+#define FRICTION_FF_KINETIC_MA_DEFAULT 0
 ''',
 }
 
@@ -305,6 +307,33 @@ int main(int argc, char **argv) {
     assert(drive_app.capture_status == ESC_CAPTURE_RUNNING && iqdref.d > 0);
     rx(MOTOR_STOP | 0xFU, 0); tick_isr(3);
     assert(drive_app.capture_status == ESC_CAPTURE_ABORTED && state == IDLE && !drive_align_force);
+  } else if (scenario == 13) { /* friction feed-forward */
+    const uint32_t key_s = ESC_CFG_FF_STATIC_MA, key_k = ESC_CFG_FF_KINETIC_MA;
+    assert(drive_speed_iq_ref(100, 50, 0) == 100); /* idle: PI output untouched */
+    rx(CONFIG_SET | 1U, (2500U << 16) | key_s); tick(1);
+    rx(CONFIG_SET | 1U, (500U << 16) | key_k); tick(1);
+    assert(drive_app.ff_static_counts == 1360 && drive_app.ff_kinetic_counts == 272);
+    assert(drive_speed_iq_ref(100, 50, 0) == 100); /* still not driving */
+    drive_app.aligned = 1; speed_cmd(50, 100); tick(3); assert(state == RUN && drive_app.active);
+    assert(drive_speed_iq_ref(100, 50, 0) == 100 + 1360);     /* standstill: full static */
+    assert(drive_speed_iq_ref(100, 50, -20) == 100 + 1360);   /* pushed backwards: full static */
+    assert(drive_speed_iq_ref(100, 50, 15) == 100 + 816);     /* halfway through the fade */
+    assert(drive_speed_iq_ref(100, 50, 30) == 100 + 272);     /* moving: kinetic only */
+    assert(drive_speed_iq_ref(100, 50, 400) == 100 + 272);
+    assert(drive_speed_iq_ref(-100, -50, 0) == -100 - 1360);  /* reverse mirrors */
+    assert(drive_speed_iq_ref(-100, -50, -15) == -100 - 816);
+    assert(drive_speed_iq_ref(7, 1, 0) == 7 && drive_speed_iq_ref(7, -1, 0) == 7); /* stop command */
+    assert(drive_speed_iq_ref(3000, 50, 0) == 6 * 544);       /* clamped to the limit */
+    assert(drive_speed_iq_ref(-3000, -50, 0) == -6 * 544);
+    rx(CONFIG_SET | 1U, (3000U << 16) | key_s); tick(1);
+    assert(drive_app.ff_static_counts == 1360 && drive_app.rejected == 1); /* only when idle */
+    rx(MOTOR_STOP | 1U, 0); tick(3); assert(state == IDLE);
+    assert(drive_speed_iq_ref(100, 50, 0) == 100); /* stopped: off */
+    rx(CONFIG_SET | 1U, (7000U << 16) | key_s); tick(1);
+    rx(CONFIG_SET | 1U, ((uint32_t)(uint16_t)-1 << 16) | key_k); tick(1);
+    assert(drive_app.ff_static_counts == 1360 && drive_app.ff_kinetic_counts == 272 && drive_app.rejected == 3);
+    drive_app.iq_limit_counts = 3 * 544; /* I2T derate also caps the feed-forward */
+    drive_app.active = 1; assert(drive_speed_iq_ref(1000, 50, 0) == 3 * 544);
   } else if (scenario == 9) { /* undervolt latched on USB power: STOP clears it once gone */
     state = FAULT_OVER; cur_faults = 4; occ_faults = 4; tick(1);
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2);
@@ -382,6 +411,9 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_capture_stop_and_busy(self):
         self.run_scenario(12)
+
+    def test_friction_feedforward(self):
+        self.run_scenario(13)
 
 
 if __name__ == "__main__":

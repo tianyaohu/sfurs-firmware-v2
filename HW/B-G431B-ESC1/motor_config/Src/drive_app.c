@@ -12,6 +12,11 @@
 #define I2T_DERATED_A 3.0f
 #define AMPS_PER_COUNT (1.0f / (float)CURRENT_CONV_FACTOR)
 
+/* Friction feed-forward: the static part fades out over the speed where the
+ * Hall estimate becomes trustworthy (it scatters ~+-25 RPM below 60 RPM). */
+#define FRICTION_FADE_RPM 30
+#define FRICTION_MIN_REF_RPM 2 /* below this the command means "stop" */
+
 /* Hall alignment: hold the rotor with d-axis current at a forced angle, sweep
  * the angle slowly forward then back, and compare it with the angle the Hall
  * decoder assigns at each edge. Averaging both directions cancels rotor lag. */
@@ -78,6 +83,8 @@ void drive_app_init(void)
 {
   drive_app.iq_max_counts = (int32_t)IQMAX;
   set_iq_limit(drive_app.iq_max_counts);
+  drive_app.ff_static_counts = FRICTION_FF_STATIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
+  drive_app.ff_kinetic_counts = FRICTION_FF_KINETIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by build_cli.py --hall-shift */
 #endif
@@ -117,6 +124,24 @@ void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
   s[0] = id; s[1] = iq; s[2] = vd; s[3] = vq; s[4] = id_ref; s[5] = el_angle;
   capture_index = i + 1U;
   if (i + 1U >= ESC_CAPTURE_SAMPLES) capture_armed = 0U;
+}
+
+int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm)
+{
+  int32_t ff = 0;
+  if (drive_app.active && (ref_rpm >= FRICTION_MIN_REF_RPM || ref_rpm <= -FRICTION_MIN_REF_RPM)) {
+    const int32_t dir = ref_rpm > 0 ? 1 : -1;
+    int32_t along = dir * rpm; /* speed in the commanded direction; <= 0 = not moving yet */
+    if (along < 0) along = 0;
+    if (along > FRICTION_FADE_RPM) along = FRICTION_FADE_RPM;
+    const int32_t st = drive_app.ff_static_counts, kin = drive_app.ff_kinetic_counts;
+    ff = dir * (kin + (st - kin) * (FRICTION_FADE_RPM - along) / FRICTION_FADE_RPM);
+  }
+  int32_t out = (int32_t)pi_out + ff;
+  const int32_t limit = drive_app.iq_limit_counts;
+  if (out > limit) out = limit;
+  if (out < -limit) out = -limit;
+  return (int16_t)out;
 }
 
 static uint32_t vbus_centivolts(void)
@@ -344,6 +369,14 @@ static void apply_config(uint32_t word)
       PID_SetKI(&PIDIqHandle_M1, value);
       PID_SetKI(&PIDIdHandle_M1, value);
       break;
+    case ESC_CFG_FF_STATIC_MA:
+    case ESC_CFG_FF_KINETIC_MA: {
+      if (value < 0 || value > (int16_t)(IQMAX_A * 1000)) { ++drive_app.rejected; return; }
+      const int32_t counts = (int32_t)value * (int32_t)CURRENT_CONV_FACTOR / 1000;
+      if ((word & 0xFFFFU) == ESC_CFG_FF_STATIC_MA) drive_app.ff_static_counts = counts;
+      else drive_app.ff_kinetic_counts = counts;
+      break;
+    }
     default: ++drive_app.rejected; break;
   }
 }

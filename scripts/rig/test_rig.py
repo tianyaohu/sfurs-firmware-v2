@@ -137,6 +137,45 @@ class RigTests(unittest.TestCase):
         self.assertTrue(s["pass"])
         self.assertEqual(s["frames_outside_reliable"], 11)
 
+    def test_floor_plane_ignores_tilted_tag(self):
+        from rig_measure import average_pose, displacement, floor_basis, plane_pose, tag_pose
+        K, dist = np.array([[880., 0, 645], [0, 879, 372], [0, 0, 1]]), np.zeros(5)
+        rng = np.random.default_rng(5)
+        # Floor 1100 mm below a camera pitched 15 deg; floor axes in camera frame.
+        pitch = cv2.Rodrigues(np.array([np.radians(15), 0, 0]))[0]
+        down = pitch @ cv2.Rodrigues(np.array([np.pi, 0, 0]))[0]
+
+        def observe(x, y, tag_mm, tilt_deg=0.0, yaw_deg=0.0):
+            h = tag_mm / 2
+            obj = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], float)
+            R = down @ cv2.Rodrigues(np.array([np.radians(tilt_deg), 0, np.radians(yaw_deg)]))[0]
+            t = pitch @ np.array([0, 0, 1100.]) + down @ np.array([x, y, 0.])
+            px = cv2.projectPoints(obj, cv2.Rodrigues(R)[0], t, K, dist)[0].reshape(4, 2)
+            return average_pose([tag_pose(px + rng.normal(0, 0.3, (4, 2)), K, dist, tag_mm) for _ in range(15)])
+
+        # Floor-tag centers with the +-12 mm depth scatter measured live (2026-10-17).
+        centers = [observe(x, y, 120)[0] for x, y in ((-400, -250), (400, -250), (400, 250), (-400, 250))]
+        centers = [c * (1 + e / np.linalg.norm(c)) for c, e in zip(centers, (10.5, -10.3, 12.0, -12.2))]
+        basis, origin = floor_basis(centers), np.mean(centers, axis=0)
+        ref, cur = observe(0, -150, 100, tilt_deg=6), observe(0, 150, 100, yaw_deg=90)
+        _, _, d_tag = displacement(ref, cur)
+        self.assertGreater(abs(d_tag[2]), 20)  # the tag's own tilted plane shows the real failure
+
+        def pixels(x, y, yaw_deg=0.0, tilt_deg=0.0):
+            h = 50
+            obj = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], float)
+            R = down @ cv2.Rodrigues(np.array([np.radians(tilt_deg), 0, np.radians(yaw_deg)]))[0]
+            t = pitch @ np.array([0, 0, 1100.]) + down @ np.array([x, y, 0.])
+            return cv2.projectPoints(obj, cv2.Rodrigues(R)[0], t, K, dist)[0].reshape(4, 2)
+
+        def plane(px):
+            return average_pose([plane_pose(px + rng.normal(0, 0.3, (4, 2)), K, dist, basis, origin)
+                                 for _ in range(15)])
+
+        moved, turned, d = displacement(plane(pixels(0, -150, tilt_deg=6)), plane(pixels(0, 150, yaw_deg=90)), basis)
+        self.assertLess(abs(moved - 300), 3)
+        self.assertLess(abs(abs(turned) - 90), 1)
+
     def test_trial_report_directions(self):
         from rig_measure import direction_label, trial_report
         self.assertEqual([direction_label(np.array(v)) for v in ([5, 1, 0], [-5, 1, 0], [1, 5, 0], [1, -5, 0])],

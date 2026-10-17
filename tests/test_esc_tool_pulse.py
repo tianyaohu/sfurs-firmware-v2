@@ -62,5 +62,24 @@ class Breakaway(unittest.TestCase):
         self.assertAlmostEqual(starts[1][WHEELS[0]], 0.2, places=2)
 
 
+class Guard(unittest.TestCase):
+    def entry(self, t, rpm, iq):
+        return dict(t=t, rpm=rpm, iq_ref_a=iq)
+
+    def test_runaway(self):
+        g = esc_tool.PulseGuard()
+        self.assertIsNone(g.check(self.entry(0.0, [60, -60, 60, None], [1, 1, 1, None])))
+        self.assertIn(WHEELS[1], g.check(self.entry(0.1, [60, -390, 60, 0], [1, 6, 1, 0])))
+
+    def test_stall_needs_time(self):
+        g = esc_tool.PulseGuard()
+        for k in range(6):
+            self.assertIsNone(g.check(self.entry(k * 0.1, [0, 0, 0, 0], [0, 5.0, 0, 0])))
+        self.assertIsNone(g.check(self.entry(0.55, [0, 10, 0, 0], [0, 5.0, 0, 0])))  # turned: reset
+        for k in range(6):
+            self.assertIsNone(g.check(self.entry(0.6 + k * 0.1, [0, 0, 0, 0], [0, -5.0, 0, 0])))
+        self.assertIn("stalled", g.check(self.entry(1.2, [0, 0, 0, 0], [0, -5.0, 0, 0])))
+
+
 if __name__ == "__main__":
     unittest.main()

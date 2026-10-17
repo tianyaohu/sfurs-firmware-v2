@@ -227,6 +227,34 @@ def breakaway_summary(starts):
     return out
 
 
+RUNAWAY_RPM = 200     # pulse targets are ~50 RPM; beyond this a wheel is unloaded or limit-cycling
+STALL_AMPS, STALL_S = 4.5, 0.6
+
+
+class PulseGuard:
+    """Abort reason for a pulse log entry, or None: a wheel far above any
+    target (lost contact / limit cycle), or one held at high current without
+    turning (blocked)."""
+
+    def __init__(self):
+        self.stall_since = [None] * 4
+
+    def check(self, e):
+        for w, (name, _esc, _sel) in enumerate(ik_link.WHEELS):
+            rpm, iq = e["rpm"][w], e["iq_ref_a"][w]
+            if rpm is None or iq is None:
+                continue
+            if abs(rpm) > RUNAWAY_RPM:
+                return f"{name} at {rpm} rpm"
+            if rpm == 0 and abs(iq) >= STALL_AMPS:
+                self.stall_since[w] = self.stall_since[w] if self.stall_since[w] is not None else e["t"]
+                if e["t"] - self.stall_since[w] >= STALL_S:
+                    return f"{name} stalled at {iq:.1f} A"
+            else:
+                self.stall_since[w] = None
+        return None
+
+
 def pulse(link, args):
     if not 0 < args.speed <= 0.3 or not 0 < args.seconds <= 3 or not 1 <= args.reps <= 10:
         raise SystemExit("pulse: 0 < speed <= 0.3 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
@@ -242,7 +270,13 @@ def pulse(link, args):
             twist = (sign * v, 0, 0) if args.axis == "vx" else (0, sign * v, 0)
             plan += [(t + args.seconds, twist), (t + args.seconds + 1.0, (0, 0, 0))]
             t += args.seconds + 1.0
-    log, last_counts = [], [None] * 4
+    before = link.rows()
+    time.sleep(0.3)
+    dead = [name for (name, _e, _s), r0, r in zip(ik_link.WHEELS, before, link.rows())
+            if r is None or r0 is None or r["status_count"] == r0["status_count"]]
+    if dead:  # rows keep the last values; only a moving reply count is live
+        raise SystemExit(f"pulse: no live reply from {', '.join(dead)} (battery on? CAN?)")
+    log, last_counts, guard, aborted = [], [None] * 4, PulseGuard(), None
     try:
         for _name, _i, sel in wheels("all"):
             for key, value in changed.items():
@@ -264,6 +298,9 @@ def pulse(link, args):
                                 mc_state=[r["mc_state"] if r else None for r in rows],
                                 faults=[r["fault_names"] if r else None for r in rows],
                                 vbus_v=[r["vbus_v"] if r else None for r in rows]))
+                aborted = guard.check(log[-1])
+                if aborted:
+                    break
     finally:
         link.write("enable", 0)
         deadline = time.monotonic() + 3.0
@@ -279,6 +316,8 @@ def pulse(link, args):
     s = breakaway_summary(breakaways(log))
     faults = sorted({f for e in log for fs in e["faults"] if fs for f in fs})
     vbus = [x for e in log for x in e["vbus_v"] if x]
+    if aborted:
+        print(f"ABORTED: {aborted}")
     print(f"pulse {args.axis} {args.speed} m/s x{args.reps} (kp {used['kp']} ki {used['ki']} "
           f"ff {used['ff_static_ma']}/{used['ff_kinetic_ma']} mA): "
           f"faults {','.join(faults) or '-'}, Vbus min {min(vbus) if vbus else 0:.2f} V")

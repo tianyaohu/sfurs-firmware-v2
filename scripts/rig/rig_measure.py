@@ -114,6 +114,8 @@ def main():
     p.add_argument("--target-mm", type=float, help="commanded distance, for the summary")
     p.add_argument("--tolerance-mm", type=float, default=20)
     p.add_argument("--known-mm", type=float, help="true distance for accuracy trials (press m after each move)")
+    p.add_argument("--max-out-of-plane-mm", type=float, default=5,
+                   help="refuse trials when the tag left the reference plane by more (tilted or lifted)")
     p.add_argument("--reliable-px", type=float, default=250,
                    help="calibration is trusted within this radius of the image center")
     args = p.parse_args()
@@ -154,6 +156,10 @@ def main():
                 if ref is not None:
                     dist_mm, yaw, d = displacement(ref, averaged())
                     lines.append(f"moved {dist_mm:6.1f} mm   turned {yaw:+6.1f} deg")
+                    if abs(d[2]) > args.max_out_of_plane_mm:
+                        lines.append(f"NOT FLAT: out-of-plane {d[2]:+.0f} mm, reading unreliable")
+                    elif args.known_mm:
+                        lines.append(f"press m to record trial {len(trials) + 1}")
                     if time.monotonic() - last_print > 1:
                         last_print = time.monotonic()
                         print(f"moved {dist_mm:6.1f} mm (x {d[0]:+6.1f}, y {d[1]:+6.1f}, "
@@ -170,6 +176,11 @@ def main():
                 break
             if key == ord("m") and args.known_mm and ref is not None and len(recent) == recent.maxlen:
                 dist_mm, _, d = displacement(ref, averaged())
+                if abs(d[2]) > args.max_out_of_plane_mm:
+                    # Session data: out-of-plane -15 mm read 315 mm on a 300 mm move; +6 mm read 294.
+                    print(f"not recorded: out-of-plane {d[2]:+.1f} mm (tag tilted or lifted); flatten it and press m again",
+                          flush=True)
+                    continue
                 trials.append((dist_mm, d))
                 print(f"trial {len(trials)}: {direction_label(d)} measured {dist_mm:.1f} mm, error "
                       f"{dist_mm - args.known_mm:+.1f} mm, out-of-plane {d[2]:+.1f} mm", flush=True)

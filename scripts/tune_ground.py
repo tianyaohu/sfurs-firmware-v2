@@ -202,7 +202,8 @@ def camera_moves(stream, t0, plan):
     out = []
     for k, (start, end, tw) in enumerate(plan):
         nxt = plan[k + 1][0] if k + 1 < len(plan) else end + 1.0
-        s = move_summary(frames, (t0 + start - 0.4, t0 + start - 0.02), (t0 + nxt - 0.4, t0 + nxt - 0.02))
+        s = move_summary(frames, (t0 + start - 0.4, t0 + start - 0.02), (t0 + nxt - 0.4, t0 + nxt - 0.02),
+                         basis=stream.basis)
         if s is not None:
             s["commanded_mm"] = math.hypot(tw[0], tw[1]) * (end - start)
         out.append((tw, s))
@@ -240,6 +241,9 @@ def main():
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--exposure", type=float, default=100)
     p.add_argument("--tag-mm", type=float, default=100)
+    p.add_argument("--floor-ids", type=int, nargs="*", default=[10, 11, 12, 13],
+                   help="floor tags defining the measuring plane (>= 3 visible at start; none: single-tag)")
+    p.add_argument("--tag-height-mm", type=float, help="robot tag above the floor tags (default: estimated)")
     p.add_argument("--speed", type=float, default=0.2, help="m/s per move (>= 0.2: wheel targets >= 40 rpm)")
     p.add_argument("--seconds", type=float, default=0.8, help="per move")
     p.add_argument("--reps", type=int, default=2, help="(+vy -vy +vx -vx) cycles per stage")
@@ -277,8 +281,12 @@ def main():
         problems = preflight(link, args.min_vbus)
         if not args.no_camera:
             from tag_stream import TagStream, still_pose
-            stream = TagStream(args.calibration, args.camera, args.exposure, tag_mm=args.tag_mm).start()
-            time.sleep(2.0)
+            stream = TagStream(args.calibration, args.camera, args.exposure, tag_mm=args.tag_mm,
+                               floor_ids=args.floor_ids, tag_height_mm=args.tag_height_mm).start()
+            time.sleep(1.0)
+            height = "-" if stream.height_mm is None else f"{stream.height_mm:.0f} mm"
+            print(f"camera: {stream.mode} mode ({stream.floor_seen} floor tags), tag height {height}", flush=True)
+            result["camera"] = dict(mode=stream.mode, floor_tags=stream.floor_seen, tag_height_mm=stream.height_mm)
             frames = stream.snapshot()
             now = time.monotonic()
             recent = [f for f in frames if f[0] > now - 1.0]

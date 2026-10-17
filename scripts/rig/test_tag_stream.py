@@ -63,6 +63,14 @@ class Move(unittest.TestCase):
         self.assertAlmostEqual(s["max_sideways_mm"], 12.0, delta=2.0)
         self.assertAlmostEqual(abs(s["heading_change_deg"]), 4.0, delta=0.3)
 
+    def test_floor_basis_frame(self):
+        basis = np.array([[1.0, 0, 0], [0, 1.0, 0], [0, 0, -1.0]])  # floor_basis of a level floor
+        s = move_summary(frames_for(lambda t: straight(t, dx=0.0, dy=160.0, turn=4.0)), (0.5, 0.95), (2.5, 2.95),
+                         basis=basis)
+        self.assertAlmostEqual(s["distance_mm"], 160.0, delta=1.0)
+        self.assertAlmostEqual(s["direction_deg"], 90.0, delta=0.5)  # +y = image down
+        self.assertAlmostEqual(s["heading_change_deg"], 4.0, delta=0.3)
+
 
 if __name__ == "__main__":
     unittest.main()

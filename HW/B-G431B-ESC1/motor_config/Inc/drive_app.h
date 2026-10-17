@@ -14,6 +14,11 @@
  *  - I2T: sustained current above nominal derates the current limit;
  *  - a fault while driving latches off until STOP or a command gap.
  *
+ * Parking: a wheel commanded to 0 RPM that has been at standstill for
+ * PARK_MS is switched off (coasts, no current) instead of holding zero speed;
+ * at standstill the Hall speed estimate is too coarse to regulate on and the
+ * PI only buzzes. The next non-zero SPEED_WRITE starts it again (~30 ms).
+ *
  * Friction feed-forward: in speed mode the Iq reference is the speed PI
  * output plus sign(speed ref) * ff, where ff is ff_static at standstill and
  * fades linearly to ff_kinetic as the wheel first reaches FRICTION_FADE_RPM,
@@ -36,6 +41,8 @@ struct drive_app_state {
   int32_t align_error_mean; /* s16 degrees added to the previous shift */
   uint32_t capture_phase, capture_status; /* ESC_CAPTURE_* */
   int32_t ff_static_counts, ff_kinetic_counts;
+  int32_t command_rpm;      /* last SPEED_WRITE target */
+  uint32_t park_ms;         /* time at zero command and standstill */
   uint32_t speed_commands, status_replies, rejected;
 };
 extern volatile struct drive_app_state drive_app;

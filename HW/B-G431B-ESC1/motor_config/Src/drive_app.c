@@ -21,6 +21,11 @@
 #define FRICTION_MIN_REF_RPM 2 /* below this the command means "stop" */
 #define FRICTION_STALL_MS 100U
 
+/* Parking (drive_app.h). The Nucleo slews to 0, so by the time the command is
+ * 0 the wheel is nearly stopped; |speed| below PARK_RPM counts as standstill. */
+#define PARK_MS 150U
+#define PARK_RPM 10
+
 /* Hall alignment: hold the rotor with d-axis current at a forced angle, sweep
  * the angle slowly forward then back, and compare it with the angle the Hall
  * decoder assigns at each edge. Averaging both directions cancels rotor lag. */
@@ -403,6 +408,7 @@ static void speed_command(uint32_t word, uint16_t state)
   if (rpm < -MAX_APPLICATION_SPEED_RPM) rpm = -MAX_APPLICATION_SPEED_RPM;
   ++drive_app.speed_commands;
   drive_app.last_command_ms = drive_app.now_ms;
+  drive_app.command_rpm = rpm;
   if (drive_app.fault_latched) return;
   if (!drive_app.aligned) { ++drive_app.rejected; return; }
   if (drive_app.active) {
@@ -420,6 +426,20 @@ static void speed_command(uint32_t word, uint16_t state)
     drive_app.stop_reason = ESC_STOP_NONE;
   } else {
     ++drive_app.rejected;
+  }
+}
+
+static void park_tick(uint16_t state)
+{
+  const int32_t rpm = SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
+  if (!drive_app.active || state != RUN || drive_app.command_rpm != 0 ||
+      rpm > PARK_RPM || rpm < -PARK_RPM) {
+    drive_app.park_ms = 0U;
+    return;
+  }
+  if (++drive_app.park_ms >= PARK_MS) {
+    drive_app.park_ms = 0U;
+    stop(ESC_STOP_PARKED);
   }
 }
 
@@ -510,6 +530,7 @@ void drive_app_tick(void)
     drive_app.fault_latched = 0U;
     if (drive_app.active) stop(ESC_STOP_TIMEOUT);
   }
+  park_tick(state);
   i2t_tick(state);
 }
 

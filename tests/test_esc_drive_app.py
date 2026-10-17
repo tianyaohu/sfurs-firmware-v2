@@ -340,6 +340,28 @@ int main(int argc, char **argv) {
     assert(drive_app.ff_static_counts == 1360 && drive_app.ff_kinetic_counts == 272 && drive_app.rejected == 3);
     drive_app.iq_limit_counts = 3 * 544; /* I2T derate also caps the feed-forward */
     drive_app.active = 1; assert(drive_speed_iq_ref(1000, 50, 0) == 3 * 544);
+  } else if (scenario == 14) { /* parking at zero command */
+    drive_app.aligned = 1;
+    speed_cmd(100, 100); tick(3); assert(state == RUN); speed = 100;
+    for (int i = 0; i < 20; ++i) { speed_cmd(0, 100); tick(20); } /* decelerating */
+    assert(state == RUN && drive_app.active);
+    speed = 40; for (int i = 0; i < 10; ++i) { speed_cmd(0, 100); tick(20); }
+    assert(state == RUN); /* still rolling */
+    speed = -6; for (int i = 0; i < 7; ++i) { speed_cmd(0, 100); tick(20); }
+    assert(state == RUN); /* 140 ms at standstill */
+    speed_cmd(0, 100); tick(20);
+    assert(state == IDLE && !drive_app.active && drive_app.stop_reason == ESC_STOP_PARKED);
+    assert(!drive_app.fault_latched && starts == 1);
+    for (int i = 0; i < 20; ++i) { speed_cmd(0, 100); tick(20); } /* zeros keep it off */
+    assert(state == IDLE && starts == 1);
+    speed = 0; speed_cmd(80, 100); tick(3);
+    assert(state == RUN && drive_app.active && starts == 2 && ramp_rpm == 80);
+    speed = 3; for (int i = 0; i < 20; ++i) { speed_cmd(5, 100); tick(20); }
+    assert(state == RUN); /* a small non-zero command holds speed, no parking */
+    speed_cmd(0, 100); tick(100); speed_cmd(-30, 100); tick(20);
+    assert(state == RUN && starts == 2); /* parking timer reset by the new command */
+    rx(STATUS_READ | 1U, 0); speed_cmd(0, 100); tick(200); drive_app_poll(send);
+    assert(state == IDLE && (sent[7] & 0x0F) == ESC_STOP_PARKED && !(sent[7] & ESC_FLAG_ACTIVE));
   } else if (scenario == 9) { /* undervolt latched on USB power: STOP clears it once gone */
     state = FAULT_OVER; cur_faults = 4; occ_faults = 4; tick(1);
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2);
@@ -420,6 +442,9 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_friction_feedforward(self):
         self.run_scenario(13)
+
+    def test_parks_at_zero_command(self):
+        self.run_scenario(14)
 
 
 if __name__ == "__main__":

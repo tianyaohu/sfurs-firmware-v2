@@ -30,7 +30,8 @@ CAN FD frames without BRS. ID = command | select bits (NE 1, SE 2, SW 4, NW 8).
 | `0x780` STOP | → ESC | any |
 | `0x600–0x6FF` | | firmware update ([CAN_FWU.md](CAN_FWU.md)) |
 
-Flags: low nibble = last stop reason (1 STOP, 2 timeout, 3 fault, 4 align),
+Flags: low nibble = last stop reason (1 STOP, 2 timeout, 3 fault, 4 align,
+5 capture, 6 parked),
 `0x10` active, `0x20` I²t derated, `0x40` aligning, `0x80` Hall shift known.
 
 ## Protections
@@ -41,6 +42,7 @@ Flags: low nibble = last stop reason (1 STOP, 2 timeout, 3 fault, 4 align),
 | ESC watchdog | No SPEED_WRITE for 250 ms → stop |
 | ESC I²t | Iq limit 6 A; after ~30 A²s above 3.26 A it derates to 3 A until it cools |
 | ESC fault latch | A fault while driving keeps the wheel off until STOP or a 250 ms command gap |
+| ESC parking | Command 0 RPM and standstill (< 10 RPM) for 150 ms → motor off (coasts); next non-zero command restarts it (~30 ms). Holding zero speed on the Hall estimate only buzzed (0.2–0.6 A average, peaks 3.9 A) |
 | ESC alignment gate | SPEED_WRITE ignored until the Hall shift is known (built in or measured) |
 | Nucleo heartbeat | PC silent for 300 ms → decelerate, hold 200 ms, broadcast STOP ×3 |
 | Kinematics | All wheels scaled together so none exceeds 900 RPM (~3 m/s) |

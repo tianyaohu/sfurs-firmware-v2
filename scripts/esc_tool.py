@@ -12,6 +12,10 @@
   esc_tool.py spin WHEEL --rpm 60 [--seconds 3] [--kp N --ki N] [--log f.jsonl]
                                         one wheel at a speed setpoint, telemetry
                                         logged; speed-loop check (motion!)
+  esc_tool.py pulse [--axis vy] [--speed 0.2] [--seconds 1.5] [--reps 3]
+                    [--kp N --ki N] [--log f.jsonl]
+                                        scripted ground drive out and back,
+                                        per-wheel breakaway time (motion!)
   esc_tool.py stop                      broadcast STOP; also clears a fault whose
                                         cause is gone (FAULT_OVER -> IDLE)
 
@@ -22,6 +26,10 @@ d-axis current (1 A, then the step): it may click into position but makes no
 torque; battery ON. spin streams SPEED_WRITE to one wheel only; --kp/--ki
 are set in RAM first and the firmware defaults (drive_parameters.h) restored
 afterwards; STOP on exit, and the ESC stops itself 0.25 s after the stream.
+pulse drives the whole robot through the Nucleo (same path as keyboard_drive):
+each rep goes out along --axis for --seconds and back, so it ends near where
+it started; gains as for spin. Kill it (Ctrl-C) or switch the battery off to
+stop: the Nucleo brakes 0.3 s after the heartbeat stops.
 """
 import argparse
 import json
@@ -169,6 +177,110 @@ def spin(link, name, index, selector, args):
     return s
 
 
+BREAKAWAY_RPM = 20
+
+
+def breakaways(log, min_target=40, window=1.0):
+    """Per start (all targets 0 -> any non-zero): seconds until each wheel whose
+    target reaches min_target RPM turns >= BREAKAWAY_RPM the right way (None if
+    not within window). log entries: t, target_rpm[4], rpm[4] (None = no reply)."""
+    starts, idle = [], True
+    for k, e in enumerate(log):
+        moving = any(abs(x) >= 1 for x in e["target_rpm"])
+        if idle and moving:
+            span = [x for x in log[k:] if x["t"] - e["t"] <= window]
+            times = {}
+            for wi, (name, _esc, _sel) in enumerate(ik_link.WHEELS):
+                if max(abs(x["target_rpm"][wi]) for x in span) < min_target:
+                    continue
+                times[name] = next((x["t"] - e["t"] for x in span if x["rpm"][wi] is not None
+                                    and abs(x["rpm"][wi]) >= BREAKAWAY_RPM
+                                    and x["rpm"][wi] * x["target_rpm"][wi] > 0), None)
+            starts.append(times)
+        idle = not moving
+    return starts
+
+
+def breakaway_summary(starts):
+    per = {name: [s[name] for s in starts if name in s] for name, _e, _s in ik_link.WHEELS}
+    spreads = [max(v) - min(v) for s in starts
+               if len(v := [t for t in s.values() if t is not None]) >= 2]
+    out = {}
+    for name, times in per.items():
+        moved = sorted(t for t in times if t is not None)
+        out[name] = dict(starts=len(times), moved=len(moved),
+                         median_s=statistics.median(moved) if moved else None,
+                         worst_s=moved[-1] if moved else None)
+    out["spread_median_s"] = statistics.median(spreads) if spreads else None
+    out["spread_worst_s"] = max(spreads) if spreads else None
+    return out
+
+
+def pulse(link, args):
+    if not 0 < args.speed <= 0.3 or not 0 < args.seconds <= 3 or not 1 <= args.reps <= 10:
+        raise SystemExit("pulse: 0 < speed <= 0.3 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
+    kp0, ki0 = speed_defaults()
+    gains = args.kp is not None or args.ki is not None
+    kp = kp0 if args.kp is None else args.kp
+    ki = ki0 if args.ki is None else args.ki
+    v = round(args.speed * 1000)
+    plan = []  # (end time, twist)
+    t = 0.5
+    for _ in range(args.reps):
+        for sign in (1, -1):
+            twist = (sign * v, 0, 0) if args.axis == "vx" else (0, sign * v, 0)
+            plan += [(t + args.seconds, twist), (t + args.seconds + 1.0, (0, 0, 0))]
+            t += args.seconds + 1.0
+    log, last_counts = [], [None] * 4
+    try:
+        if gains:
+            for _name, _i, sel in wheels("all"):
+                link.send_raw(*ik_link.config_frame(sel, "kp", kp))
+                link.send_raw(*ik_link.config_frame(sel, "ki", ki))
+        link.write("accel_rpmps", 0)
+        t0, next_cmd = time.monotonic(), 0.0
+        while (now := time.monotonic() - t0) < t:
+            if now >= next_cmd:
+                twist = next((tw for end, tw in plan if now < end), (0, 0, 0)) if now >= 0.5 else (0, 0, 0)
+                link.drive(*twist)
+                next_cmd = now + 0.02
+            status, rows = link.status(), link.rows()
+            counts = [r["status_count"] if r else None for r in rows]
+            if counts != last_counts:  # an entry whenever any wheel replied
+                last_counts = counts
+                log.append(dict(t=round(now, 4), twist=twist, target_rpm=status["target_rpm"],
+                                rpm=[r["rpm"] if r else None for r in rows],
+                                iq_ref_a=[round(r["iq_ref_a"], 3) if r else None for r in rows],
+                                mc_state=[r["mc_state"] if r else None for r in rows],
+                                faults=[r["fault_names"] if r else None for r in rows],
+                                vbus_v=[r["vbus_v"] if r else None for r in rows]))
+    finally:
+        link.write("enable", 0)
+        deadline = time.monotonic() + 3.0
+        while link.read("state") != 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if gains:
+            time.sleep(0.3)  # CONFIG_SET is accepted only once the wheels are IDLE
+            for _name, _i, sel in wheels("all"):
+                link.send_raw(*ik_link.config_frame(sel, "kp", kp0))
+                link.send_raw(*ik_link.config_frame(sel, "ki", ki0))
+        if args.log:
+            args.log.write_text("".join(json.dumps(e) + "\n" for e in log))
+    s = breakaway_summary(breakaways(log))
+    faults = sorted({f for e in log for fs in e["faults"] if fs for f in fs})
+    vbus = [x for e in log for x in e["vbus_v"] if x]
+    print(f"pulse {args.axis} {args.speed} m/s x{args.reps} (kp {kp} ki {ki}): "
+          f"faults {','.join(faults) or '-'}, Vbus min {min(vbus) if vbus else 0:.2f} V")
+    ms = lambda x: f"{x * 1000:.0f}" if x is not None else "-"
+    for name, _e, _s in ik_link.WHEELS:
+        w = s[name]
+        print(f"  {name}: moved {w['moved']}/{w['starts']}, to {BREAKAWAY_RPM} rpm median "
+              f"{ms(w['median_s'])} ms worst {ms(w['worst_s'])} ms")
+    print(f"  spread between wheels: median {ms(s['spread_median_s'])} ms "
+          f"worst {ms(s['spread_worst_s'])} ms")
+    return s
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -195,6 +307,14 @@ def main(argv=None):
     p.add_argument("--kp", type=int)
     p.add_argument("--ki", type=int)
     p.add_argument("--log", type=pathlib.Path)
+    p = sub.add_parser("pulse")
+    p.add_argument("--axis", choices=("vx", "vy"), default="vy", help="vy forward (default), vx right")
+    p.add_argument("--speed", type=float, default=0.2, help="m/s, at most 0.3")
+    p.add_argument("--seconds", type=float, default=1.5)
+    p.add_argument("--reps", type=int, default=3)
+    p.add_argument("--kp", type=int)
+    p.add_argument("--ki", type=int)
+    p.add_argument("--log", type=pathlib.Path)
     args = parser.parse_args(argv)
     session, link = ik_link.Link.open(args.sn, args.elf)
     try:
@@ -217,6 +337,8 @@ def main(argv=None):
             if len(targets) != 1:
                 raise SystemExit("spin: one wheel at a time")
             spin(link, *targets[0], args)
+        elif args.command == "pulse":
+            pulse(link, args)
         elif args.command == "set":
             for name, _i, sel in wheels(args.wheel):
                 link.send_raw(*ik_link.config_frame(sel, args.key, args.value))

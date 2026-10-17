@@ -268,22 +268,20 @@ class PulseGuard:
         return None
 
 
-def pulse(link, args):
-    if not 0 < args.speed <= 0.3 or not 0 < args.seconds <= 3 or not 1 <= args.reps <= 10:
-        raise SystemExit("pulse: 0 < speed <= 0.3 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
-    defaults = firmware_defaults()
-    asked = dict(kp=args.kp, ki=args.ki, ff_static_ma=args.ff_static, ff_kinetic_ma=args.ff_kinetic)
-    # Send every tunable, not only the non-default ones: the ESCs may still hold
-    # values from an earlier run whose restore did not land.
-    used = {k: defaults[k] if v is None else v for k, v in asked.items()}
-    v = round(args.speed * 1000)
-    plan = []  # (end time, twist)
-    t = 0.5
-    for _ in range(args.reps):
-        for sign in (1, -1):
-            twist = (sign * v, 0, 0) if args.axis == "vx" else (0, sign * v, 0)
-            plan += [(t + args.seconds, twist), (t + args.seconds + 1.0, (0, 0, 0))]
-            t += args.seconds + 1.0
+def pulse_plan(twists, seconds, pause=1.0, lead=0.5):
+    """[(start, end, twist)] for moves of `seconds` each, `pause` s still between
+    them, the first after `lead` s; and the total duration."""
+    plan, t = [], lead
+    for twist in twists:
+        plan.append((t, t + seconds, tuple(twist)))
+        t += seconds + pause
+    return plan, t
+
+
+def run_pulse(link, plan, duration, settings, defaults):
+    """Drive `plan` through the Nucleo with per-wheel RAM `settings` (four
+    {key: value} dicts), then restore `defaults` on every wheel once they are
+    IDLE. Returns (log, abort reason or None, monotonic time of log t = 0)."""
     before = link.rows()
     time.sleep(0.3)
     dead = [name for (name, _e, _s), r0, r in zip(ik_link.WHEELS, before, link.rows())
@@ -291,15 +289,16 @@ def pulse(link, args):
     if dead:  # rows keep the last values; only a moving reply count is live
         raise SystemExit(f"pulse: no live reply from {', '.join(dead)} (battery on? CAN?)")
     log, last_counts, guard, aborted = [], [None] * 4, PulseGuard(), None
+    t0 = time.monotonic()
     try:
-        for _name, _i, sel in wheels("all"):
-            for key, value in used.items():
+        for (_name, _i, sel), values in zip(wheels("all"), settings):
+            for key, value in values.items():
                 link.send_raw(*ik_link.config_frame(sel, key, value))
         link.write("accel_rpmps", 0)
         t0, next_cmd = time.monotonic(), 0.0
-        while (now := time.monotonic() - t0) < t:
+        while (now := time.monotonic() - t0) < duration:
             if now >= next_cmd:
-                twist = next((tw for end, tw in plan if now < end), (0, 0, 0)) if now >= 0.5 else (0, 0, 0)
+                twist = next((tw for start, end, tw in plan if start <= now < end), (0, 0, 0))
                 link.drive(*twist)
                 next_cmd = now + 0.02
             status, rows = link.status(), link.rows()
@@ -322,11 +321,28 @@ def pulse(link, args):
             time.sleep(0.05)
         if not wait_idle(link, range(4)):
             print("pulse: not all wheels IDLE; defaults may not be restored (esc_tool.py set)")
+        keys = {k for values in settings for k in values}
         for _name, _i, sel in wheels("all"):
-            for key in used:
+            for key in keys:
                 link.send_raw(*ik_link.config_frame(sel, key, defaults[key]))
-        if args.log:
-            args.log.write_text("".join(json.dumps(e) + "\n" for e in log))
+    return log, aborted, t0
+
+
+def pulse(link, args):
+    if not 0 < args.speed <= 0.3 or not 0 < args.seconds <= 3 or not 1 <= args.reps <= 10:
+        raise SystemExit("pulse: 0 < speed <= 0.3 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
+    defaults = firmware_defaults()
+    asked = dict(kp=args.kp, ki=args.ki, ff_static_ma=args.ff_static, ff_kinetic_ma=args.ff_kinetic)
+    # Send every tunable, not only the non-default ones: the ESCs may still hold
+    # values from an earlier run whose restore did not land.
+    used = {k: defaults[k] if v is None else v for k, v in asked.items()}
+    v = round(args.speed * 1000)
+    out = (v, 0, 0) if args.axis == "vx" else (0, v, 0)
+    plan, duration = pulse_plan([tw for _ in range(args.reps)
+                                 for tw in (out, tuple(-x for x in out))], args.seconds)
+    log, aborted, _t0 = run_pulse(link, plan, duration, [used] * 4, defaults)
+    if args.log:
+        args.log.write_text("".join(json.dumps(e) + "\n" for e in log))
     s = breakaway_summary(breakaways(log))
     faults = sorted({f for e in log for fs in e["faults"] if fs for f in fs})
     vbus = [x for e in log for x in e["vbus_v"] if x]

@@ -41,3 +41,4 @@ what someone does next; this is not a log.
 - **The Workbench motor profile was a placeholder.** Measured dq R is
   0.30–0.32 Ω (not 0.22), L 135–150 µH (not 110); capture before trusting
   any motor constant.
+- CAN bus-off is permanent on STM32 FDCAN unless software clears CCCR.INIT; a jolted connector once took the whole drive offline until reset (2026-10-16). Both Nucleo and ESC main loops now recover.

@@ -74,6 +74,7 @@ FDCAN_HandleTypeDef hfdcan1;
 /* Debugger-visible image identity: 1 = drive, 2 = ESC updater. */
 volatile const uint32_t nucleo_image_kind = NUCLEO_DRIVE ? 1U : 2U;
 volatile uint32_t can_rx_frame_count;
+volatile uint32_t can_bus_off_count; /* recoveries, read over SWD */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -254,6 +255,13 @@ Error_Handler();
                       ? GPIO_PIN_SET : GPIO_PIN_RESET);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, fwu_host.state == FWU_H_FAULT ? GPIO_PIN_SET : GPIO_PIN_RESET);
 #endif
+    /* Bus-off (e.g. a connector jolted while driving) sets CCCR.INIT and the
+     * controller stays off the bus until software clears it; it then rejoins
+     * after 128 x 11 recessive bits. Without this every later frame fails. */
+    if ((hfdcan1.Instance->PSR & FDCAN_PSR_BO) && (hfdcan1.Instance->CCCR & FDCAN_CCCR_INIT)) {
+      CLEAR_BIT(hfdcan1.Instance->CCCR, FDCAN_CCCR_INIT);
+      ++can_bus_off_count;
+    }
     /* Bounded RX pass so bus traffic cannot starve the loop. */
     for (uint32_t i = 0; i < 8U && HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) != 0U; ++i) {
       if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &can_rx_header, can_rx_data) != HAL_OK) break;

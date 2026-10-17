@@ -59,6 +59,18 @@ def capture(args, board):
     saved, last = 0, -float("inf")
     start, frames = time.monotonic(), 0
     poses, grid = [], np.zeros((3, 3), int)
+    # Views already in --out count toward coverage and de-duplication, so top-up sessions show
+    # the cumulative map.
+    for old in sorted(args.out.glob("view-*.png")):
+        image = cv2.imread(str(old))
+        corners, ids, _, _ = detector.detectBoard(image)
+        if ids is not None and len(ids) >= 8:
+            pose = view_pose(corners, image.shape)
+            poses.append(pose)
+            grid[min(2, int(pose[1] * 3)), min(2, int(pose[0] * 3))] += 1
+    if poses:
+        print(f"{len(poses)} existing views in {args.out}; coverage so far (top row first):\n"
+              + "\n".join(" ".join(f"{n:3d}" for n in row) for row in grid))
     try:
         while saved < args.count:
             ok, image = cap.read()

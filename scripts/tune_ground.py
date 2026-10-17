@@ -15,10 +15,16 @@ an operator ready to switch it off. Every stage aborts on a runaway or stalled w
 1. preflight   all four ESCs live, IDLE, no faults, Vbus; camera sees the tag still
 2. identify    feed-forward off: per wheel, Iq ref at breakaway (static friction) and
                while tracking (kinetic friction) on this surface; refuse if not repeatable
-3. tune        ff_static = frac x breakaway, ff_kinetic = kfrac x kinetic, per wheel;
+3. tune        one feed-forward per wheel, ff_static = ff_kinetic = frac x kinetic;
                lower frac while starts overshoot, raise it while they are slow
 4. accept      camera: per move, direction error, sideways drift and heading change,
-               baseline (stage 2) against the chosen values
+               baseline (stage 2) against the chosen values; every move must be seen
+
+Why static = kinetic: on carpet the measured kinetic friction is ~85% of breakaway. The
+firmware fades static -> kinetic once the wheel breaks free, so a kinetic value above the
+static one adds current exactly when the speed PI has already wound up to breakaway: the
+first ground run (2026-10-17) overshot x2-4 and tripped the runaway guard on every stage.
+One value has no step at breakaway; the PI only adds the breakaway - kinetic margin.
 
 Writes DIR/result.json (values per wheel, all metrics, pass/fail) and one telemetry log
 per stage. Nothing is written to the ESCs beyond RAM; defaults are restored after each
@@ -154,8 +160,9 @@ def accept_moves(moves, limits):
     is then judged on its own direction error, sideways drift and heading change, and the
     distance ratios on their spread (absolute scale belongs to the kinematics fit)."""
     seen = [(tw, s) for tw, s in moves if s is not None and s["distance_mm"] > 20]
-    if not seen:
-        return dict(ok=False, reason="no move seen still at both ends", moves=[])
+    if len(seen) < len(moves) or len(seen) < 2:
+        return dict(ok=False, reason=f"{len(moves) - len(seen)} of {len(moves)} moves not seen still at both "
+                    "ends (or under 20 mm)", missing=len(moves) - len(seen), moves=[])
     diffs = [math.radians(s["direction_deg"] - math.degrees(math.atan2(tw[1], tw[0]))) for tw, s in seen]
     mount = math.degrees(math.atan2(sum(map(math.sin, diffs)), sum(map(math.cos, diffs))))
     rows = []
@@ -218,6 +225,10 @@ def stage(link, stream, name, plan, duration, settings, defaults, outdir):
     if stream is not None:
         time.sleep(0.2)
     moves = camera_moves(stream, t0, plan) if stream is not None else None
+    if stream is not None:
+        rows = [dict(t=round(t - t0, 4), reliable=r, xyz=None if p is None else [round(float(x), 2) for x in p[0]])
+                for t, p, r in stream.snapshot() if t0 - 1.0 <= t <= t0 + duration + 1.0]
+        (outdir / f"{name}.camera.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     faults = sorted({f for e in log for fs in e["faults"] if fs for f in fs})
     vbus = [x for e in log for x in e["vbus_v"] if x]
     return dict(name=name, settings=settings, aborted=aborted, faults=faults,
@@ -244,11 +255,12 @@ def main():
     p.add_argument("--floor-ids", type=int, nargs="*", default=[10, 11, 12, 13],
                    help="floor tags defining the measuring plane (>= 3 visible at start; none: single-tag)")
     p.add_argument("--tag-height-mm", type=float, help="robot tag above the floor tags (default: estimated)")
-    p.add_argument("--speed", type=float, default=0.2, help="m/s per move (>= 0.2: wheel targets >= 40 rpm)")
+    p.add_argument("--speed", type=float, default=0.2, help="m/s for vy moves (>= 0.2: wheel targets >= 40 rpm)")
+    p.add_argument("--x-speed", type=float, default=0.3, help="m/s for vx moves (0.2 gives only ~31 rpm wheels)")
+    p.add_argument("--pause", type=float, default=1.5, help="s still between moves (camera windows)")
     p.add_argument("--seconds", type=float, default=0.8, help="per move")
     p.add_argument("--reps", type=int, default=2, help="(+vy -vy +vx -vx) cycles per stage")
-    p.add_argument("--static-frac", type=float, default=0.8)
-    p.add_argument("--kinetic-frac", type=float, default=0.8)
+    p.add_argument("--frac", type=float, default=0.65, help="first feed-forward, fraction of kinetic friction")
     p.add_argument("--max-tries", type=int, default=4)
     p.add_argument("--max-spread", type=float, default=0.2, help="breakaway MAD/median allowed")
     p.add_argument("--breakaway-ms", type=float, default=80)
@@ -258,16 +270,16 @@ def main():
     p.add_argument("--elf", type=pathlib.Path, default=ik_link.DEFAULT_ELF)
     p.add_argument("--sn", default=ik_link.DEFAULT_SN)
     args = p.parse_args()
-    if not 0 < args.speed <= 0.3 or not 0 < args.seconds <= 2 or not 1 <= args.reps <= 5:
+    if not 0 < args.speed <= 0.3 or not 0 < args.x_speed <= 0.3 or not 0 < args.seconds <= 2 or not 1 <= args.reps <= 5:
         raise SystemExit("0 < speed <= 0.3 m/s, 0 < seconds <= 2, 1 <= reps <= 5")
     if args.no_camera == bool(args.calibration):
         raise SystemExit("give --calibration, or --no-camera")
     limits = dict(breakaway_s=args.breakaway_ms / 1000, spread_s=args.spread_ms / 1000, overshoot=args.overshoot,
                   direction_deg=3.0, heading_deg=2.0, ratio_spread=0.05)
     args.out.mkdir(parents=True, exist_ok=True)
-    v = round(args.speed * 1000)
-    twists = [(0, v, 0), (0, -v, 0), (v, 0, 0), (-v, 0, 0)] * args.reps
-    plan, duration = esc_tool.pulse_plan(twists, args.seconds)
+    v, vx = round(args.speed * 1000), round(args.x_speed * 1000)
+    twists = [(0, v, 0), (0, -v, 0), (vx, 0, 0), (-vx, 0, 0)] * args.reps
+    plan, duration = esc_tool.pulse_plan(twists, args.seconds, pause=args.pause)
     defaults = esc_tool.firmware_defaults()
     result = dict(date=time.strftime("%Y-%m-%d %H:%M:%S"), args={k: str(x) for k, x in vars(args).items()},
                   limits=limits, stages=[])
@@ -317,21 +329,23 @@ def main():
             if spread(b) > args.max_spread:
                 raise SystemExit(f"identify: {n} breakaway not repeatable (spread {spread(b):.0%} > "
                                  f"{args.max_spread:.0%}); check the wheel and surface before tuning")
-            static[n], kinetic[n] = statistics.median(b), statistics.median(k) if k else 0.0
+            if not k:
+                raise SystemExit(f"identify: {n} never tracked its target; no kinetic friction to tune from")
+            static[n], kinetic[n] = statistics.median(b), statistics.median(k)
         baseline_over = max(w["overshoot"] or 0 for w in resp["wheels"].values())
 
-        frac, best = args.static_frac, None
+        frac, best = args.frac, None
         for attempt in range(1, args.max_tries + 1):
-            settings = [{**defaults, "ff_static_ma": round(1000 * frac * static[n]),
-                         "ff_kinetic_ma": round(1000 * args.kinetic_frac * kinetic[n])} for n in NAMES]
+            settings = [{**defaults, "ff_static_ma": round(1000 * frac * kinetic[n]),
+                         "ff_kinetic_ma": round(1000 * frac * kinetic[n])} for n in NAMES]
             s = stage(link, stream, f"tune{attempt}", plan, duration, settings, defaults, args.out)
             resp = response(s["log"])
             s.pop("log")
             slow, over = judge(resp, limits, baseline_over)
-            s.update(response=resp, static_frac=frac, slow=slow, overshooting=over)
+            s.update(response=resp, frac=frac, slow=slow, overshooting=over)
             result["stages"].append(s)
             save()
-            print(f"   static x{frac:.2f}: {'slow ' if slow else ''}{'overshooting ' if over else ''}"
+            print(f"   ff x{frac:.2f} of kinetic: {'slow ' if slow else ''}{'overshooting ' if over else ''}"
                   f"{'ok' if not (slow or over or s['aborted']) else ''}{' ABORTED ' + s['aborted'] if s['aborted'] else ''}")
             show(resp)
             if s["faults"]:
@@ -344,7 +358,7 @@ def main():
                 break
 
         result["chosen"] = None if best is None else dict(
-            static_frac=best["static_frac"], kinetic_frac=args.kinetic_frac,
+            frac=best["frac"],
             wheels={n: dict(ff_static_ma=st["ff_static_ma"], ff_kinetic_ma=st["ff_kinetic_ma"])
                     for n, st in zip(NAMES, best["settings"])})
         if stream is not None:
@@ -362,8 +376,7 @@ def main():
     if result["chosen"] is None:
         print("   no setting met the limits; see result.json")
     else:
-        print(f"   static x{result['chosen']['static_frac']:.2f} of breakaway, kinetic "
-              f"x{args.kinetic_frac:.2f}: " + "  ".join(f"{n} {w['ff_static_ma']}/{w['ff_kinetic_ma']} mA"
+        print(f"   ff x{result['chosen']['frac']:.2f} of kinetic: " + "  ".join(f"{n} {w['ff_static_ma']}/{w['ff_kinetic_ma']} mA"
                                                      for n, w in result["chosen"]["wheels"].items()))
     for name, cam in (result.get("camera") or {}).items():
         print(f"   camera {name}: {'PASS' if cam['ok'] else 'FAIL'} {cam.get('reason', '')}"

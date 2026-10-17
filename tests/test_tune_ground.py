@@ -128,6 +128,8 @@ class Camera(unittest.TestCase):
     def test_missing_moves(self):
         a = tg.accept_moves([((0, 200, 0), None)], LIMITS)
         self.assertFalse(a["ok"])
+        one_seen = [((0, 200, 0), summary(90)), ((0, -200, 0), None), ((200, 0, 0), None)]
+        self.assertFalse(tg.accept_moves(one_seen, LIMITS)["ok"])  # one move fits any mount yaw
 
 
 if __name__ == "__main__":

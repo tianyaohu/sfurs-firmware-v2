@@ -134,6 +134,18 @@ def speed_defaults():
     return d["kp"], d["ki"]
 
 
+def wait_idle(link, indices, timeout=3.0):
+    """Block until the given wheels report IDLE: CONFIG_SET is dropped in any
+    other state, and STOP -> IDLE takes ~0.7 s after a parked or aborted run."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        rows = link.rows()
+        if all(rows[i] and rows[i]["mc_state"] == "IDLE" for i in indices):
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def spin(link, name, index, selector, args):
     """Speed step on one wheel; returns the steady-state summary."""
     if abs(args.rpm) > 300 or not 0 < args.seconds <= 10:
@@ -167,7 +179,8 @@ def spin(link, name, index, selector, args):
             except RuntimeError:
                 pass
         if gains:
-            time.sleep(0.3)  # CONFIG_SET is accepted only once the wheel is IDLE
+            if not wait_idle(link, [index]):
+                print(f"{name}: not IDLE; speed gains may not be restored (esc_tool.py set)")
             link.send_raw(*ik_link.config_frame(selector, "kp", kp0))
             link.send_raw(*ik_link.config_frame(selector, "ki", ki0))
         if args.log:
@@ -260,8 +273,9 @@ def pulse(link, args):
         raise SystemExit("pulse: 0 < speed <= 0.3 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
     defaults = firmware_defaults()
     asked = dict(kp=args.kp, ki=args.ki, ff_static_ma=args.ff_static, ff_kinetic_ma=args.ff_kinetic)
-    changed = {k: v for k, v in asked.items() if v is not None and v != defaults[k]}
-    used = {**defaults, **changed}
+    # Send every tunable, not only the non-default ones: the ESCs may still hold
+    # values from an earlier run whose restore did not land.
+    used = {k: defaults[k] if v is None else v for k, v in asked.items()}
     v = round(args.speed * 1000)
     plan = []  # (end time, twist)
     t = 0.5
@@ -279,7 +293,7 @@ def pulse(link, args):
     log, last_counts, guard, aborted = [], [None] * 4, PulseGuard(), None
     try:
         for _name, _i, sel in wheels("all"):
-            for key, value in changed.items():
+            for key, value in used.items():
                 link.send_raw(*ik_link.config_frame(sel, key, value))
         link.write("accel_rpmps", 0)
         t0, next_cmd = time.monotonic(), 0.0
@@ -306,11 +320,11 @@ def pulse(link, args):
         deadline = time.monotonic() + 3.0
         while link.read("state") != 0 and time.monotonic() < deadline:
             time.sleep(0.05)
-        if changed:
-            time.sleep(0.3)  # CONFIG_SET is accepted only once the wheels are IDLE
-            for _name, _i, sel in wheels("all"):
-                for key in changed:
-                    link.send_raw(*ik_link.config_frame(sel, key, defaults[key]))
+        if not wait_idle(link, range(4)):
+            print("pulse: not all wheels IDLE; defaults may not be restored (esc_tool.py set)")
+        for _name, _i, sel in wheels("all"):
+            for key in used:
+                link.send_raw(*ik_link.config_frame(sel, key, defaults[key]))
         if args.log:
             args.log.write_text("".join(json.dumps(e) + "\n" for e in log))
     s = breakaway_summary(breakaways(log))

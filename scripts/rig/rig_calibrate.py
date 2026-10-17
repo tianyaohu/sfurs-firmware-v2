@@ -58,6 +58,7 @@ def capture(args, board):
     cap = open_source(args.camera, args.video, args.exposure)
     saved, last = 0, -float("inf")
     start, frames = time.monotonic(), 0
+    poses, grid = [], np.zeros((3, 3), int)
     try:
         while saved < args.count:
             ok, image = cap.read()
@@ -66,15 +67,24 @@ def capture(args, board):
             frames += 1
             corners, ids, _, _ = detector.detectBoard(image)
             if ids is not None and len(ids) >= 8 and time.monotonic() - last >= args.interval:
-                path = args.out / f"view-{time.monotonic_ns()}.png"
-                if not cv2.imwrite(str(path), image):
-                    raise RuntimeError(f"cannot write {path}")
-                saved += 1
+                pose = view_pose(corners, image.shape)
+                if all(distinct(pose, p) for p in poses):
+                    path = args.out / f"view-{time.monotonic_ns()}.png"
+                    if not cv2.imwrite(str(path), image):
+                        raise RuntimeError(f"cannot write {path}")
+                    saved += 1
+                    poses.append(pose)
+                    grid[min(2, int(pose[1] * 3)), min(2, int(pose[0] * 3))] += 1
+                    print(f"saved {saved}/{args.count}: {path}")
                 last = time.monotonic()
-                print(f"saved {saved}/{args.count}: {path}")
             if args.preview:
                 if ids is not None:
                     cv2.aruco.drawDetectedCornersCharuco(image, corners, ids)
+                h, w = image.shape[:2]
+                for r in range(3):
+                    for c in range(3):
+                        cv2.putText(image, str(grid[r, c]), (int((c + 0.5) * w / 3), int((r + 0.5) * h / 3)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255) if grid[r, c] == 0 else (0, 200, 0), 2)
                 cv2.imshow("calibration (q to stop)", image)
                 if cv2.waitKey(1) & 255 == ord("q"):
                     break
@@ -83,6 +93,24 @@ def capture(args, board):
         if args.preview:
             cv2.destroyAllWindows()
     print(f"{saved} views; achieved {frames / max(time.monotonic() - start, 1e-6):.2f} fps")
+    print("views per image region (top row first):\n" + "\n".join(" ".join(f"{n:3d}" for n in row) for row in grid))
+    if saved and (grid == 0).any():
+        print("WARNING: some regions have no views; cover every region, especially the corners")
+
+
+def view_pose(corners, shape):
+    """Board center (fraction of width/height), size (fraction of width), in-plane angle and aspect."""
+    pts = corners.reshape(-1, 2)
+    h, w = shape[:2]
+    rect = cv2.minAreaRect(pts.astype(np.float32))
+    (rw, rh) = rect[1]
+    return (pts[:, 0].mean() / w, pts[:, 1].mean() / h, max(rw, rh) / w, rect[2], min(rw, rh) / max(rw, rh, 1e-6))
+
+
+def distinct(a, b):
+    # A board held still produces identical views that add nothing to the fit.
+    return (np.hypot(a[0] - b[0], a[1] - b[1]) > 0.08 or abs(a[2] - b[2]) > 0.2 * b[2]
+            or abs(a[3] - b[3]) > 10 or abs(a[4] - b[4]) > 0.1)
 
 
 def solve(args, board):
@@ -114,6 +142,14 @@ def solve(args, board):
                 board=dict(cols=args.cols, rows=args.rows, square_mm=args.square_mm,
                            marker_mm=args.marker_mm, dictionary="DICT_5X5_100")))
     print(f"{len(objects)}/{len(paths)} usable views; RMS {rms:.4f} px; saved {args.out}")
+    # Low RMS does not mean a valid lens model: near-identical views overfit with tiny residuals.
+    problems = []
+    if abs(K[0, 0] / K[1, 1] - 1) > 0.03:
+        problems.append(f"fx/fy = {K[0, 0] / K[1, 1]:.3f} (square pixels should give ~1.00)")
+    if np.max(np.abs(dist.ravel())) > 5:
+        problems.append(f"distortion coefficients up to {np.max(np.abs(dist.ravel())):.1f} (expect < ~2)")
+    if problems:
+        print("WARNING: implausible calibration, recapture with more varied views:\n  " + "\n  ".join(problems))
 
 
 def main():

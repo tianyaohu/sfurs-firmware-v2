@@ -7,9 +7,13 @@ Status as of 2026-10-17. Branch `feature/vision-rig`, worktree `Project1/sfurs-v
   - Requirements: manual exposure ≤100 and 2 V4L2 buffers (1 buffer halves it to 15 fps).
   - Fixed focus: no autofocus control exists, so the lens calibration survives remounting.
 - **Lens calibration:** `~/sfurs_firmware/rig-calib/camera.yaml`.
-  - 45 views, fx 870, fy 871, centre (625, 394), k1 −0.33, k2 0.09, RMS 1.9 px.
-  - **Trust it only within ~250 px of the image centre.** There, the two halves of a
-    cross-validation agree within 2 px. At the edges and corners they disagree by 10–200+ px.
+  - 65 views covering all 9 image regions (≥4 views each). fx 880, fy 879, centre (645, 372),
+    k1 −0.33, k2 0.09, RMS 1.76 px.
+  - Cross-validation, comparing two half-calibrations:
+    - within 250 px of the centre: agree to ≤1.6 px
+    - 250–450 px: median 2.9 px, max 8.5 px
+    - beyond 450 px (the corners): median 13 px, outliers up to ~200 px
+  - **Prefer the centre; treat the corners as unverified until a physical edge test.**
 - **Displacement measurement, no floor survey needed:** `scripts/rig/rig_measure.py`.
   - Works from one AprilTag 36h11 (ID 0, 100 mm black square) plus `camera.yaml`.
   - Press `r` with the tag still to set the reference. It then reports the distance moved
@@ -41,9 +45,9 @@ Status as of 2026-10-17. Branch `feature/vision-rig`, worktree `Project1/sfurs-v
 ## Gaps (highest value first)
 1. **Ground-truth accuracy test.** Slide the tag a known 210 mm (the checkerboard's long side)
    several times in the centre. If readings are consistently short (one read 193 mm), find the
-   cause before trusting absolute distances. Suspects: tag print size (`--tag-mm`), principal
-   point (cy is 34 px off centre), calibration edge error.
-2. **Calibration quality.** RMS 1.9 px and unreliable edges. Fixes:
+   cause before trusting absolute distances. Suspects: tag print size (`--tag-mm`) and calibration error.
+   (The principal point was 34 px off in the 45-view calibration; it is centred in the 65-view one.)
+2. **Calibration quality.** RMS 1.76 px; corners still unverified (2026-10-17 edge round helped the mid-ring). Fixes:
    - glue the board to rigid foam board
    - hold still for each view (capture has no motion-blur check yet)
    - 3–4 views in every image corner, with the board ~40 cm from the lens

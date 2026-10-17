@@ -345,9 +345,9 @@ int main(int argc, char **argv) {
     speed_cmd(100, 100); tick(3); assert(state == RUN); speed = 100;
     for (int i = 0; i < 20; ++i) { speed_cmd(0, 100); tick(20); } /* decelerating */
     assert(state == RUN && drive_app.active);
-    speed = 40; for (int i = 0; i < 10; ++i) { speed_cmd(0, 100); tick(20); }
+    speed = 60; for (int i = 0; i < 10; ++i) { speed_cmd(0, 100); tick(20); }
     assert(state == RUN); /* still rolling */
-    speed = -6; for (int i = 0; i < 7; ++i) { speed_cmd(0, 100); tick(20); }
+    for (int i = 0; i < 7; ++i) { speed = i % 2 ? -27 : 29; speed_cmd(0, 100); tick(20); } /* rocking */
     assert(state == RUN); /* 140 ms at standstill */
     speed_cmd(0, 100); tick(20);
     assert(state == IDLE && !drive_app.active && drive_app.stop_reason == ESC_STOP_PARKED);

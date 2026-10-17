@@ -22,9 +22,11 @@
 #define FRICTION_STALL_MS 100U
 
 /* Parking (drive_app.h). The Nucleo slews to 0, so by the time the command is
- * 0 the wheel is nearly stopped; |speed| below PARK_RPM counts as standstill. */
+ * 0 the wheel is nearly stopped. Holding zero, a wheel rocks across one Hall
+ * edge and the estimate reads +-25-32 RPM (its smallest non-zero value), so
+ * anything below PARK_RPM counts as standstill. */
 #define PARK_MS 150U
-#define PARK_RPM 10
+#define PARK_RPM 45
 
 /* Hall alignment: hold the rotor with d-axis current at a forced angle, sweep
  * the angle slowly forward then back, and compare it with the angle the Hall

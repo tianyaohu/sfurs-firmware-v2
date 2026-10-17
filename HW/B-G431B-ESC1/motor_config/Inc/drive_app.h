@@ -14,8 +14,8 @@
  *  - I2T: sustained current above nominal derates the current limit;
  *  - a fault while driving latches off until STOP or a command gap.
  *
- * Parking: a wheel commanded to 0 RPM that has been at standstill for
- * PARK_MS is switched off (coasts, no current) instead of holding zero speed;
+ * Parking: a wheel commanded to 0 RPM that has been at standstill (below
+ * PARK_RPM) for PARK_MS is switched off (coasts, no current) instead of holding zero speed;
  * at standstill the Hall speed estimate is too coarse to regulate on and the
  * PI only buzzes. The next non-zero SPEED_WRITE starts it again (~30 ms).
  *

@@ -165,11 +165,12 @@ def solve(args, board):
     if np.max(np.abs(dist.ravel())) > 5:
         problems.append(f"distortion coefficients up to {np.max(np.abs(dist.ravel())):.1f} (expect < ~2)")
     widths = [np.ptp(np.asarray(i).reshape(-1, 2)[:, 0]) / size[0] for i in images]
-    if np.median(widths) < 0.25:
-        problems.append(f"board spans a median {100 * np.median(widths):.0f}% of image width "
-                        "(hold it closer: aim for 30-60%)")
     if problems:
         print("WARNING: implausible calibration, recapture with more varied views:\n  " + "\n  ".join(problems))
+    if np.median(widths) < 0.25:
+        # The fx=3961 failure had a 10% median; small boards weaken focal length vs distortion.
+        print(f"NOTE: board spans a median {100 * np.median(widths):.0f}% of image width; "
+              "30-60% constrains the lens better")
 
 
 def main():

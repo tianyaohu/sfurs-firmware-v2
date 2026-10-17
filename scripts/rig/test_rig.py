@@ -112,6 +112,21 @@ class RigTests(unittest.TestCase):
         # Known answer from ground-runs/run1-0.3.jsonl: vector [0, 300, 0] mm/s -> firmware target_rpm.
         np.testing.assert_allclose(geometry_matrix() @ [0, 300, 0], [76, 72, -72, -76], atol=1)
 
+    def test_measure_displacement_known_moves(self):
+        from rig_measure import average_pose, displacement, tag_pose
+        K, dist, h = np.array([[870., 0, 640], [0, 870, 360], [0, 0, 1]]), np.zeros(5), 50
+        obj = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], float)
+        rng = np.random.default_rng(3)
+
+        def pose(x, y, yaw_deg):
+            R = cv2.Rodrigues(np.array([np.pi, 0, 0]))[0] @ cv2.Rodrigues(np.array([0, 0, np.radians(yaw_deg)]))[0]
+            px = cv2.projectPoints(obj, cv2.Rodrigues(R)[0], np.array([x, y, 1500.]), K, dist)[0].reshape(4, 2)
+            return average_pose([tag_pose(px + rng.normal(0, 0.3, (4, 2)), K, dist, 100) for _ in range(15)])
+
+        moved, turned, _ = displacement(pose(-150, -100, 0), pose(150, 100, -45))
+        self.assertLess(abs(moved - np.hypot(300, 200)), 3)
+        self.assertLess(abs(turned + 45), 1)
+
     def test_distorted_video_end_to_end(self):
         calibration, floor, render, _ = camera_scene()
         with tempfile.TemporaryDirectory(prefix="rig-test-") as tmp:

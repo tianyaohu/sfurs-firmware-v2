@@ -16,7 +16,8 @@
  *
  * Friction feed-forward: in speed mode the Iq reference is the speed PI
  * output plus sign(speed ref) * ff, where ff is ff_static at standstill and
- * fades linearly to ff_kinetic at FRICTION_FADE_RPM, clamped to the current
+ * fades linearly to ff_kinetic as the wheel first reaches FRICTION_FADE_RPM,
+ * then stays kinetic until a stop command or a stall; clamped to the current
  * limit. It supplies the breakaway current up front so the integrator does
  * not have to wind up to it. */
 

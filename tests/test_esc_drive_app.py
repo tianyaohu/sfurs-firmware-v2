@@ -318,11 +318,17 @@ int main(int argc, char **argv) {
     assert(drive_speed_iq_ref(100, 50, 0) == 100 + 1360);     /* standstill: full static */
     assert(drive_speed_iq_ref(100, 50, -20) == 100 + 1360);   /* pushed backwards: full static */
     assert(drive_speed_iq_ref(100, 50, 15) == 100 + 816);     /* halfway through the fade */
-    assert(drive_speed_iq_ref(100, 50, 30) == 100 + 272);     /* moving: kinetic only */
+    assert(drive_speed_iq_ref(100, 50, 5) == 100 + 816);      /* fade only goes one way */
+    assert(drive_speed_iq_ref(100, 50, 30) == 100 + 272);     /* broken free: kinetic only */
+    for (int k = 0; k < 99; ++k) /* Hall scatter / brief dips below zero do not re-arm */
+      assert(drive_speed_iq_ref(100, 50, k % 3 ? 10 : -5) == 100 + 272);
+    for (int k = 0; k < 99; ++k) assert(drive_speed_iq_ref(100, 50, 0) == 100 + 272);
+    assert(drive_speed_iq_ref(100, 50, 0) == 100 + 1360);     /* stalled 100 ms: static again */
     assert(drive_speed_iq_ref(100, 50, 400) == 100 + 272);
+    assert(drive_speed_iq_ref(7, 1, 400) == 7 && drive_speed_iq_ref(7, -1, 0) == 7); /* stop band, re-arms */
     assert(drive_speed_iq_ref(-100, -50, 0) == -100 - 1360);  /* reverse mirrors */
     assert(drive_speed_iq_ref(-100, -50, -15) == -100 - 816);
-    assert(drive_speed_iq_ref(7, 1, 0) == 7 && drive_speed_iq_ref(7, -1, 0) == 7); /* stop command */
+    assert(drive_speed_iq_ref(-100, -50, -40) == -100 - 272);
     assert(drive_speed_iq_ref(3000, 50, 0) == 6 * 544);       /* clamped to the limit */
     assert(drive_speed_iq_ref(-3000, -50, 0) == -6 * 544);
     rx(CONFIG_SET | 1U, (3000U << 16) | key_s); tick(1);

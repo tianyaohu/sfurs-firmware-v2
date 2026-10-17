@@ -12,10 +12,14 @@
 #define I2T_DERATED_A 3.0f
 #define AMPS_PER_COUNT (1.0f / (float)CURRENT_CONV_FACTOR)
 
-/* Friction feed-forward: the static part fades out over the speed where the
- * Hall estimate becomes trustworthy (it scatters ~+-25 RPM below 60 RPM). */
+/* Friction feed-forward: the static part fades out as the wheel first speeds
+ * up to FRICTION_FADE_RPM and then stays off (kinetic only), because the Hall
+ * estimate scatters ~+-25 RPM at low speed and would otherwise toggle it. It
+ * re-arms on a stop command or a stall (no forward speed for
+ * FRICTION_STALL_MS). */
 #define FRICTION_FADE_RPM 30
 #define FRICTION_MIN_REF_RPM 2 /* below this the command means "stop" */
+#define FRICTION_STALL_MS 100U
 
 /* Hall alignment: hold the rotor with d-axis current at a forced angle, sweep
  * the angle slowly forward then back, and compare it with the angle the Hall
@@ -64,6 +68,9 @@ static volatile uint32_t capture_armed, capture_index;
 static volatile int16_t capture_step_counts;
 static uint32_t capture_ms, capture_vbus_cv;
 static uint32_t read_next, read_end, read_bank; /* poll context only */
+
+static uint32_t ff_broken_free, ff_stall_ms;
+static int32_t ff_peak; /* highest forward speed since the start, <= FRICTION_FADE_RPM */
 
 static uint32_t align_ms, align_prev_hall;
 static int16_t align_saved_shift, align_ref;
@@ -131,11 +138,18 @@ int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm)
   int32_t ff = 0;
   if (drive_app.active && (ref_rpm >= FRICTION_MIN_REF_RPM || ref_rpm <= -FRICTION_MIN_REF_RPM)) {
     const int32_t dir = ref_rpm > 0 ? 1 : -1;
-    int32_t along = dir * rpm; /* speed in the commanded direction; <= 0 = not moving yet */
-    if (along < 0) along = 0;
-    if (along > FRICTION_FADE_RPM) along = FRICTION_FADE_RPM;
+    const int32_t along = dir * rpm; /* speed in the commanded direction */
+    if (along > 0) ff_stall_ms = 0U;
+    else if (++ff_stall_ms >= FRICTION_STALL_MS) { ff_broken_free = 0U; ff_peak = 0; }
+    if (!ff_broken_free && along > ff_peak) ff_peak = along;
+    if (ff_peak >= FRICTION_FADE_RPM) ff_broken_free = 1U;
     const int32_t st = drive_app.ff_static_counts, kin = drive_app.ff_kinetic_counts;
-    ff = dir * (kin + (st - kin) * (FRICTION_FADE_RPM - along) / FRICTION_FADE_RPM);
+    ff = ff_broken_free ? kin : kin + (st - kin) * (FRICTION_FADE_RPM - ff_peak) / FRICTION_FADE_RPM;
+    ff *= dir;
+  } else {
+    ff_broken_free = 0U;
+    ff_peak = 0;
+    ff_stall_ms = 0U;
   }
   int32_t out = (int32_t)pi_out + ff;
   const int32_t limit = drive_app.iq_limit_counts;

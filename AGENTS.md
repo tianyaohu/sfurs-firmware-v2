@@ -57,10 +57,14 @@ Read `docs/HARDWARE.md` first. In short:
 - Ask before touching hardware and say what you will do (board, probe,
   operation, power state needed). Only one agent or tool uses a probe or the
   CAN bus at a time.
-- The user must confirm the battery state before each hardware step and
-  again after any cable or power change; never infer it.
-- Battery OFF to flash an ESC. Wheels off the ground for alignment and the
-  first run after any firmware change. Motion only when the user asks for it.
+- Know the battery state before each hardware step and again after any cable
+  or power change: measure it (ESC Vbus over CAN or SWD; < 8 V is off) or
+  take it from the user. Ask only when it can't be measured.
+- Flashing an ESC: over SWD, battery OFF. Over CAN (`esc_update.py --can`),
+  battery ON is allowed when every ESC reports IDLE with no fault, Vbus is
+  measured, and the bootloader verifies the image CRC. Wheels off the ground
+  for alignment and the first run after any firmware change. Motion only
+  when the user asks for it.
 - Check the full probe serial before writing. Back up an ESC's flash before
   overwriting. Never mass-erase, change option bytes or flash CM4.
 - Leave the hardware stopped and probes released when you finish, and tell

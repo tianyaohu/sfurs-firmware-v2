@@ -31,7 +31,8 @@ scripts/esc_tool.py align all                 # battery ON, wheels raised
 scripts/keyboard_drive.py --speed 0.5         # WASD move, QE rotate, X quit
 ```
 
-Read [docs/HARDWARE.md](docs/HARDWARE.md) before touching hardware.
+Read [docs/HARDWARE.md](docs/HARDWARE.md) before touching hardware, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for branches and merge requests.
 Without a host toolchain, run the same commands in the dev container
 ([DOCKER.md](DOCKER.md)); CI runs `run_all.py` and `build_all.py` in it.
 

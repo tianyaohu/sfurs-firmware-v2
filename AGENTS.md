@@ -39,10 +39,13 @@ are in `docs/DRIVE.md`, `docs/HARDWARE.md`, `docs/CAN_FWU.md`.
 
 ## Git
 
-- Each agent works on its own branch and worktree; never edit another
+- Branching follows `CONTRIBUTING.md`: topic branches `type/topic`
+  (`feature/`, `fix/`, `hw/`, `docs/`, `chore/`, `release/`) off `develop`,
+  MR into `develop`; `main` only from `develop`/`release/*`.
+- Each agent works on its own topic branch and worktree; never edit another
   agent's worktree or switch its branch.
-- Integration branch: `hw-session`. Merging to `develop`/`main` and any push
-  need the user's approval.
+- Pushing your own topic branch is fine. Never push to `develop` or `main`;
+  opening or merging an MR into them needs the user's approval.
 - Stage files explicitly; commit only your own changes. No force-push,
   reset, or deletion of branches/worktrees you did not create unless asked.
 - Build outputs, backups and generated payloads stay out of git.

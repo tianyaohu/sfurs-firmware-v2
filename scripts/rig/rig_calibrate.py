@@ -133,7 +133,11 @@ def solve(args, board):
             names.append(path)
     if len(objects) < 8:
         raise ValueError(f"need >=8 usable, diverse views; found {len(objects)}")
-    rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(objects, images, size, None, None)
+    # k3 is poorly constrained for ordinary webcam lenses and ran away (k3=878) on real views.
+    # Start from a typical webcam (~70 deg HFOV, centered); OpenCV's own planar init is poor for small boards.
+    flags = cv2.CALIB_USE_INTRINSIC_GUESS | (0 if args.full_distortion else cv2.CALIB_FIX_K3)
+    guess = np.array([[0.7 * size[0], 0, size[0] / 2], [0, 0.7 * size[0], size[1] / 2], [0, 0, 1]])
+    rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(objects, images, size, guess, None, flags=flags)
     errors = [float(np.sqrt(np.mean(np.sum((cv2.projectPoints(o, r, t, K, dist)[0] - i)
                                           ** 2, axis=-1))))
               for o, i, r, t in zip(objects, images, rvecs, tvecs)]
@@ -148,6 +152,10 @@ def solve(args, board):
         problems.append(f"fx/fy = {K[0, 0] / K[1, 1]:.3f} (square pixels should give ~1.00)")
     if np.max(np.abs(dist.ravel())) > 5:
         problems.append(f"distortion coefficients up to {np.max(np.abs(dist.ravel())):.1f} (expect < ~2)")
+    widths = [np.ptp(np.asarray(i).reshape(-1, 2)[:, 0]) / size[0] for i in images]
+    if np.median(widths) < 0.25:
+        problems.append(f"board spans a median {100 * np.median(widths):.0f}% of image width "
+                        "(hold it closer: aim for 30-60%)")
     if problems:
         print("WARNING: implausible calibration, recapture with more varied views:\n  " + "\n  ".join(problems))
 
@@ -174,6 +182,7 @@ def main():
             p.add_argument("--preview", action="store_true")
         else:
             p.add_argument("--images", nargs="+", required=True)
+            p.add_argument("--full-distortion", action="store_true", help="also fit k3")
     args = parser.parse_args()
     board = make_board(args)
     if args.command == "board":

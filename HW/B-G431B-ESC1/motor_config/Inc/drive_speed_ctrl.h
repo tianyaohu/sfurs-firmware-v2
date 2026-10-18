@@ -96,13 +96,20 @@ typedef struct {
  * speed loop turns into +-6 A, which drives the next rock - a self-sustaining
  * limit cycle (FR stall test 2026-10-17: 60 reversals in 384 ms at +-6 A).
  * Until two consecutive transitions agree in direction, and the SDK speed has
- * the same sign, the speed fed to the loop is 0. */
+ * the same sign, the speed fed to the loop is 0. The startup loop must not
+ * take rocking as feedback either, so the filter also keeps qualified
+ * counters for dsc_in_t: an edge is progress only when it leaves a one-edge
+ * band around the furthest position reached (rocking across one edge adds
+ * none), and a capture counts only while the speed is accepted. */
 typedef struct {
-  uint16_t pos, neg;  /* edge counters at the last call */
-  int8_t dir;         /* direction of the last transitions, 0 unknown */
-  uint8_t run;        /* consecutive transitions in that direction (saturating) */
+  uint16_t pos, neg, caps;  /* raw counters at the last call */
+  int8_t dir;               /* direction of the last transitions, 0 unknown */
+  uint8_t run;              /* consecutive transitions in that direction (saturating) */
+  int32_t net, hi, lo;      /* net position and its one-edge band, edges */
+  uint16_t qpos, qneg, qcaps; /* qualified progress edges and captures */
 } dsc_rev_t;
-int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg, int16_t rpm);
+int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg,
+                            uint16_t captures, int16_t rpm);
 
 void dsc_reset(dsc_state_t *s);
 int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_Handle_t *pid);

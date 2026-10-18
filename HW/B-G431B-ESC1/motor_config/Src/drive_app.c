@@ -201,12 +201,15 @@ int drive_dsc_enabled(void)
 
 int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
 {
-  const int16_t filtered = dsc_reversal_filter(&drive_rev, HALL_M1.EdgesPos, HALL_M1.EdgesNeg, rpm);
-  if (drive_rev_enable) rpm = filtered;
+  const uint16_t pos = HALL_M1.EdgesPos, neg = HALL_M1.EdgesNeg, caps = HALL_M1.Captures;
+  const int16_t filtered = dsc_reversal_filter(&drive_rev, pos, neg, caps, rpm);
+  const int on = drive_rev_enable != 0U;
+  if (on) rpm = filtered;
   if (!drive_dsc_cfg.enable) return PI_Controller(pid, (int32_t)ref_rpm - rpm);
   const dsc_in_t in = { .ref_rpm = ref_rpm, .meas_rpm = rpm,
-                        .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg,
-                        .captures = HALL_M1.Captures,
+                        .edges_pos = on ? drive_rev.qpos : pos,
+                        .edges_neg = on ? drive_rev.qneg : neg,
+                        .captures = on ? drive_rev.qcaps : caps,
                         .limit = (int16_t)drive_app.iq_limit_counts,
                         .active = drive_app.active ? 1U : 0U };
   return dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);

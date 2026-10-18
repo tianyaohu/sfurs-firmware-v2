@@ -110,8 +110,9 @@ HALL_Handle_t HALL_M1;
 static int pi_calls, dsc_calls, dsc_resets; static dsc_in_t dsc_last_in;
 int16_t PI_Controller(PID_Handle_t *p, int32_t err) { (void)p; ++pi_calls; return (int16_t)err; }
 void dsc_reset(dsc_state_t *st) { *st = (dsc_state_t){0}; ++dsc_resets; }
-int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t pos, uint16_t neg, int16_t rpm) {
-  (void)f; (void)pos; (void)neg; return (int16_t)(rpm / 2); /* marks "filtered" */
+int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t pos, uint16_t neg, uint16_t caps, int16_t rpm) {
+  f->qpos = (uint16_t)(pos + 100); f->qneg = (uint16_t)(neg + 100); f->qcaps = (uint16_t)(caps + 100);
+  return (int16_t)(rpm / 2); /* marks "filtered" */
 }
 int16_t dsc_step(const dsc_cfg_t *c, dsc_state_t *st, const dsc_in_t *in, PID_Handle_t *p) {
   (void)c; (void)st; (void)p; ++dsc_calls; dsc_last_in = *in; return 123;
@@ -426,7 +427,8 @@ int main(int argc, char **argv) {
     HALL_M1.EdgesPos = 7; HALL_M1.EdgesNeg = 2; HALL_M1.Captures = 5;
     speed_cmd(100, 100); tick(3); assert(state == RUN && drive_app.active);
     assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 123 && pi_calls == 1);
-    assert(dsc_last_in.edges_pos == 7 && dsc_last_in.edges_neg == 2 && dsc_last_in.captures == 5);
+    assert(dsc_last_in.edges_pos == 107 && dsc_last_in.edges_neg == 102 && dsc_last_in.captures == 105); /* qualified */
+    assert(dsc_last_in.meas_rpm == 10);                                     /* filtered speed */
     assert(dsc_last_in.limit == 6 * 544 && dsc_last_in.active == 1 && dsc_last_in.ref_rpm == 50);
     rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
     assert(drive_dsc_cfg.enable == 1 && drive_app.rejected == 6); /* only when idle */

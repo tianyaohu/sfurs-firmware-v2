@@ -35,11 +35,24 @@ static int16_t fail(dsc_state_t *s, PID_Handle_t *pid, uint8_t reason, const dsc
   return 0;
 }
 
-int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg, int16_t rpm)
+int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg,
+                            uint16_t captures, int16_t rpm)
 {
   const uint16_t dp = (uint16_t)(edges_pos - f->pos), dn = (uint16_t)(edges_neg - f->neg);
+  const uint16_t dc = (uint16_t)(captures - f->caps);
   f->pos = edges_pos;
   f->neg = edges_neg;
+  f->caps = captures;
+  f->net += (int32_t)dp - (int32_t)dn;
+  if (f->net > f->hi) {
+    f->qpos = (uint16_t)(f->qpos + (uint32_t)(f->net - f->hi));
+    f->hi = f->net;
+    f->lo = f->net - 1;
+  } else if (f->net < f->lo) {
+    f->qneg = (uint16_t)(f->qneg + (uint32_t)(f->lo - f->net));
+    f->lo = f->net;
+    f->hi = f->net + 1;
+  }
   if (dp != 0U && dn != 0U) { /* back and forth within one tick */
     f->dir = 0;
     f->run = 0U;
@@ -51,6 +64,7 @@ int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg
     f->run = (uint8_t)(run < 255U ? run : 255U);
   }
   if (f->run < 2U || (rpm > 0 && f->dir < 0) || (rpm < 0 && f->dir > 0)) return 0;
+  f->qcaps = (uint16_t)(f->qcaps + dc);
   return rpm;
 }
 

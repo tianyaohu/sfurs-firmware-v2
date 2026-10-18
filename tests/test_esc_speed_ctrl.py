@@ -341,23 +341,63 @@ static void test_reversal_filter(void)
 {
   dsc_rev_t f = {0};
   uint16_t pos = 7, neg = 3;
-  CHECK(dsc_reversal_filter(&f, pos, neg, 0) == 0);
+  CHECK(dsc_reversal_filter(&f, pos, neg, 0, 0) == 0);
   for (int k = 0; k < 60; ++k) {          /* rocking */
     if (k % 2) ++neg; else ++pos;
-    CHECK(dsc_reversal_filter(&f, pos, neg, (int16_t)(k % 2 ? -190 : 210)) == 0);
-    for (int t = 0; t < 5; ++t) CHECK(dsc_reversal_filter(&f, pos, neg, (int16_t)(k % 2 ? -190 : 210)) == 0);
+    CHECK(dsc_reversal_filter(&f, pos, neg, 0, (int16_t)(k % 2 ? -190 : 210)) == 0);
+    for (int t = 0; t < 5; ++t) CHECK(dsc_reversal_filter(&f, pos, neg, 0, (int16_t)(k % 2 ? -190 : 210)) == 0);
   }
-  ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 40) == 0);  /* first forward edge after rocking */
-  ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 45) == 45); /* second: real motion */
-  CHECK(dsc_reversal_filter(&f, pos, neg, 47) == 47);        /* between edges: holds */
-  CHECK(dsc_reversal_filter(&f, pos, neg, -30) == 0);        /* sign disagrees with the edges */
-  ++neg; ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 50) == 0); /* both in one tick */
-  pos = (uint16_t)(pos + 3); CHECK(dsc_reversal_filter(&f, pos, neg, 1500) == 1500); /* fast: 3 at once */
+  ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 0, 40) == 0);  /* first forward edge after rocking */
+  ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 0, 45) == 45); /* second: real motion */
+  CHECK(dsc_reversal_filter(&f, pos, neg, 0, 47) == 47);        /* between edges: holds */
+  CHECK(dsc_reversal_filter(&f, pos, neg, 0, -30) == 0);        /* sign disagrees with the edges */
+  ++neg; ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 0, 50) == 0); /* both in one tick */
+  pos = (uint16_t)(pos + 3); CHECK(dsc_reversal_filter(&f, pos, neg, 0, 1500) == 1500); /* fast: 3 at once */
   dsc_rev_t w = { .pos = 65535, .neg = 0 };
-  CHECK(dsc_reversal_filter(&w, 0, 0, 10) == 0);             /* wrap: one edge */
-  CHECK(dsc_reversal_filter(&w, 1, 0, 10) == 10);            /* second */
+  CHECK(dsc_reversal_filter(&w, 0, 0, 0, 10) == 0);             /* wrap: one edge */
+  CHECK(dsc_reversal_filter(&w, 1, 0, 0, 10) == 10);            /* second */
   dsc_rev_t r = {0};
-  for (int k = 0; k < 5; ++k) CHECK(dsc_reversal_filter(&r, 0, (uint16_t)(k + 1), -60) == (k ? -60 : 0)); /* reverse motion */
+  for (int k = 0; k < 5; ++k) CHECK(dsc_reversal_filter(&r, 0, (uint16_t)(k + 1), 0, -60) == (k ? -60 : 0)); /* reverse motion */
+}
+
+/* Re-review 4: rocking must not count as progress or feedback, and the
+ * composed filter -> controller rocks into STARTING/FAILED, not 6 A of PI. */
+static void test_qualified_feedback(void)
+{
+  dsc_rev_t f = {0};
+  uint16_t pos = 0, neg = 0, caps = 0;
+  ++pos; ++caps; (void)dsc_reversal_filter(&f, pos, neg, caps, 0);
+  CHECK(f.qpos == 1);                        /* first edge from rest is progress */
+  for (int k = 0; k < 40; ++k) {             /* rocking across that edge */
+    if (k % 2) ++pos; else ++neg;
+    ++caps;
+    (void)dsc_reversal_filter(&f, pos, neg, caps, (int16_t)(k % 2 ? 200 : -200));
+  }
+  CHECK(f.qpos == 1 && f.qneg == 0 && f.qcaps == 0);
+  for (int k = 0; k < 5; ++k) { ++pos; ++caps; (void)dsc_reversal_filter(&f, pos, neg, caps, 50); }
+  CHECK(f.qpos == 6 && f.qcaps == 5);        /* real motion; the last rock was forward, so all 5 agree */
+  for (int k = 0; k < 3; ++k) { ++neg; (void)dsc_reversal_filter(&f, pos, neg, caps, -40); }
+  CHECK(f.qneg == 2);                        /* reversal: first back edge is inside the band */
+}
+
+static void test_rocking_through_filter_fails_start(void)
+{
+  setup();
+  dsc_rev_t f = {0};
+  uint16_t pos = 0, neg = 0, caps = 0;
+  in.ref_rpm = 30;
+  int max_out = 0;
+  for (int k = 0; k < 3000 && s.state != DSC_FAILED; ++k) {
+    if (k == 80) { ++pos; ++caps; }                          /* breakaway edge */
+    if (k > 80 && k % 6 == 0) { if ((k / 6) % 2) ++pos; else ++neg; ++caps; } /* rocking */
+    int16_t rpm = dsc_reversal_filter(&f, pos, neg, caps, (int16_t)((k / 6) % 2 ? 200 : -200));
+    in.meas_rpm = rpm;
+    in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    tick(1);
+    if (out > max_out) max_out = out;
+  }
+  CHECK(s.state == DSC_FAILED);
+  CHECK(max_out <= 1632);                    /* never above the start ceiling (3 A) */
 }
 
 int main(void)
@@ -374,6 +414,8 @@ int main(void)
   test_threshold_crossing_down();
   test_cap_reestablished_after_restick_and_reversal();
   test_reversal_filter();
+  test_qualified_feedback();
+  test_rocking_through_filter_fails_start();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

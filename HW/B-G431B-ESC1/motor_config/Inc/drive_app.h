@@ -64,6 +64,12 @@ void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
  * the measured speed. */
 int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm);
 
+/* Called from FOC_CalcCurrRef before the speed PI: while the Hall speed FIFO
+ * refills after standstill or a direction change, the estimate is one edge
+ * interval, and a single noisy edge reads 4-5x the true speed. Caps the
+ * measured speed in place (also what telemetry reports). */
+void drive_speed_plausible(int16_t *rpm, int16_t ref_rpm);
+
 void drive_app_init(void);
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length);
 /* send() returns nonzero once the 8-byte frame is queued. */

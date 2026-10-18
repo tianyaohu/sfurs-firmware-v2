@@ -39,7 +39,8 @@ qd_t MC_GetIqdMotor1(void); qd_t MC_GetIqdrefMotor1(void);
 #pragma once
 #include <stdint.h>
 typedef struct { int16_t kp, ki; int16_t up, low; int32_t iup, ilow; uint16_t kidiv; } PID_Handle_t;
-typedef struct { int16_t PhaseShift; int8_t Direction; uint8_t HallState; int16_t MeasuredElAngle; } HALL_Handle_t;
+typedef struct { int16_t PhaseShift; int8_t Direction; uint8_t HallState; int16_t MeasuredElAngle;
+                 uint8_t BufferFilled, SpeedBufferSize; } HALL_Handle_t;
 extern PID_Handle_t PIDSpeedHandle_M1, PIDIqHandle_M1, PIDIdHandle_M1; extern HALL_Handle_t HALL_M1;
 static inline void PID_SetKP(PID_Handle_t *p, int16_t v) { p->kp = v; }
 static inline void PID_SetKI(PID_Handle_t *p, int16_t v) { p->ki = v; }
@@ -340,6 +341,18 @@ int main(int argc, char **argv) {
     assert(drive_app.ff_static_counts == 1360 && drive_app.ff_kinetic_counts == 272 && drive_app.rejected == 3);
     drive_app.iq_limit_counts = 3 * 544; /* I2T derate also caps the feed-forward */
     drive_app.active = 1; assert(drive_speed_iq_ref(1000, 50, 0) == 3 * 544);
+  } else if (scenario == 15) { /* start-up speed plausibility */
+    int16_t r = 212;
+    HALL_M1.SpeedBufferSize = 6; HALL_M1.BufferFilled = 1;
+    drive_speed_plausible(&r, 44); assert(r == 212); /* idle: untouched */
+    drive_app.aligned = 1; speed_cmd(44, 100); tick(3); assert(drive_app.active);
+    drive_speed_plausible(&r, 44); assert(r == 76);   /* 1.5 x 44 + 10 */
+    r = -212; drive_speed_plausible(&r, -44); assert(r == -76);
+    r = -212; drive_speed_plausible(&r, 44); assert(r == -76); /* a wrong-sign spike too */
+    r = 50; drive_speed_plausible(&r, 44); assert(r == 50);    /* plausible: untouched */
+    r = 300; drive_speed_plausible(&r, 0); assert(r == 300);   /* stop command: untouched */
+    HALL_M1.BufferFilled = 6;                                  /* FIFO full: average is trusted */
+    r = 212; drive_speed_plausible(&r, 44); assert(r == 212);
   } else if (scenario == 14) { /* parking at zero command */
     drive_app.aligned = 1;
     speed_cmd(100, 100); tick(3); assert(state == RUN); speed = 100;
@@ -445,6 +458,9 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_parks_at_zero_command(self):
         self.run_scenario(14)
+
+    def test_startup_speed_plausibility(self):
+        self.run_scenario(15)
 
 
 if __name__ == "__main__":

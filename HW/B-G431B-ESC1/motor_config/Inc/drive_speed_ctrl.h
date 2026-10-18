@@ -17,8 +17,11 @@
  *   -> FAILED if no edge within start_hold_ms after reaching start_cap, or no
  *      fresh captures within pcap_fallback_ms of the hand-off; latched, output
  *      0, until the command returns to stop.
- * A command sign change re-arms STARTING once the wheel has slowed below
- * DSC_REVERSE_RPM. Anti-windup: conditional integration against the combined
+ * RUNNING with no commanded-direction edge for max(DSC_RESTICK_MIN_MS, two
+ * edge periods at |ref|) has re-stuck: back to STARTING. A command sign change
+ * runs plain PI until the wheel has slowed below DSC_REVERSE_RPM, then
+ * STARTING; a start while already moving along the command goes straight to
+ * RUNNING. Anti-windup: conditional integration against the combined
  * P + I + ff command and the active limit.
  *
  * Units: current in counts (CURRENT_CONV_FACTOR per A), speed in RPM, time in
@@ -29,10 +32,13 @@
 
 #define DSC_STOP_RPM 2      /* |ref| below this is a stop command */
 #define DSC_REVERSE_RPM 45  /* standstill threshold (Hall rocking reads +-25-32) */
+#define DSC_RESTICK_MIN_MS 100U
+#define DSC_EDGE_PERIOD_MS_RPM 1250  /* 48 edges/rev: edge period [ms] = 1250 / RPM */
 
 enum { DSC_STOPPED, DSC_STARTING, DSC_RUNNING, DSC_FAILED };
 enum { DSC_R_NONE, DSC_R_ARMED, DSC_R_EDGE, DSC_R_STOP, DSC_R_REVERSE,
-       DSC_R_NO_EDGE, DSC_R_NO_CAPTURE, DSC_R_INACTIVE };
+       DSC_R_NO_EDGE, DSC_R_NO_CAPTURE, DSC_R_INACTIVE, DSC_R_RESTICK,
+       DSC_R_MOVING };
 
 typedef struct {
   uint8_t enable;
@@ -66,7 +72,9 @@ typedef struct {
   uint16_t edges0, caps0;   /* counters latched on entering the state */
   int16_t ramp;             /* startup ramp level, counts (magnitude) */
   int16_t start_iq;         /* command at the hand-off edge: apparent breakaway */
-  uint8_t capped;           /* positive-P cap active */
+  uint8_t capped;           /* positive-P cap active (integral frozen meanwhile) */
+  uint16_t edges_last;      /* commanded-direction edge count at the last edge */
+  uint16_t since_edge;      /* ticks since that edge (saturating) */
   /* last tick, for the recorder */
   int16_t p, i, ff, out;
 } dsc_state_t;

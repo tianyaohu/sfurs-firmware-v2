@@ -74,6 +74,10 @@ int drive_dsc_enabled(void);
 extern dsc_cfg_t drive_dsc_cfg;
 extern dsc_state_t drive_dsc;
 
+/* Speed-loop recorder (ESC_RECORD_START), from FOC_CalcCurrRef every speed
+ * tick with the speed-loop output and the final Iq reference. */
+void drive_record_tick(int16_t pi_out, int16_t iq_ref);
+
 void drive_app_init(void);
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length);
 /* send() returns nonzero once the 8-byte frame is queued. */

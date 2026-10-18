@@ -70,7 +70,17 @@ static volatile uint8_t status_pending, diag_pending, ident_pending;
 static uint32_t seen_speed, seen_stop, seen_align, seen_config, seen_capture, seen_read;
 
 /* FOC ISR <-> tick: the tick arms, the ISR records and disarms when full. */
-static int16_t capture_buf[ESC_CAPTURE_SAMPLES][6];
+/* Shared by the current-loop capture and the speed-loop recorder. */
+static union {
+  int16_t cur[ESC_CAPTURE_SAMPLES][6];
+  int16_t rec[ESC_RECORD_SAMPLES][8];
+} capture_mem;
+_Static_assert(sizeof(capture_mem.rec) == sizeof(capture_mem.cur), "recorder reuses capture RAM");
+#define capture_buf capture_mem.cur
+static volatile uint32_t rec_status, rec_index, rec_remaining, rec_delay, rec_trigger_index;
+static uint32_t rec_pre, rec_prev_moving, rec_owner; /* rec_owner: buffer holds a recording */
+static volatile uint32_t rx_record_word, rx_record_count;
+static uint32_t seen_record;
 static volatile uint32_t capture_armed, capture_index;
 static volatile int16_t capture_step_counts;
 static uint32_t capture_ms, capture_vbus_cv;
@@ -134,6 +144,7 @@ void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length)
     case IDENT_READ: ident_pending = 1U; break;
     case CAPTURE:
       if ((word >> 24) == ESC_CAPTURE_START) { rx_capture_word = word; ++rx_capture_count; }
+      else if ((word >> 24) == ESC_RECORD_START) { rx_record_word = word; ++rx_record_count; }
       else if ((word >> 24) == ESC_CAPTURE_READ) { rx_read_word = word; ++rx_read_count; }
       break;
     default: break;
@@ -195,6 +206,66 @@ int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
                         .limit = (int16_t)drive_app.iq_limit_counts,
                         .active = drive_app.active ? 1U : 0U };
   return dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);
+}
+
+void drive_record_tick(int16_t pi_out, int16_t iq_ref)
+{
+  const uint32_t status = rec_status;
+  if (status != ESC_RECORD_ARMED && status != ESC_RECORD_TRIGGERED) return;
+  const int16_t ref = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1());
+  const uint32_t moving = ref >= DSC_STOP_RPM || ref <= -DSC_STOP_RPM;
+  int16_t *s = capture_mem.rec[rec_index % ESC_RECORD_SAMPLES];
+  s[0] = ref;
+  s[1] = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
+  if (drive_dsc_cfg.enable) {
+    s[2] = drive_dsc.p; s[3] = drive_dsc.i; s[4] = drive_dsc.ff;
+  } else {
+    const int32_t i = PIDSpeedHandle_M1.wIntegralTerm / (int32_t)PID_GetKIDivisor(&PIDSpeedHandle_M1);
+    s[2] = (int16_t)(pi_out - i); s[3] = (int16_t)i; s[4] = (int16_t)(iq_ref - pi_out);
+  }
+  s[5] = iq_ref;
+  s[6] = MC_GetIqdMotor1().q;
+  s[7] = (int16_t)((drive_dsc.state & 3U) | ((drive_dsc.reason & 15U) << 2) |
+                   ((drive_dsc.capped & 1U) << 6) | ((drive_dsc_cfg.enable & 1U) << 7) |
+                   (((uint32_t)(HALL_M1.EdgesPos - HALL_M1.EdgesNeg) & 15U) << 8) |
+                   (((uint32_t)HALL_M1.Captures & 15U) << 12));
+  if (status == ESC_RECORD_ARMED) {
+    if (rec_delay == UINT32_MAX) { /* waiting for the reference to leave zero */
+      if (moving && !rec_prev_moving) rec_delay = (rx_record_word >> 9) & 0xFFFU;
+    }
+    if (rec_delay != UINT32_MAX && rec_delay-- == 0U) {
+      rec_status = ESC_RECORD_TRIGGERED;
+      rec_trigger_index = rec_index;
+      rec_remaining = ESC_RECORD_SAMPLES - rec_pre;
+    }
+  }
+  rec_prev_moving = moving;
+  ++rec_index;
+  if (rec_status == ESC_RECORD_TRIGGERED && --rec_remaining == 0U) rec_status = ESC_RECORD_DONE;
+}
+
+static void record_begin(uint32_t word)
+{
+  const uint32_t pre = word & 0x1FFU;
+  if (drive_app.capture_phase != CAPTURE_IDLE || pre >= ESC_RECORD_SAMPLES) {
+    rec_status = ESC_RECORD_REJECTED;
+    ++drive_app.rejected;
+    return;
+  }
+  rec_status = ESC_RECORD_NONE; /* the speed tick stops writing first */
+  rec_owner = 1U;
+  rec_pre = pre;
+  rec_index = 0U;
+  rec_trigger_index = 0U;
+  rec_prev_moving = 1U; /* a start must follow a zero reference */
+  rec_delay = UINT32_MAX;
+  rec_status = ESC_RECORD_ARMED;
+}
+
+/* Oldest recorded sample: the window is the last ESC_RECORD_SAMPLES written. */
+static uint32_t record_first(void)
+{
+  return rec_index > ESC_RECORD_SAMPLES ? rec_index - ESC_RECORD_SAMPLES : 0U;
 }
 
 static uint32_t vbus_centivolts(void)
@@ -339,6 +410,8 @@ static void capture_begin(uint32_t step_ma)
     ++drive_app.rejected;
     return;
   }
+  rec_status = ESC_RECORD_NONE; /* the capture overwrites the recorder RAM */
+  rec_owner = 0U;
   capture_step_counts = (int16_t)(step_ma * (uint32_t)CURRENT_CONV_FACTOR / 1000U);
   capture_armed = 0U;
   capture_index = 0U;
@@ -548,7 +621,7 @@ void drive_app_tick(void)
   uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
   const uint32_t speed_count = rx_speed_count, stop_count = rx_stop_count;
   const uint32_t align_count = rx_align_count, config_count = rx_config_count;
-  const uint32_t capture_count = rx_capture_count;
+  const uint32_t capture_count = rx_capture_count, record_count = rx_record_count;
   const int stop_received = stop_count != seen_stop;
   const int speed_received = speed_count != seen_speed;
   seen_stop = stop_count;
@@ -589,12 +662,17 @@ void drive_app_tick(void)
   }
   if (capture_count != seen_capture) {
     seen_capture = capture_count;
-    if (idle && state == IDLE && !stop_received && drive_app.align_phase == ALIGN_IDLE) {
+    if (idle && state == IDLE && !stop_received && drive_app.align_phase == ALIGN_IDLE &&
+        rec_status != ESC_RECORD_ARMED && rec_status != ESC_RECORD_TRIGGERED) {
       capture_begin(rx_capture_word & 0xFFFFU);
     } else {
       drive_app.capture_status = ESC_CAPTURE_REJECTED;
       ++drive_app.rejected;
     }
+  }
+  if (record_count != seen_record) {
+    seen_record = record_count;
+    record_begin(rx_record_word);
   }
   if (config_count != seen_config) {
     seen_config = config_count;
@@ -633,10 +711,25 @@ static void put32(uint8_t *p, uint32_t v) { put16(p, v); put16(p + 2, v >> 16); 
 static void capture_frame(uint8_t data[8], uint32_t i)
 {
   put16(data, (read_bank << 12) | i);
+  if (read_bank == ESC_CAPTURE_INFO_BANK && i == ESC_RECORD_INFO_SAMPLE) {
+    const uint32_t first = record_first(), done = rec_status == ESC_RECORD_DONE;
+    put16(data + 2, rec_status);
+    put16(data + 4, rec_index - first);
+    put16(data + 6, done && rec_trigger_index >= first ? rec_trigger_index - first : 0U);
+    return;
+  }
   if (read_bank == ESC_CAPTURE_INFO_BANK) {
     put16(data + 2, drive_app.capture_status);
     put16(data + 4, capture_vbus_cv);
     put16(data + 6, capture_index);
+    return;
+  }
+  if (rec_owner) {
+    const int16_t *r = capture_mem.rec[(record_first() + i) % ESC_RECORD_SAMPLES];
+    const uint32_t c = read_bank * 3U;
+    put16(data + 2, (uint16_t)r[c]);
+    put16(data + 4, (uint16_t)r[c + 1U]);
+    put16(data + 6, c + 2U < 8U ? (uint16_t)r[c + 2U] : 0U);
     return;
   }
   const int16_t *s = &capture_buf[i][read_bank == 0U ? 0 : 3];
@@ -691,12 +784,18 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     seen_read = read_count;
     const uint32_t word = rx_read_word;
     read_bank = (word >> 16) & 0x3U;
-    read_next = read_bank == ESC_CAPTURE_INFO_BANK ? 0U : (word & 0x3FFU);
-    uint32_t count = read_bank == ESC_CAPTURE_INFO_BANK ? 1U : ((word >> 10) & 0x3FU);
-    if (count > CAPTURE_READ_MAX) count = CAPTURE_READ_MAX;
-    read_end = read_next + count;
-    if (read_end > ESC_CAPTURE_SAMPLES) read_end = ESC_CAPTURE_SAMPLES;
-    if (read_bank == 2U) read_end = read_next; /* no bank 2 */
+    if (read_bank == ESC_CAPTURE_INFO_BANK) {
+      read_next = (word & 0x3FFU) == ESC_RECORD_INFO_SAMPLE ? ESC_RECORD_INFO_SAMPLE : 0U;
+      read_end = read_next + 1U;
+    } else {
+      const uint32_t samples = rec_owner ? ESC_RECORD_SAMPLES : ESC_CAPTURE_SAMPLES;
+      uint32_t count = (word >> 10) & 0x3FU;
+      if (count > CAPTURE_READ_MAX) count = CAPTURE_READ_MAX;
+      read_next = word & 0x3FFU;
+      read_end = read_next + count;
+      if (read_end > samples) read_end = samples;
+      if (read_bank == 2U && !rec_owner) read_end = read_next; /* capture has no bank 2 */
+    }
   }
   while (read_next < read_end) {
     capture_frame(data, read_next);

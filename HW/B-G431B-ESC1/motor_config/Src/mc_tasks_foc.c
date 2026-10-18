@@ -442,6 +442,7 @@ __weak void FOC_CalcCurrRef(uint8_t bMotor)
       IqdTmp.q = drive_speed_iq_ref(FOCVars[bMotor].hTeref,
                                     (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()),
                                     (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1()));
+    drive_record_tick(FOCVars[bMotor].hTeref, IqdTmp.q);
 
   }
   else

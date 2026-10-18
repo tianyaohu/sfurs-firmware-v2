@@ -88,6 +88,24 @@
 #define ESC_CAPTURE_INFO_BANK 3U
 enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
        ESC_CAPTURE_ABORTED = 3, ESC_CAPTURE_REJECTED = 4 };
+/* CAPTURE word = ESC_RECORD_START << 24 | delay ms << 9 | pre: arm the
+ * speed-loop recorder. It only observes (allowed while driving; rejected during
+ * a current-loop capture, which it shares memory with). It records one sample
+ * per speed-loop tick (1 kHz), triggers when the speed reference leaves zero
+ * (|ref| >= 2 RPM, after first being zero) plus delay ms (0..4095), and keeps
+ * pre (0..ESC_RECORD_SAMPLES-1) samples from before the trigger point. Read
+ * with ESC_CAPTURE_READ: banks 0/1/2 carry channels 0-2/3-5/6-7 (third value
+ * 0); bank 3 sample 1: status (ESC_RECORD_*), samples, trigger sample index.
+ * Channels: ramped ref RPM, measured RPM, P, I, ff, Iq reference, measured Iq
+ * (counts), packed: bits 0-1 startup-loop state (DSC_*), 2-5 reason, 6 P cap,
+ * 7 startup loop enabled, 8-11 net Hall edges (+ minus -) mod 16, 12-15 Hall
+ * captures mod 16. Legacy loop: I from the PI integral, P = PI out - I,
+ * ff = Iq reference - PI out. */
+#define ESC_RECORD_START 0x5EU
+#define ESC_RECORD_SAMPLES 384U
+#define ESC_RECORD_INFO_SAMPLE 1U
+enum { ESC_RECORD_NONE = 0, ESC_RECORD_ARMED = 1, ESC_RECORD_TRIGGERED = 2,
+       ESC_RECORD_DONE = 3, ESC_RECORD_REJECTED = 4 };
 #define MOTOR_STOP   (15U << 7)
 
 #define ESC_COUNTS_PER_AMP 544

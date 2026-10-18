@@ -123,6 +123,12 @@
  * Hall edge reads +-200 RPM and the speed loop answers with +-6 A (FR stall
  * test 2026-10-17). On by default; CONFIG ESC_CFG_SPEED_REV_FILTER. */
 #define SPEED_REV_FILTER_DEFAULT            1
+/* Speed fed to either loop below DSC_EDGE_SPEED_MAX_RPM, or while the SDK
+ * speed is still 0, from Hall edge timing (dsc_edge_rpm). Mat 2026-10-18: the
+ * wheels creep at 7-18 RPM from ~1.2 A while the SDK speed reads 0, so both
+ * loops kept raising current and each wheel lurched when its SDK estimate came
+ * alive. CONFIG ESC_CFG_SPEED_EDGE_EST. */
+#define SPEED_EDGE_EST_DEFAULT              0
 
 /* Speed control loop */
 #define SPEED_LOOP_FREQUENCY_HZ             (uint16_t)1000 /*!<Execution rate of speed regulation loop (Hz) */

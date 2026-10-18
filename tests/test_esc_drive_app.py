@@ -93,6 +93,7 @@ extern uint32_t fake_validity[8];
 #define DSC_WATCH_MS_DEFAULT 40
 #define DSC_PRELOAD_PCT_DEFAULT 70
 #define SPEED_REV_FILTER_DEFAULT 1
+#define SPEED_EDGE_EST_DEFAULT 0
 ''',
 }
 
@@ -119,6 +120,8 @@ int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t pos, uint16_t neg, uint16_t c
   f->qpos = (uint16_t)(pos + 100); f->qneg = (uint16_t)(neg + 100); f->qcaps = (uint16_t)(caps + 100);
   return (int16_t)(rpm / 2); /* marks "filtered" */
 }
+static int16_t fake_edge;
+int16_t dsc_edge_rpm(const dsc_rev_t *f) { (void)f; return fake_edge; }
 int16_t dsc_step(const dsc_cfg_t *c, dsc_state_t *st, const dsc_in_t *in, PID_Handle_t *p) {
   (void)c; (void)p; ++dsc_calls; dsc_last_in = *in;
   if (fake_next_state >= 0) st->state = (uint8_t)fake_next_state;
@@ -414,6 +417,14 @@ int main(int argc, char **argv) {
     assert(drive_rev_enable == 0 && drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 30 && pi_calls == 2);
     rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_SPEED_REV_FILTER); tick(1);
     assert(drive_rev_enable == 1);
+    rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_SPEED_EDGE_EST); tick(1);
+    fake_edge = 12;
+    assert(drive_edge_speed == 1 && drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 38);   /* edge speed */
+    fake_edge = 150;
+    assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 400) == -150);  /* fast: SDK speed */
+    assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 0) == -100);    /* SDK not alive: edge */
+    rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_SPEED_EDGE_EST); tick(1);
+    fake_edge = 0;
     pi_calls = 1;
     rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
     rx(CONFIG_SET | 1U, (700U << 16) | ESC_CFG_DSC_FF_RUN_MA); tick(1);

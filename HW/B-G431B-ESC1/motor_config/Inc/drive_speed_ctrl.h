@@ -149,9 +149,21 @@ typedef struct {
   uint8_t run;              /* consecutive transitions in that direction (saturating) */
   int32_t net, hi, lo;      /* net position and its one-edge band, edges */
   uint16_t qpos, qneg, qcaps; /* qualified progress edges and captures */
+  uint16_t since;           /* calls since the last transition (saturating) */
+  uint16_t period;          /* calls between the last two transitions, 0 unknown */
 } dsc_rev_t;
 int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg,
                             uint16_t captures, int16_t rpm);
+/* Low-speed speed from edge timing (VESC's Hall speed pattern): 60 deg
+ * electrical / max(time since the last edge, the last edge interval), one
+ * call per ms, so it falls as 1/t once edges stop and is live from the second
+ * edge, where the SDK's capture speed still reads 0 for several edges (timer
+ * prescaler stepping down from its start-up maximum). 0 until two consecutive
+ * transitions agree in direction, like the filter. RPM, 1 ms resolution:
+ * meant below DSC_EDGE_SPEED_MAX_RPM. */
+#define DSC_EDGE_SPEED_MAX_RPM 100
+int16_t dsc_edge_rpm(const dsc_rev_t *f);
+
 /* New band origin at the current raw counters (edges and captures since the
  * last call are dropped, not counted): call whenever the startup loop enters
  * STARTING (start, reversal, restick) and at motor start, so the first edge of

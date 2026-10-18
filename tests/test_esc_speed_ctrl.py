@@ -687,6 +687,26 @@ static void test_preload_from_learned(void)
   CHECK(out == -272);                 /* other direction: nothing learned */
 }
 
+/* VESC-style low-speed estimate: 1250 / max(since last edge, last interval). */
+static void test_edge_rpm(void)
+{
+  dsc_rev_t f = {0};
+  uint16_t pos = 0;
+  CHECK(dsc_edge_rpm(&f) == 0);
+  for (int k = 0; k < 100; ++k) { if (k % 25 == 0) ++pos; dsc_reversal_filter(&f, pos, 0, 0, 0); }
+  CHECK(f.period == 25 && dsc_edge_rpm(&f) == 50);  /* 25 ms per edge */
+  for (int k = 0; k < 74; ++k) dsc_reversal_filter(&f, pos, 0, 0, 0);
+  CHECK(dsc_edge_rpm(&f) == 1250 / 100);              /* no edge: falls as 1/t */
+  ++pos; dsc_reversal_filter(&f, pos, 0, 0, 0);
+  CHECK(dsc_edge_rpm(&f) == 12);                      /* that slow interval */
+  dsc_reversal_filter(&f, pos, 1, 0, 0);              /* reversal: not two agreeing */
+  CHECK(dsc_edge_rpm(&f) == 0);
+  dsc_rev_rebase(&f, pos, 1, 0);
+  CHECK(f.period == 0 && dsc_edge_rpm(&f) == 0);
+  pos = (uint16_t)(pos + 3); dsc_reversal_filter(&f, pos, 1, 0, 0); /* 3 edges in 1 ms */
+  CHECK(f.period == 1 && dsc_edge_rpm(&f) == 1250);
+}
+
 int main(void)
 {
   test_ramp_and_failed_start();
@@ -723,6 +743,7 @@ int main(void)
   test_watch_confirms_motion();
   test_watch_ignores_rocking();
   test_preload_from_learned();
+  test_edge_rpm();
   puts("OK");
   return 0;
 }

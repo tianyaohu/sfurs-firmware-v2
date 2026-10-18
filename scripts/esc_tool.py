@@ -128,6 +128,7 @@ def firmware_defaults():
                 ff_static_ma=get("FRICTION_FF_STATIC_MA_DEFAULT"),
                 ff_kinetic_ma=get("FRICTION_FF_KINETIC_MA_DEFAULT"),
                 speed_rev_filter=get("SPEED_REV_FILTER_DEFAULT"),
+                speed_edge_est=get("SPEED_EDGE_EST_DEFAULT"),
                 **{key: get(name) for key, name in DSC_DEFAULTS.items()})
 
 

@@ -41,7 +41,7 @@ CONFIG_KEYS = {"kp": 1, "ki": 2, "shift": 3, "iqmax_ma": 4, "current_kp": 5, "cu
                "dsc_start_hold_ms": 15, "dsc_pcap_ma": 16, "dsc_pcap_ms": 17,
                "dsc_pcap_updates": 18, "dsc_pcap_fallback_ms": 19,
                "speed_rev_filter": 20, "dsc_hold_decay_ma": 21,
-               "dsc_watch_ms": 22, "dsc_preload_pct": 23}
+               "dsc_watch_ms": 22, "dsc_preload_pct": 23, "speed_edge_est": 24}
 # Speed-loop recorder (can_datatypes.h ESC_RECORD_*)
 RECORD_START_OP, RECORD_SAMPLES, RECORD_INFO_SAMPLE, RECORD_READ_CH67 = 0x5E, 384, 1, 1 << 18
 RECORD_STATUS = {0: "none", 1: "armed", 2: "triggered", 3: "done", 4: "rejected"}

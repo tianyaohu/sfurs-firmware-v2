@@ -90,6 +90,7 @@ dsc_cfg_t drive_dsc_cfg;
 dsc_state_t drive_dsc;
 dsc_rev_t drive_rev;
 uint8_t drive_rev_enable = SPEED_REV_FILTER_DEFAULT;
+uint8_t drive_edge_speed = SPEED_EDGE_EST_DEFAULT;
 
 static uint32_t ff_broken_free, ff_stall_ms;
 static int32_t ff_peak; /* highest forward speed since the start, <= FRICTION_FADE_RPM */
@@ -208,6 +209,10 @@ int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
   const int16_t filtered = dsc_reversal_filter(&drive_rev, pos, neg, caps, rpm);
   const int on = drive_rev_enable != 0U;
   if (on) rpm = filtered;
+  if (drive_edge_speed) { /* low speed, or the SDK speed not alive yet: edge timing */
+    const int16_t edge = dsc_edge_rpm(&drive_rev);
+    if (rpm == 0 || (edge < DSC_EDGE_SPEED_MAX_RPM && edge > -DSC_EDGE_SPEED_MAX_RPM)) rpm = edge;
+  }
   if (!drive_dsc_cfg.enable) return PI_Controller(pid, (int32_t)ref_rpm - rpm);
   const dsc_in_t in = { .ref_rpm = ref_rpm, .meas_rpm = rpm,
                         .edges_pos = on ? drive_rev.qpos : pos,
@@ -586,6 +591,10 @@ static void apply_config(uint32_t word)
     case ESC_CFG_SPEED_REV_FILTER:
       if (value != 0 && value != 1) { ++drive_app.rejected; return; }
       drive_rev_enable = (uint8_t)value;
+      break;
+    case ESC_CFG_SPEED_EDGE_EST:
+      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
+      drive_edge_speed = (uint8_t)value;
       break;
     case ESC_CFG_DSC_PCAP_UPDATES:
       if (value < 1 || value > 6) { ++drive_app.rejected; return; }

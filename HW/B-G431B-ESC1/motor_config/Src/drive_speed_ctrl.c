@@ -48,6 +48,8 @@ void dsc_rev_rebase(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg, uint16
   f->pos = edges_pos;
   f->neg = edges_neg;
   f->caps = captures;
+  f->period = 0U; /* edge timing restarts too */
+  f->since = 0U;
   f->net = 0;
   f->hi = 0;
   f->lo = 0;
@@ -76,6 +78,13 @@ int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg
     f->lo = f->net;
     f->hi = f->net + 1;
   }
+  if (dp != 0U || dn != 0U) { /* edge timing for dsc_edge_rpm */
+    const uint32_t n = (uint32_t)dp + dn;
+    f->period = (uint16_t)(f->since >= n ? (f->since + 1U) / n : 1U);
+    f->since = 0U;
+  } else if (f->since < UINT16_MAX) {
+    ++f->since;
+  }
   if (dp != 0U && dn != 0U) { /* back and forth within one tick */
     f->dir = 0;
     f->run = 0U;
@@ -89,6 +98,14 @@ int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg
   if (f->run < 2U || (rpm > 0 && f->dir < 0) || (rpm < 0 && f->dir > 0)) return 0;
   f->qcaps = (uint16_t)(f->qcaps + dc);
   return rpm;
+}
+
+int16_t dsc_edge_rpm(const dsc_rev_t *f)
+{
+  if (f->run < 2U || f->period == 0U) return 0;
+  const uint32_t ms = f->since + 1U > f->period ? f->since + 1U : f->period;
+  const int32_t rpm = (int32_t)((uint32_t)DSC_EDGE_PERIOD_MS_RPM / ms);
+  return (int16_t)(f->dir * rpm);
 }
 
 void dsc_reset(dsc_state_t *s)

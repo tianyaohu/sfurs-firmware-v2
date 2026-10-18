@@ -75,6 +75,7 @@ extern dsc_cfg_t drive_dsc_cfg;
 extern dsc_state_t drive_dsc;
 extern dsc_rev_t drive_rev;
 extern uint8_t drive_rev_enable; /* ESC_CFG_SPEED_REV_FILTER */
+extern uint8_t drive_edge_speed; /* ESC_CFG_SPEED_EDGE_EST */
 
 /* Speed-loop recorder (ESC_RECORD_START), from FOC_CalcCurrRef every speed
  * tick with the speed-loop output and the final Iq reference. */

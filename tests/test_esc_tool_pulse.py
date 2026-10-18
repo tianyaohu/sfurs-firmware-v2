@@ -63,8 +63,14 @@ class Breakaway(unittest.TestCase):
 
 
 class Guard(unittest.TestCase):
-    def entry(self, t, rpm, iq):
-        return dict(t=t, rpm=rpm, iq_ref_a=iq)
+    def entry(self, t, rpm, iq, faults=None):
+        return dict(t=t, rpm=rpm, iq_ref_a=iq, faults=faults or [[], [], [], []])
+
+    def test_fault_aborts(self):
+        g = esc_tool.PulseGuard()
+        self.assertIsNone(g.check(self.entry(0.0, [0] * 4, [0.0] * 4, [[], [], [], None])))
+        reason = g.check(self.entry(0.1, [0, 50, 50, 50], [0.0, 1.0, 1.0, 1.0], [["speed_fdbk"], [], [], []]))
+        self.assertIn("fault speed_fdbk", reason)
 
     def test_runaway(self):
         g = esc_tool.PulseGuard()

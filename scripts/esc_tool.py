@@ -245,7 +245,7 @@ STALL_AMPS, STALL_S = 4.5, 0.6
 
 
 class PulseGuard:
-    """Abort reason for a pulse log entry, or None: a wheel far above any
+    """Abort reason for a pulse log entry, or None: a wheel reporting a fault, a wheel far above any
     target (lost contact / limit cycle), or one held at high current without
     turning (blocked)."""
 
@@ -254,6 +254,8 @@ class PulseGuard:
 
     def check(self, e):
         for w, (name, _esc, _sel) in enumerate(ik_link.WHEELS):
+            if e["faults"][w]:  # the other wheels would drive on without it
+                return f"{name} fault {','.join(e['faults'][w])}"
             rpm, iq = e["rpm"][w], e["iq_ref_a"][w]
             if rpm is None or iq is None:
                 continue

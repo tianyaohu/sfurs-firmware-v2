@@ -462,8 +462,11 @@ int main(int argc, char **argv) {
     assert(f16(frame[1] + 4) == 7 && f16(frame[1] + 6) == 200);              /* meas, P = 300 - I */
     rx(CAPTURE | 1U, read | (1U << 16) | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
     assert(f16(frame[0] + 2) == 100 && f16(frame[0] + 4) == 200 && f16(frame[0] + 6) == 500); /* I, ff, Iq ref */
-    rx(CAPTURE | 1U, read | (2U << 16) | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
+    rx(CAPTURE | 1U, read | ESC_RECORD_READ_CH67 | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
     assert(frames == 1 && f16(frame[0] + 2) == 99 && f16(frame[0] + 6) == 0); /* measured Iq; pad */
+    assert((f16(frame[0] + 4) & 0x80) == 0);                                 /* legacy: not enabled */
+    rx(CAPTURE | 1U, read | (2U << 16) | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
+    assert(frames == 0);                                                     /* no bank 2 */
     rx(CAPTURE | 1U, read | (0U << 16) | (32U << 10) | 380U); frames = 0; drive_app_poll(send);
     assert(frames == 4);                                       /* clamped to 384 samples */
     rx(CAPTURE | 1U, rec | (100U << 9)); tick(1);              /* delay 100 ms, pre 0 */

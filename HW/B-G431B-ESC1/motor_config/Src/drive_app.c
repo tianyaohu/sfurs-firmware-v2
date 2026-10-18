@@ -84,7 +84,7 @@ static uint32_t seen_record;
 static volatile uint32_t capture_armed, capture_index;
 static volatile int16_t capture_step_counts;
 static uint32_t capture_ms, capture_vbus_cv;
-static uint32_t read_next, read_end, read_bank; /* poll context only */
+static uint32_t read_next, read_end, read_bank, read_ch67; /* poll context only */
 
 dsc_cfg_t drive_dsc_cfg;
 dsc_state_t drive_dsc;
@@ -726,7 +726,7 @@ static void capture_frame(uint8_t data[8], uint32_t i)
   }
   if (rec_owner) {
     const int16_t *r = capture_mem.rec[(record_first() + i) % ESC_RECORD_SAMPLES];
-    const uint32_t c = read_bank * 3U;
+    const uint32_t c = read_ch67 ? 6U : read_bank * 3U;
     put16(data + 2, (uint16_t)r[c]);
     put16(data + 4, (uint16_t)r[c + 1U]);
     put16(data + 6, c + 2U < 8U ? (uint16_t)r[c + 2U] : 0U);
@@ -784,6 +784,7 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     seen_read = read_count;
     const uint32_t word = rx_read_word;
     read_bank = (word >> 16) & 0x3U;
+    read_ch67 = (word & ESC_RECORD_READ_CH67) != 0U && read_bank == 0U;
     if (read_bank == ESC_CAPTURE_INFO_BANK) {
       read_next = (word & 0x3FFU) == ESC_RECORD_INFO_SAMPLE ? ESC_RECORD_INFO_SAMPLE : 0U;
       read_end = read_next + 1U;
@@ -794,7 +795,7 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
       read_next = word & 0x3FFU;
       read_end = read_next + count;
       if (read_end > samples) read_end = samples;
-      if (read_bank == 2U && !rec_owner) read_end = read_next; /* capture has no bank 2 */
+      if (read_bank == 2U) read_end = read_next; /* no bank 2 */
     }
   }
   while (read_next < read_end) {

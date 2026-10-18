@@ -126,7 +126,19 @@ def firmware_defaults():
     get = lambda name: int(re.search(rf"#define {name}\s+(\d+)", text)[1])
     return dict(kp=get("PID_SPEED_KP_DEFAULT"), ki=get("PID_SPEED_KI_DEFAULT"),
                 ff_static_ma=get("FRICTION_FF_STATIC_MA_DEFAULT"),
-                ff_kinetic_ma=get("FRICTION_FF_KINETIC_MA_DEFAULT"))
+                ff_kinetic_ma=get("FRICTION_FF_KINETIC_MA_DEFAULT"),
+                **{key: get(name) for key, name in DSC_DEFAULTS.items()})
+
+
+# CONFIG key -> drive_parameters.h default, startup speed loop (drive_speed_ctrl.h)
+DSC_DEFAULTS = dict(dsc_enable="DSC_ENABLE_DEFAULT", dsc_ff_run_ma="DSC_FF_RUN_MA_DEFAULT",
+                    dsc_ff_per_krpm_ma="DSC_FF_PER_KRPM_MA_DEFAULT",
+                    dsc_start_from_ma="DSC_START_FROM_MA_DEFAULT",
+                    dsc_start_cap_ma="DSC_START_CAP_MA_DEFAULT",
+                    dsc_start_slope_ma="DSC_START_SLOPE_MA_DEFAULT",
+                    dsc_start_hold_ms="DSC_START_HOLD_MS_DEFAULT", dsc_pcap_ma="DSC_PCAP_MA_DEFAULT",
+                    dsc_pcap_ms="DSC_PCAP_MS_DEFAULT", dsc_pcap_updates="DSC_PCAP_UPDATES_DEFAULT",
+                    dsc_pcap_fallback_ms="DSC_PCAP_FALLBACK_MS_DEFAULT")
 
 
 def speed_defaults():

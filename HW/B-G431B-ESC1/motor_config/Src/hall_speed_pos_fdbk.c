@@ -227,6 +227,15 @@ __weak void HALL_Clear(HALL_Handle_t *pHandle)
 
     pHandle->CompSpeed = 0;
 
+    /* USER: forget the speed measured before the stop. The average is only
+       recomputed while running, so a wheel pushed while IDLE left a stale value
+       that STC_ForceSpeedReferenceToCurrentSpeed() then used as the start
+       reference (2026-10-17: FR started at -92 RPM, kicked backwards, then
+       limit-cycled at +-6 A until the 200 RPM guard). */
+    pHandle->_Super.hAvrMecSpeedUnit = 0;
+    pHandle->_Super.hElSpeedDpp = 0;
+    pHandle->AvrElSpeedDpp = 0;
+
     pHandle->Direction = POSITIVE;
 
     /* Initialize speed buffer index */

@@ -492,6 +492,51 @@ static void test_stick_slip_progress_never_fails(void)
   }
 }
 
+/* Re-review 9: drives a raw-edge trace through filter + controller; returns
+ * 1 if it ever FAILED. */
+static int stick_slip_fails(int16_t ref, uint16_t pos0, uint16_t neg0, int coast_edges)
+{
+  dsc_rev_t f = { .pos = pos0, .neg = neg0 };
+  uint16_t pos = pos0, neg = neg0, caps = 0;
+  in.ref_rpm = ref;
+  for (int k = 0; k < 6000; ++k) {
+    if (k < coast_edges * 10 && k % 10 == 5) { if (ref < 0) ++pos; else ++neg; } /* old-way coasting */
+    if (k % 600 == 80) { if (ref > 0) ++pos; else ++neg; }
+    const uint8_t was = s.state;
+    (void)dsc_reversal_filter(&f, pos, neg, caps, 0);
+    in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    in.raw_pos = pos; in.raw_neg = neg; raw_own = 1;
+    tick(1);
+    if (s.state == DSC_STARTING && was != DSC_STARTING) dsc_rev_rebase(&f, pos, neg, caps);
+    if (s.state == DSC_FAILED) return 1;
+  }
+  return 0;
+}
+
+static void test_progress_after_long_run_and_reversal(void)
+{
+  setup();
+  in.edges_pos = in.raw_pos = 40000;          /* long forward history, counters past int16 */
+  raw_own = 1;
+  CHECK(!stick_slip_fails(5, 40000, 0, 0));
+  setup();
+  CHECK(!stick_slip_fails(-5, 100, 0, 6));    /* reversal after 6 coasting forward edges */
+  /* long same-direction run (> 32767 edges) then slow stick-slip */
+  setup();
+  in.ref_rpm = 100; raw_own = 1;
+  uint16_t p = 0;
+  dsc_rev_t f = {0};
+  for (int k = 0; k < 40000; ++k) {
+    p = (uint16_t)(p + 1);
+    (void)dsc_reversal_filter(&f, p, 0, (uint16_t)k, 100);
+    in.edges_pos = f.qpos; in.captures = f.qcaps; in.raw_pos = p; in.meas_rpm = 100;
+    tick(1);
+  }
+  CHECK(s.state == DSC_RUNNING);
+  in.meas_rpm = 0;
+  CHECK(!stick_slip_fails(5, p, 0, 0));
+}
+
 static void test_rocking_through_filter_fails_start(void)
 {
   setup();
@@ -535,6 +580,7 @@ int main(void)
   test_slow_rocking_fails_in_bounded_time();
   test_slow_motion_no_false_restick();
   test_stick_slip_progress_never_fails();
+  test_progress_after_long_run_and_reversal();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

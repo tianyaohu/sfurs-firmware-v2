@@ -41,9 +41,10 @@
  * across resticks until a capture arrives. */
 #define DSC_CAP_MIN_RPM 20
 /* Consecutive resticks without progress before FAILED, at any speed.
- * Progress = a new furthest raw net position along the command since it was
- * given (stick-slip gains ground each cycle, rocking across one edge never
- * passes its first position), a qualified edge, or a capture. */
+ * Progress = a new furthest raw displacement along the command, measured from
+ * the first hand-off of that command (stick-slip gains ground each cycle,
+ * rocking across one edge never passes its first position, coasting the old
+ * way before a reversal leaves no deficit), a qualified edge, or a capture. */
 #define DSC_MAX_RESTICKS 3U
 #define DSC_EDGE_PERIOD_MS_RPM 1250  /* 48 edges/rev: edge period [ms] = 1250 / RPM */
 
@@ -92,8 +93,10 @@ typedef struct {
   uint16_t since_edge;      /* ticks since that edge (saturating) */
   uint8_t resticks;         /* consecutive resticks without qualified progress */
   uint16_t caps_seen;       /* capture count when resticks was last cleared */
-  int16_t net0;             /* raw net position (pos - neg) when the command was given */
-  int16_t best;             /* furthest raw net position along the command since then */
+  uint16_t rp, rn;          /* raw edge counters at the last tick */
+  int32_t along;            /* raw displacement along the command, edges (wrap-safe) */
+  int32_t best;             /* furthest `along` since the first hand-off of the command */
+  uint8_t anchored;         /* first hand-off of the command seen */
   uint8_t progressed;       /* best advanced since the last restick */
   uint16_t nocap;           /* capped RUNNING ticks with |ref| >= DSC_CAP_MIN_RPM since
                                the last fresh capture; kept across resticks */

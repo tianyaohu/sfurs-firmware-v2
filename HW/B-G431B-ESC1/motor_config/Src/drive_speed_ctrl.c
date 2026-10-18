@@ -150,17 +150,27 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
     const uint8_t reason = s->dir == 0 ? DSC_R_ARMED : DSC_R_REVERSE;
     s->dir = cmd;
     enter(s, DSC_STOPPED, reason, in);
-    s->net0 = (int16_t)(in->raw_pos - in->raw_neg);
+    s->rp = in->raw_pos;
+    s->rn = in->raw_neg;
+    s->along = 0;
     s->best = 0;
+    s->anchored = 0U;
     s->progressed = 0U;
     s->resticks = 0U;
     s->nocap = 0U;
   }
   {
-    const int16_t along_net = (int16_t)(s->dir * (int16_t)((int16_t)(in->raw_pos - in->raw_neg) - s->net0));
-    if (along_net > s->best) {
-      s->best = along_net;
+    const int32_t d = (int32_t)(uint16_t)(in->raw_pos - s->rp) - (int32_t)(uint16_t)(in->raw_neg - s->rn);
+    s->rp = in->raw_pos;
+    s->rn = in->raw_neg;
+    s->along += s->dir * d;
+    if (s->anchored && s->along > s->best) {
+      s->best = s->along;
       s->progressed = 1U;
+    }
+    if (s->along > (1L << 30) || s->along < -(1L << 30)) { /* move the origin, keep the gap */
+      s->best -= s->along;
+      s->along = 0;
     }
   }
 
@@ -221,6 +231,10 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
      * No integration this tick; P capped until fresh Hall speed arrives. */
     s->start_iq = s->out;
     pid->wIntegralTerm = 0;
+    if (!s->anchored) { /* progress is measured from the first hand-off of the command */
+      s->anchored = 1U;
+      s->best = s->along;
+    }
     enter(s, DSC_RUNNING, DSC_R_EDGE, in);
     s->capped = 1U; /* until fresh Hall speed: P capped, integral frozen */
     return pi_ff(s, pid, err, ff, limit, 0, cfg->pcap);

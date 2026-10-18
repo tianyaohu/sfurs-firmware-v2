@@ -162,7 +162,9 @@ static void motor_step(void) {
   uint8_t h = hall_at(rotor_deg);
   if (h != HALL_M1.HallState) hall_isr(h);
 }
+static int feed_rec; static int16_t rec_pi = 300, rec_iq = 500;
 static void mf_step(void) {
+  if (feed_rec || state == RUN) drive_record_tick(rec_pi, rec_iq);
   if (stop_pending) { stop_pending = 0; start_pending = 0; if (state == RUN || state == CHARGE_BOOT_CAP) state = IDLE; }
   if (start_pending && state == IDLE) { start_pending = 0; state = CHARGE_BOOT_CAP; }
   else if (state == CHARGE_BOOT_CAP) state = RUN;
@@ -422,18 +424,17 @@ int main(int argc, char **argv) {
     drive_dsc.state = DSC_FAILED; tick(3);
     assert(state == IDLE && !drive_app.active && drive_app.start_failed);
     assert(drive_app.stop_reason == ESC_STOP_START_FAILED);
-    drive_dsc.state = DSC_STOPPED;
     for (int i = 0; i < 10; ++i) { speed_cmd(100, 100); tick(20); }
     assert(state == IDLE && starts == 1);        /* no automatic retry */
     speed_cmd(0, 100); tick(1); assert(!drive_app.start_failed);
     speed_cmd(100, 100); tick(3); assert(state == RUN && starts == 2);
+    assert(drive_dsc.state == DSC_STOPPED && drive_app.active); /* reset on start, not stopped again */
     drive_dsc.state = DSC_FAILED; tick(3); assert(drive_app.start_failed);
-    drive_dsc.state = DSC_STOPPED;
     rx(MOTOR_STOP | 1U, 0); tick(1); assert(!drive_app.start_failed);
     speed_cmd(100, 100); tick(3); assert(state == RUN && starts == 3);
     drive_dsc.state = DSC_FAILED; tick(3); assert(drive_app.start_failed);
-    drive_dsc.state = DSC_STOPPED;
     tick(260); assert(!drive_app.start_failed);  /* command gap clears it */
+    speed_cmd(100, 100); tick(3); assert(state == RUN && starts == 4 && drive_dsc.state == DSC_STOPPED);
   } else if (scenario == 16) { /* speed-loop recorder */
     const uint32_t rec = (uint32_t)ESC_RECORD_START << 24, read = (uint32_t)ESC_CAPTURE_READ << 24;
     rx(CAPTURE | 1U, rec | 384U); tick(1);                  /* pre out of range */
@@ -445,18 +446,19 @@ int main(int argc, char **argv) {
     rx(CAPTURE | 1U, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); tick(2);
     assert(starts == 0 && drive_app.capture_status == ESC_CAPTURE_REJECTED); /* shares RAM */
     PIDSpeedHandle_M1.wIntegralTerm = 100 * 16384;
-    speed_ref = 51;
-    for (int k = 0; k < 20; ++k) drive_record_tick(300, 500); /* already moving: no trigger */
-    speed_ref = 0;
-    for (int k = 0; k < 30; ++k) drive_record_tick(300, 500);
+    /* rearm with the speed loop feeding (as if running), samples from the 1 kHz tick */
+    feed_rec = 1; speed_ref = 51;
+    rx(CAPTURE | 1U, rec | 10U); tick(1);                   /* sample 0, moving: no trigger */
+    tick(19);                                               /* already moving: no trigger */
+    speed_ref = 0; tick(30);
     speed_ref = 51; speed = 7; iqd.q = 99;
-    for (int k = 0; k < 373; ++k) drive_record_tick(300, 500);
+    tick(373);
     rx(CAPTURE | 1U, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
     assert(f16(frame[0] + 2) == ESC_RECORD_TRIGGERED);
-    drive_record_tick(300, 500);                              /* 374th after the trigger */
+    tick(1);                                                /* 374th after the trigger */
     rx(CAPTURE | 1U, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
     assert(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 4) == 384 && f16(frame[0] + 6) == 10);
-    for (int k = 0; k < 5; ++k) drive_record_tick(1, 1);      /* frozen once done */
+    rec_pi = 1; rec_iq = 1; tick(5); rec_pi = 300; rec_iq = 500; /* frozen once done */
     rx(CAPTURE | 1U, read | (0U << 16) | (2U << 10) | 9U); frames = 0; drive_app_poll(send);
     assert(frames == 2 && f16(frame[0] + 2) == 0 && f16(frame[1] + 2) == 51); /* ref around the trigger */
     assert(f16(frame[1] + 4) == 7 && f16(frame[1] + 6) == 200);              /* meas, P = 300 - I */
@@ -469,12 +471,12 @@ int main(int argc, char **argv) {
     assert(frames == 0);                                                     /* no bank 2 */
     rx(CAPTURE | 1U, read | (0U << 16) | (32U << 10) | 380U); frames = 0; drive_app_poll(send);
     assert(frames == 4);                                       /* clamped to 384 samples */
+    speed_ref = 0;
     rx(CAPTURE | 1U, rec | (100U << 9)); tick(1);              /* delay 100 ms, pre 0 */
-    speed_ref = 0; drive_record_tick(0, 0);
     speed_ref = 51;
-    for (int k = 0; k < 100; ++k) { speed = (int16_t)k; drive_record_tick(0, 0); }
+    for (int k = 0; k < 100; ++k) { speed = (int16_t)k; tick(1); }
     speed = 1000;
-    for (int k = 0; k < 384; ++k) drive_record_tick(0, 0);
+    tick(384);
     rx(CAPTURE | 1U, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
     assert(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == 0);
     rx(CAPTURE | 1U, read | (0U << 16) | (1U << 10) | 0U); frames = 0; drive_app_poll(send);
@@ -484,6 +486,24 @@ int main(int argc, char **argv) {
     rx(CAPTURE | 1U, rec | 10U); tick(1);
     rx(CAPTURE | 1U, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
     assert(f16(frame[0] + 2) == ESC_RECORD_REJECTED);          /* capture running */
+  } else if (scenario == 17) { /* recorder armed while IDLE, real start, early stop */
+    const uint32_t rec = (uint32_t)ESC_RECORD_START << 24, read = (uint32_t)ESC_CAPTURE_READ << 24;
+    drive_app.aligned = 1; speed_ref = 51;   /* the SDK would still hold a stale ref in IDLE */
+    rx(CAPTURE | 1U, rec | 20U); tick(5);    /* IDLE: loop not running, samples read ref 0 */
+    speed_cmd(51, 20); tick(3); assert(state == RUN);
+    tick(40);
+    rx(MOTOR_STOP | 1U, 0); tick(3); assert(state == IDLE);   /* stopped before the window filled */
+    rx(CAPTURE | 1U, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
+    assert(f16(frame[0] + 2) == ESC_RECORD_TRIGGERED);
+    tick(400);                               /* keeps sampling while stopped, then done */
+    rx(CAPTURE | 1U, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
+    /* only 8 samples before the trigger (5 IDLE + 3 motor start-up) < pre 20:
+     * the window starts at sample 0 and holds 8 + (384 - 20) samples */
+    assert(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == 8 && f16(frame[0] + 4) == 372);
+    rx(CAPTURE | 1U, read | (0U << 16) | (2U << 10) | 7U); frames = 0; drive_app_poll(send);
+    assert(f16(frame[0] + 2) == 0 && f16(frame[1] + 2) == 51); /* trigger at the first RUN sample */
+    rx(CAPTURE | 1U, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); tick(2);
+    assert(drive_app.capture_status == ESC_CAPTURE_RUNNING); /* buffer released */
   } else if (scenario == 9) { /* undervolt latched on USB power: STOP clears it once gone */
     state = FAULT_OVER; cur_faults = 4; occ_faults = 4; tick(1);
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2);
@@ -573,6 +593,9 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_speed_loop_recorder(self):
         self.run_scenario(16)
+
+    def test_recorder_idle_arm_and_early_stop(self):
+        self.run_scenario(17)
 
 
 if __name__ == "__main__":

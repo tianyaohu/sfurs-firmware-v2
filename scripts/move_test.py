@@ -54,6 +54,18 @@ def path_outside(start, stream, args, inside_floor):
     return bad
 
 
+def record_summary(info, rows):
+    """Hand-off time and current from one wheel's decoded recording. Only an
+    observed STARTING -> RUNNING step counts: a delayed window starts with a
+    stale "edge" reason and holds no breakaway current."""
+    handoff = next((k for k in range(1, len(rows)) if rows[k - 1]["state"] == "starting"
+                    and rows[k]["state"] == "running" and rows[k]["reason"] == "edge"), None)
+    return dict(samples=info["samples"], trigger=info["trigger_index"],
+                handoff_ms=None if handoff is None else handoff - info["trigger_index"],
+                handoff_iq_a=None if handoff is None else round(rows[handoff - 1]["iq_ref_a"], 2),
+                peak_rpm=max((abs(r["rpm"]) for r in rows), default=0))
+
+
 def read_records(link, path):
     """Read every wheel's speed-loop recorder into `path`; returns a summary."""
     out, summary = {}, {}
@@ -65,11 +77,7 @@ def read_records(link, path):
             continue
         rows = [ik_link.unpack_record(x) for x in samples]
         out[name] = dict(info=info, samples=rows)
-        handoff = next((k for k, r in enumerate(rows) if r["reason"] == "edge"), None)
-        summary[name] = dict(samples=info["samples"], trigger=info["trigger_index"],
-                             handoff_ms=None if handoff is None else handoff - info["trigger_index"],
-                             handoff_iq_a=None if handoff is None else round(rows[handoff - 1]["iq_ref_a"], 2),
-                             peak_rpm=max((abs(r["rpm"]) for r in rows), default=0))
+        summary[name] = record_summary(info, rows)
         print(f"   record {name}: {summary[name]}")
     path.write_text(json.dumps(out))
     return summary

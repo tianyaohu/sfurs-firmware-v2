@@ -70,8 +70,13 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
   const int32_t ref = in->ref_rpm, err = ref - in->meas_rpm;
   const int8_t cmd = !in->active ? 0 : ref >= DSC_STOP_RPM ? 1 : ref <= -DSC_STOP_RPM ? -1 : 0;
   s->t = sat_inc(s->t);
+  if (in->captures != s->caps_seen) { /* any fresh Hall capture is feedback */
+    s->caps_seen = in->captures;
+    s->resticks = 0U;
+  }
 
   if (cmd == 0) {
+    s->resticks = 0U;
     const uint8_t reason = in->active ? DSC_R_STOP : DSC_R_INACTIVE;
     if (s->state != DSC_STOPPED || s->dir != 0 || s->reason != reason) {
       s->dir = 0;
@@ -115,6 +120,8 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       s->since_edge = sat_inc(s->since_edge);
     }
     if (s->since_edge > (2U * edge_ms > DSC_RESTICK_MIN_MS ? 2U * edge_ms : DSC_RESTICK_MIN_MS)) {
+      if (++s->resticks >= DSC_MAX_RESTICKS && aref >= DSC_CAP_MIN_RPM)
+        return fail(s, pid, DSC_R_NO_CAPTURE, in);
       enter(s, DSC_STARTING, DSC_R_RESTICK, in);
       s->ramp = (int16_t)clamp(cfg->start_from, 0, INT16_MAX);
       s->capped = 0U;
@@ -143,8 +150,8 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
     s->start_iq = s->out;
     pid->wIntegralTerm = 0;
     enter(s, DSC_RUNNING, DSC_R_EDGE, in);
-    s->capped = 1U;
-    return pi_ff(s, pid, err, ff, limit, 0, cfg->pcap);
+    s->capped = aref >= DSC_CAP_MIN_RPM ? 1U : 0U;
+    return pi_ff(s, pid, err, ff, limit, 0, s->capped ? cfg->pcap : -1);
   }
 
   /* RUNNING. The cap fallback is at least long enough for pcap_updates + 1
@@ -154,6 +161,7 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
     const uint32_t slow = 2U * ((uint32_t)cfg->pcap_updates + 1U) * edge_ms;
     if (s->t >= cfg->pcap_ms && fresh >= cfg->pcap_updates) {
       s->capped = 0U;
+      s->resticks = 0U;
     } else if (s->t >= cfg->pcap_fallback_ms && s->t >= slow) {
       return fail(s, pid, DSC_R_NO_CAPTURE, in);
     }

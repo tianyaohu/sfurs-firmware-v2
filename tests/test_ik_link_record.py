@@ -9,6 +9,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import esc_tool  # noqa: E402
+import move_test  # noqa: E402
 import ik_link  # noqa: E402
 
 HEADER = (ROOT / "HW/common/CAN/can_datatypes.h").read_text()
@@ -56,6 +57,25 @@ class Record(unittest.TestCase):
         self.assertEqual({k for k in ik_link.CONFIG_KEYS if k.startswith("dsc_")},
                          {k for k in d if k.startswith("dsc_")})
         self.assertEqual(d["dsc_enable"], 0)
+
+
+class Summary(unittest.TestCase):
+    @staticmethod
+    def row(state, reason, iq=0.0, rpm=0):
+        return dict(state=state, reason=reason, iq_ref_a=iq, rpm=rpm)
+
+    def test_observed_handoff(self):
+        rows = [self.row("stopped", "stop")] * 5 + [self.row("starting", "armed", 1.0 + k / 10)
+                                                     for k in range(10)]
+        rows += [self.row("running", "edge", 0.6, 40), self.row("running", "edge", 0.7, 60)]
+        s = move_test.record_summary(dict(samples=len(rows), trigger_index=5), rows)
+        self.assertEqual((s["handoff_ms"], s["handoff_iq_a"], s["peak_rpm"]), (10, 1.9, 60))
+
+    def test_delayed_window_has_no_handoff(self):
+        rows = [self.row("running", "edge", 0.6, 50)] * 20
+        s = move_test.record_summary(dict(samples=20, trigger_index=0), rows)
+        self.assertIsNone(s["handoff_ms"])
+        self.assertIsNone(s["handoff_iq_a"])
 
 
 if __name__ == "__main__":

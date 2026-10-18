@@ -142,9 +142,43 @@ static void test_cap_fallback_fails(void)
 static void test_cap_fallback_scales_at_low_speed(void)
 {
   setup();
-  start(12, 100);          /* edge period 104 ms: needs > 150 ms for 2 captures */
-  for (int k = 0; k < 300; ++k) { if (k % 100 == 99) ++in.edges_pos; tick(1); }
+  start(25, 100);          /* edge period 50 ms: 2 captures need ~150 ms */
+  CHECK(s.capped);
+  for (int k = 0; k < 160; ++k) { if (k % 50 == 49) ++in.edges_pos; tick(1); }
+  CHECK(s.state == DSC_RUNNING);   /* fallback max(150, 2*3*50 = 300 ms) not reached */
+}
+
+/* Review finding 3: below DSC_CAP_MIN_RPM the SDK Hall timeout discards every
+ * capture, so there is no cap and no capture deadline; slow motion continues. */
+static void test_no_cap_below_hall_timeout_speed(void)
+{
+  setup();
+  start(5, 100);
+  CHECK(s.state == DSC_RUNNING && !s.capped);
+  for (int k = 0; k < 3000; ++k) { if (k % 250 == 249) ++in.edges_pos; tick(1); }
   CHECK(s.state == DSC_RUNNING);
+}
+
+/* Review finding 4: edges keep arriving but never a capture; resticks must not
+ * reset the capture deadline forever. */
+static void test_resticks_without_captures_fail(void)
+{
+  setup();
+  in.ref_rpm = 51;
+  for (int k = 0; k < 3000 && s.state != DSC_FAILED; ++k) { if (k % 200 == 199) ++in.edges_pos; tick(1); }
+  CHECK(s.state == DSC_FAILED && s.reason == DSC_R_NO_CAPTURE);
+}
+
+static void test_restick_count_resets_with_captures(void)
+{
+  setup();
+  in.ref_rpm = 51;
+  for (int k = 0; k < 3000; ++k) {
+    if (k % 200 == 199) ++in.edges_pos;
+    if (k % 200 == 120) ++in.captures;   /* one capture per cycle: real feedback */
+    tick(1);
+  }
+  CHECK(s.state != DSC_FAILED);
 }
 
 static void test_negative_direction_cap(void)
@@ -254,6 +288,9 @@ int main(void)
   test_cap_release_and_frozen_integral();
   test_cap_fallback_fails();
   test_cap_fallback_scales_at_low_speed();
+  test_no_cap_below_hall_timeout_speed();
+  test_resticks_without_captures_fail();
+  test_restick_count_resets_with_captures();
   test_negative_direction_cap();
   test_conditional_integration();
   test_limit_change_same_tick();

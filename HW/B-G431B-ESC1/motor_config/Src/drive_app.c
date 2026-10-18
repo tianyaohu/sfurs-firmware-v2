@@ -208,11 +208,28 @@ int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
   return dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);
 }
 
+static volatile int16_t rec_pi_out, rec_iq_ref;
+static volatile uint32_t rec_loop_ran;
+
 void drive_record_tick(int16_t pi_out, int16_t iq_ref)
 {
+  rec_pi_out = pi_out;
+  rec_iq_ref = iq_ref;
+  rec_loop_ran = 1U;
+}
+
+/* One recorder sample per drive_app_tick (1 kHz in every MCSDK state), so it
+ * sees the stopped reference before a start and finishes after a stop. Speed
+ * loop values are those of this tick's FOC_CalcCurrRef, or 0 when the speed
+ * loop did not run (IDLE, STOP, alignment, capture). */
+static void record_sample(void)
+{
   const uint32_t status = rec_status;
+  const uint32_t ran = rec_loop_ran;
+  rec_loop_ran = 0U;
   if (status != ESC_RECORD_ARMED && status != ESC_RECORD_TRIGGERED) return;
-  const int16_t ref = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1());
+  const int16_t pi_out = ran ? rec_pi_out : 0, iq_ref = ran ? rec_iq_ref : 0;
+  const int16_t ref = ran ? (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()) : 0;
   const uint32_t moving = ref >= DSC_STOP_RPM || ref <= -DSC_STOP_RPM;
   int16_t *s = capture_mem.rec[rec_index % ESC_RECORD_SAMPLES];
   s[0] = ref;
@@ -573,6 +590,7 @@ static void speed_command(uint32_t word, uint16_t state)
   if (state != IDLE || rpm == 0) return;
   MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(rpm), ramp_ms);
   if (MC_StartMotor1()) {
+    dsc_reset(&drive_dsc); /* a FAILED attempt must not outlive the stop */
     drive_app.active = 1U;
     drive_app.stop_reason = ESC_STOP_NONE;
   } else {
@@ -694,6 +712,7 @@ void drive_app_tick(void)
   }
   park_tick(state);
   i2t_tick(state);
+  record_sample();
 }
 
 int drive_app_idle(void)

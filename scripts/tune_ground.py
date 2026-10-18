@@ -8,7 +8,7 @@
   uv run scripts/tune_ground.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
   uv run scripts/tune_ground.py --no-camera --out DIR        ESC telemetry only
 
-MOTION: the robot drives short out-and-back moves (+vy -vy +vx -vx) and ends near where it
+MOTION: the robot drives short out-and-back moves (--axes) and ends near where it
 started. Robot on the floor, centred under the camera with tag 0 flat on top, battery on,
 an operator ready to switch it off. Every stage aborts on a runaway or stalled wheel.
 
@@ -259,7 +259,11 @@ def main():
     p.add_argument("--x-speed", type=float, default=0.3, help="m/s for vx moves (0.2 gives only ~31 rpm wheels)")
     p.add_argument("--pause", type=float, default=1.5, help="s still between moves (camera windows)")
     p.add_argument("--seconds", type=float, default=0.8, help="per move")
-    p.add_argument("--reps", type=int, default=2, help="(+vy -vy +vx -vx) cycles per stage")
+    p.add_argument("--reps", type=int, default=2, help="cycles of the --axes moves per stage")
+    p.add_argument("--axes", choices=["both", "vy", "vx"], default="both",
+                   help="vy = forward/back, vx = left/right, both = +vy -vy +vx -vx")
+    p.add_argument("--kp", type=int, help="speed PI Kp for every stage (default: firmware)")
+    p.add_argument("--ki", type=int, help="speed PI Ki for every stage (default: firmware)")
     p.add_argument("--frac", type=float, default=0.65, help="first feed-forward, fraction of kinetic friction")
     p.add_argument("--max-tries", type=int, default=4)
     p.add_argument("--max-spread", type=float, default=0.2, help="breakaway MAD/median allowed")
@@ -278,9 +282,11 @@ def main():
                   direction_deg=3.0, heading_deg=2.0, ratio_spread=0.05)
     args.out.mkdir(parents=True, exist_ok=True)
     v, vx = round(args.speed * 1000), round(args.x_speed * 1000)
-    twists = [(0, v, 0), (0, -v, 0), (vx, 0, 0), (-vx, 0, 0)] * args.reps
+    pairs = dict(vy=[(0, v, 0), (0, -v, 0)], vx=[(vx, 0, 0), (-vx, 0, 0)])
+    twists = (pairs["vy"] + pairs["vx"] if args.axes == "both" else pairs[args.axes]) * args.reps
     plan, duration = esc_tool.pulse_plan(twists, args.seconds, pause=args.pause)
     defaults = esc_tool.firmware_defaults()
+    gains = {k: v for k, v in dict(kp=args.kp, ki=args.ki).items() if v is not None}
     result = dict(date=time.strftime("%Y-%m-%d %H:%M:%S"), args={k: str(x) for k, x in vars(args).items()},
                   limits=limits, stages=[])
 
@@ -309,7 +315,7 @@ def main():
         if problems:
             raise SystemExit("preflight failed:\n  " + "\n  ".join(problems))
 
-        base = {**defaults, "ff_static_ma": 0, "ff_kinetic_ma": 0}
+        base = {**defaults, **gains, "ff_static_ma": 0, "ff_kinetic_ma": 0}
         s = stage(link, stream, "identify", plan, duration, [dict(base)] * 4, defaults, args.out)
         resp = response(s["log"])
         fric = friction_samples(s["log"])
@@ -336,7 +342,7 @@ def main():
 
         frac, best = args.frac, None
         for attempt in range(1, args.max_tries + 1):
-            settings = [{**defaults, "ff_static_ma": round(1000 * frac * kinetic[n]),
+            settings = [{**defaults, **gains, "ff_static_ma": round(1000 * frac * kinetic[n]),
                          "ff_kinetic_ma": round(1000 * frac * kinetic[n])} for n in NAMES]
             s = stage(link, stream, f"tune{attempt}", plan, duration, settings, defaults, args.out)
             resp = response(s["log"])

@@ -6,7 +6,7 @@
 """Straight-line drive test, measured by the overhead camera.
 
   uv run scripts/move_test.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
-      [--axis vy] [--distance 0.6] [--speed 0.2] [--reps 1] [--kp N --ki N] [--ff MA]
+      [--axis vy] [--distance 0.6] [--speed 0.2] [--reps 1] [--kp N --ki N] [--ff MA | --ff-static MA --ff-kinetic MA]
 
 MOTION: drives `distance` along +axis, stops, then the same back (vy = forward, vx =
 right); reps repeat the pair. Place the robot so the whole path stays in view, starting
@@ -65,6 +65,8 @@ def main():
     p.add_argument("--kp", type=int)
     p.add_argument("--ki", type=int)
     p.add_argument("--ff", type=int, help="friction feed-forward mA, static = kinetic, all wheels")
+    p.add_argument("--ff-static", type=int, help="start (breakaway) feed-forward mA, all wheels; overrides --ff")
+    p.add_argument("--ff-kinetic", type=int, help="running feed-forward mA, all wheels; overrides --ff")
     p.add_argument("--forward-deg", type=float, default=108.0,
                    help="robot +vy from the tag's x-axis toward its y-axis (measured 2026-10-17 run A)")
     p.add_argument("--length-margin", type=float, default=1.2, help="path check: overshoot factor")
@@ -81,8 +83,10 @@ def main():
         raise SystemExit("give --calibration, or --no-camera")
 
     defaults = esc_tool.firmware_defaults()
-    used = {**defaults, **{k: v for k, v in dict(kp=args.kp, ki=args.ki, ff_static_ma=args.ff,
-                                                  ff_kinetic_ma=args.ff).items() if v is not None}}
+    used = {**defaults, **{k: v for k, v in dict(
+        kp=args.kp, ki=args.ki,
+        ff_static_ma=args.ff if args.ff_static is None else args.ff_static,
+        ff_kinetic_ma=args.ff if args.ff_kinetic is None else args.ff_kinetic).items() if v is not None}}
     v = round(args.speed * 1000)
     out = (v, 0, 0) if args.axis == "vx" else (0, v, 0)
     back = tuple(-x for x in out)

@@ -20,7 +20,8 @@
  *      integral holds the rest of the hand-off current,
  *      never below 0, and decays by hold_decay per tick while positive-P is
  *      capped, until pcap_ms have passed and pcap_updates fresh Hall captures
- *      arrived; then plain PI from there)
+ *      arrived; then plain PI from there). The hold is dropped (integral 0)
+ *      the first time the wheel reaches |ref|
  *   -> FAILED if no edge within start_hold_ms after reaching start_cap, or no
  *      fresh captures within pcap_fallback_ms of the hand-off; latched, output
  *      0, until the command returns to stop.
@@ -113,6 +114,7 @@ typedef struct {
   int16_t ramp;             /* startup ramp level, counts (magnitude) */
   int16_t start_iq;         /* command at the hand-off edge: apparent breakaway */
   uint8_t capped;           /* positive-P cap active (integral frozen meanwhile) */
+  uint8_t holding;          /* hand-off hold in the integral; dropped at |ref| */
   uint16_t edges_last;      /* commanded-direction edge count at the last edge */
   uint16_t since_edge;      /* ticks since that edge (saturating) */
   uint8_t resticks;         /* consecutive resticks without qualified progress */

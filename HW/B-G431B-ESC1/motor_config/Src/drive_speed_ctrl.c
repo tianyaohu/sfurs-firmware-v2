@@ -296,10 +296,19 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
     }
     enter(s, DSC_RUNNING, DSC_R_EDGE, in);
     s->capped = 1U; /* until fresh Hall speed: P capped, integral frozen */
+    s->holding = 1U;
     return pi_ff(s, pid, err, ff, limit, 0, cfg->pcap);
   }
 
-  /* RUNNING. The cap fallback is at least long enough for pcap_updates + 1
+  /* RUNNING. The hand-off hold is breakaway current the wheel no longer
+   * needs once it has reached the commanded speed: drop it there, so a wheel
+   * that broke free early does not overshoot while one still stuck keeps its
+   * hold (mat M13: FR at 2.25x target while BL/FL re-stuck). */
+  if (s->holding && along >= aref) {
+    pid->wIntegralTerm = 0;
+    s->holding = 0U;
+  }
+  /* The cap fallback is at least long enough for pcap_updates + 1
    * edges at the commanded speed (the SDK discards the first capture), and
    * only counts while |ref| is fast enough for captures to exist. */
   if (s->capped) {

@@ -112,9 +112,12 @@ static void test_handoff_holds_breakaway(void)
   CHECK(s.state == DSC_RUNNING && s.reason == DSC_R_EDGE);
   CHECK(s.start_iq > 1000 && integ() == hold() && hold() > 0);
   CHECK(out == 272 + s.start_iq);     /* P 816 capped to 272, + hold + ff */
+  in.meas_rpm = 30;
+  tick(1);
+  CHECK(s.holding && integ() == hold()); /* below target: hold kept */
   in.meas_rpm = 51;
   tick(1);
-  CHECK(out == s.start_iq);           /* at target: hold + ff, never below ff */
+  CHECK(!s.holding && pid.wIntegralTerm == 0 && out == 326); /* at target: hold dropped, ff only */
   setup();
   cfg.start_from = 200;
   start(51, 1);                       /* hand-off below ff_run: no negative hold */

@@ -97,6 +97,7 @@ def main():
     p.add_argument("--distance", type=float, default=0.6, help="m per move")
     p.add_argument("--speed", type=float, default=0.2, help="m/s")
     p.add_argument("--reps", type=int, default=1, help="out-and-back pairs")
+    p.add_argument("--first-back", action="store_true", help="drive -axis first (back-and-out pairs)")
     p.add_argument("--pause", type=float, default=1.5)
     p.add_argument("--kp", type=int)
     p.add_argument("--ki", type=int)
@@ -150,6 +151,8 @@ def main():
     v = round(args.speed * 1000)
     out = {"vx": (v, 0, 0), "vy": (0, v, 0), "wz": (0, 0, v)}[args.axis]
     back = tuple(-x for x in out)
+    if args.first_back:
+        out, back = back, out
     plan, duration = esc_tool.pulse_plan([out, back] * args.reps, seconds, pause=args.pause)
     args.out.mkdir(parents=True, exist_ok=True)
     result = dict(date=time.strftime("%Y-%m-%d %H:%M:%S"), args={k: str(x) for k, x in vars(args).items()},

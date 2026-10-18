@@ -7,7 +7,8 @@
 
   uv run scripts/move_test.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
       [--axis vy] [--distance 0.6] [--speed 0.2] [--reps 1] [--kp N --ki N] [--ff MA | --ff-static MA --ff-kinetic MA]
-      [--dsc [--dsc-ff-run MA --dsc-cap MA --dsc-slope MA_PER_MS --dsc-pcap MA]] [--record [--record-pre N --record-delay MS]]
+      [--dsc [--dsc-ff-run MA --dsc-cap MA --dsc-slope MA_PER_MS --dsc-pcap MA --dsc-hold-decay MA_PER_MS
+              --dsc-watch MS --dsc-preload PCT]] [--record [--record-pre N --record-delay MS]]
 
 MOTION: drives `distance` along +axis, stops, then the same back (vy = forward, vx =
 right); reps repeat the pair. Place the robot so the whole path stays in view, starting
@@ -106,6 +107,9 @@ def main():
     p.add_argument("--dsc-cap", type=int, help="startup ramp ceiling mA")
     p.add_argument("--dsc-slope", type=int, help="startup ramp mA per ms")
     p.add_argument("--dsc-pcap", type=int, help="positive-P cap after the hand-off, mA")
+    p.add_argument("--dsc-hold-decay", type=int, help="hand-off hold decay, mA per ms")
+    p.add_argument("--dsc-watch", type=int, help="motion confirmation before the hand-off, ms (0: first edge)")
+    p.add_argument("--dsc-preload", type=int, help="ramp start, %% of the learned breakaway (0: off)")
     p.add_argument("--record", action="store_true", help="arm the ESC speed-loop recorders")
     p.add_argument("--record-pre", type=int, default=50, help="recorder samples before the start")
     p.add_argument("--record-delay", type=int, default=0, help="recorder trigger delay ms")
@@ -130,8 +134,10 @@ def main():
         ff_static_ma=args.ff if args.ff_static is None else args.ff_static,
         ff_kinetic_ma=args.ff if args.ff_kinetic is None else args.ff_kinetic,
         dsc_enable=1 if args.dsc else None, dsc_ff_run_ma=args.dsc_ff_run, dsc_start_cap_ma=args.dsc_cap,
-        dsc_start_slope_ma=args.dsc_slope, dsc_pcap_ma=args.dsc_pcap).items() if v is not None}}
-    if not args.dsc and any(x is not None for x in (args.dsc_ff_run, args.dsc_cap, args.dsc_slope, args.dsc_pcap)):
+        dsc_start_slope_ma=args.dsc_slope, dsc_pcap_ma=args.dsc_pcap, dsc_hold_decay_ma=args.dsc_hold_decay,
+        dsc_watch_ms=args.dsc_watch, dsc_preload_pct=args.dsc_preload).items() if v is not None}}
+    if not args.dsc and any(x is not None for x in (args.dsc_ff_run, args.dsc_cap, args.dsc_slope, args.dsc_pcap,
+                                                    args.dsc_hold_decay, args.dsc_watch, args.dsc_preload)):
         raise SystemExit("--dsc-* options need --dsc")
     v = round(args.speed * 1000)
     out = (v, 0, 0) if args.axis == "vx" else (0, v, 0)
@@ -169,7 +175,9 @@ def main():
             print("preflight and path check passed (no motion: --check)")
             return
         loop = (f"startup loop ff_run {used['dsc_ff_run_ma']} cap {used['dsc_start_cap_ma']} "
-                f"slope {used['dsc_start_slope_ma']} mA/ms pcap {used['dsc_pcap_ma']}" if args.dsc else
+                f"slope {used['dsc_start_slope_ma']} mA/ms pcap {used['dsc_pcap_ma']} decay "
+                f"{used['dsc_hold_decay_ma']} watch {used['dsc_watch_ms']} ms preload {used['dsc_preload_pct']} %"
+                if args.dsc else
                 f"ff {used['ff_static_ma']}/{used['ff_kinetic_ma']} mA")
         print(f"-- {args.distance:.2f} m {args.axis} at {args.speed} m/s ({seconds:.1f} s), kp {used['kp']} "
               f"ki {used['ki']} {loop}", flush=True)

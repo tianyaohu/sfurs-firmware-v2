@@ -11,8 +11,13 @@
  * States: STOPPED (|ref| below the stop threshold: plain PI, no ff)
  *   -> STARTING (no PI: total current ramps from start_from toward start_cap
  *      along the command; integral untouched)
- *   -> RUNNING at the first raw Hall edge in the commanded direction (ff_run
- *      carries friction; the integral holds the rest of the hand-off current,
+ *   -> RUNNING at the first raw Hall edge in the commanded direction, or with
+ *      watch_ms set, once motion is confirmed: an edge to a new furthest
+ *      position freezes the ramp for up to watch_ms, and only a second one
+ *      under that constant current hands off (tyre and gear wind-up gives one
+ *      edge per ~0.5-1 A and then stops; a free wheel keeps going); a watch
+ *      that times out resumes the ramp. ff_run carries friction; the
+ *      integral holds the rest of the hand-off current,
  *      never below 0, and decays by hold_decay per tick while positive-P is
  *      capped, until pcap_ms have passed and pcap_updates fresh Hall captures
  *      arrived; then plain PI from there)
@@ -27,6 +32,12 @@
  * STARTING; a start while already moving along the command goes straight to
  * RUNNING. Anti-windup: conditional integration against the combined
  * P + I + ff command and the active limit.
+ *
+ * Preload: each start's ramp begins at preload_pct % of the last confirmed
+ * hand-off current in that direction (kept across dsc_reset), so wheels with
+ * different breakaway currents reach theirs at about the same time.
+ * A stop command clears the integral: a stuck wheel's held breakaway current
+ * must not stay on once the command is zero.
  *
  * Units: current in counts (CURRENT_CONV_FACTOR per A), speed in RPM, time in
  * ticks (ms). */
@@ -49,6 +60,13 @@
  * rocking across one edge never passes its first position, coasting the old
  * way before a reversal leaves no deficit), a qualified edge, or a capture. */
 #define DSC_MAX_RESTICKS 3U
+/* Motion confirmation (watch_ms): an edge closer than this to the one that
+ * froze the ramp is the rotor settling into the wind-up, not motion; after a
+ * preload step the ramp waits this long before it rises (edges then only move
+ * the furthest position). */
+#define DSC_WATCH_MIN_MS 3U
+#define DSC_SETTLE_MS 10U
+enum { DSC_W_NONE, DSC_W_CONFIRM, DSC_W_SETTLE };
 #define DSC_EDGE_PERIOD_MS_RPM 1250  /* 48 edges/rev: edge period [ms] = 1250 / RPM */
 
 enum { DSC_STOPPED, DSC_STARTING, DSC_RUNNING, DSC_FAILED };
@@ -69,6 +87,8 @@ typedef struct {
   uint8_t pcap_updates;     /* fresh Hall captures needed to release the cap */
   uint16_t pcap_fallback_ms;/* FAILED if those captures have not arrived by then */
   int16_t hold_decay;       /* hand-off hold decay while capped, counts per tick */
+  uint16_t watch_ms;        /* confirm motion before the hand-off; 0 = first edge */
+  uint8_t preload_pct;      /* ramp start, % of the learned breakaway; 0 = off */
 } dsc_cfg_t;
 
 typedef struct {
@@ -102,6 +122,10 @@ typedef struct {
   int32_t best;             /* furthest `along` since the first hand-off of the command */
   uint8_t anchored;         /* first hand-off of the command seen */
   uint8_t progressed;       /* best advanced since the last restick */
+  int32_t peak;             /* STARTING: furthest `along` since entering it */
+  uint8_t watching;         /* STARTING: DSC_W_*, ramp frozen while not NONE */
+  uint16_t watch_t;         /* ticks in that watch */
+  int16_t learned[2];       /* last confirmed hand-off |current|, [0] +, [1] -; kept by dsc_reset */
   uint16_t nocap;           /* capped RUNNING ticks with |ref| >= DSC_CAP_MIN_RPM since
                                the last fresh capture; kept across resticks */
   /* last tick, for the recorder */

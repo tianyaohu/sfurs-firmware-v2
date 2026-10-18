@@ -132,7 +132,11 @@ enum { ESC_CFG_SPEED_KP = 1, ESC_CFG_SPEED_KI = 2, ESC_CFG_HALL_SHIFT_DEG = 3,
        ESC_CFG_SPEED_REV_FILTER = 20,
        /* Startup loop hand-off hold decay, mA per ms, 0..IQMAX (0 = hold until
         * the positive-P cap releases). */
-       ESC_CFG_DSC_HOLD_DECAY_MA = 21 };
+       ESC_CFG_DSC_HOLD_DECAY_MA = 21,
+       /* Startup loop motion confirmation, ms (0 = hand off at the first
+        * edge, 0..2000), and breakaway preload, % of the last confirmed
+        * hand-off current per direction (0..90, 0 = off). */
+       ESC_CFG_DSC_WATCH_MS = 22, ESC_CFG_DSC_PRELOAD_PCT = 23 };
 enum { ESC_STOP_NONE = 0, ESC_STOP_COMMAND = 1, ESC_STOP_TIMEOUT = 2,
        ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5,
        ESC_STOP_PARKED = 6 /* zero command at standstill; next non-zero restarts */,

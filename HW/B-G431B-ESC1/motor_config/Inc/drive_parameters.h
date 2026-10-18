@@ -114,6 +114,10 @@
 #define DSC_PCAP_UPDATES_DEFAULT            2
 #define DSC_PCAP_FALLBACK_MS_DEFAULT        150
 #define DSC_HOLD_DECAY_MA_DEFAULT           8
+/* Mat 2026-10-18 (M1 log): wind-up gives one edge per ~0.5-1 A; after a real
+ * breakaway the next edge came 45-50 ms later at the slow legacy ramp. */
+#define DSC_WATCH_MS_DEFAULT                40
+#define DSC_PRELOAD_PCT_DEFAULT             70
 
 /* Hall reversal filter (drive_speed_ctrl.h): a stuck wheel rocking across one
  * Hall edge reads +-200 RPM and the speed loop answers with +-6 A (FR stall

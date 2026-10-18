@@ -126,7 +126,9 @@ void drive_app_init(void)
     .pcap_ms = DSC_PCAP_MS_DEFAULT,
     .pcap_updates = DSC_PCAP_UPDATES_DEFAULT,
     .pcap_fallback_ms = DSC_PCAP_FALLBACK_MS_DEFAULT,
-    .hold_decay = (int16_t)((DSC_HOLD_DECAY_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000) };
+    .hold_decay = (int16_t)((DSC_HOLD_DECAY_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000),
+    .watch_ms = DSC_WATCH_MS_DEFAULT,
+    .preload_pct = DSC_PRELOAD_PCT_DEFAULT };
   dsc_reset(&drive_dsc);
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by build_cli.py --hall-shift */
@@ -570,10 +572,16 @@ static void apply_config(uint32_t word)
     case ESC_CFG_DSC_START_HOLD_MS:
     case ESC_CFG_DSC_PCAP_MS:
     case ESC_CFG_DSC_PCAP_FALLBACK_MS:
+    case ESC_CFG_DSC_WATCH_MS:
       if (value < 0 || value > 2000) { ++drive_app.rejected; return; }
       if ((word & 0xFFFFU) == ESC_CFG_DSC_START_HOLD_MS) drive_dsc_cfg.start_hold_ms = (uint16_t)value;
       else if ((word & 0xFFFFU) == ESC_CFG_DSC_PCAP_MS) drive_dsc_cfg.pcap_ms = (uint16_t)value;
+      else if ((word & 0xFFFFU) == ESC_CFG_DSC_WATCH_MS) drive_dsc_cfg.watch_ms = (uint16_t)value;
       else drive_dsc_cfg.pcap_fallback_ms = (uint16_t)value;
+      break;
+    case ESC_CFG_DSC_PRELOAD_PCT:
+      if (value < 0 || value > 90) { ++drive_app.rejected; return; }
+      drive_dsc_cfg.preload_pct = (uint8_t)value;
       break;
     case ESC_CFG_SPEED_REV_FILTER:
       if (value != 0 && value != 1) { ++drive_app.rejected; return; }

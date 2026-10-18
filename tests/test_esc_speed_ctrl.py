@@ -42,7 +42,7 @@ static void setup(void)
   cfg = (dsc_cfg_t){ .enable = 1, .ff_run = 326, .start_from = 272, .start_cap = 1632,
                      .start_slope = 9, .start_hold_ms = 100, .pcap = 272, .pcap_ms = 50,
                      .pcap_updates = 2, .pcap_fallback_ms = 150, .hold_decay = 0 };
-  dsc_reset(&s);
+  s = (dsc_state_t){0};       /* dsc_reset keeps the learned breakaway */
   raw_own = 0;
   in = (dsc_in_t){ .limit = 3264, .active = 1 };
 }
@@ -608,6 +608,85 @@ static void test_rocking_through_filter_fails_start(void)
   CHECK(max_out <= 1632);                    /* never above the start ceiling (3 A) */
 }
 
+/* watch_ms: an edge freezes the ramp; only further motion under that constant
+ * current hands off (wind-up stops, a free wheel keeps going). */
+static void test_watch_confirms_motion(void)
+{
+  setup();
+  cfg.watch_ms = 40;
+  in.ref_rpm = 51;
+  tick(50);
+  ++in.edges_pos;
+  tick(1);                            /* wind-up edge: ramp freezes */
+  CHECK(s.state == DSC_STARTING && s.watching == DSC_W_CONFIRM);
+  const int16_t frozen = out;
+  tick(38);
+  CHECK(out == frozen && s.state == DSC_STARTING);
+  tick(3);
+  CHECK(s.watching == DSC_W_NONE && out > frozen); /* it stopped: ramp resumes */
+  ++in.edges_pos;
+  tick(1);                            /* next wind-up edge, new watch */
+  CHECK(s.watching == DSC_W_CONFIRM);
+  ++in.edges_pos;
+  tick(1);                            /* within DSC_WATCH_MIN_MS: rotor settling */
+  CHECK(s.state == DSC_STARTING);
+  tick(5);
+  ++in.edges_pos;
+  tick(1);                            /* still going under constant current */
+  CHECK(s.state == DSC_RUNNING && s.reason == DSC_R_EDGE);
+  CHECK(s.learned[0] == s.start_iq && s.learned[1] == 0);
+}
+
+static void test_watch_ignores_rocking(void)
+{
+  setup();
+  cfg.watch_ms = 40;
+  in.ref_rpm = 51;
+  tick(20);
+  ++in.edges_pos;
+  tick(1);
+  for (int k = 0; k < 6; ++k) {       /* back and forth across the same edge */
+    if (k % 2) ++in.edges_pos; else ++in.edges_neg;
+    tick(5);
+  }
+  CHECK(s.state == DSC_STARTING);
+}
+
+static void test_preload_from_learned(void)
+{
+  setup();
+  cfg.watch_ms = 40;
+  cfg.preload_pct = 70;
+  in.ref_rpm = 51;
+  tick(1);
+  CHECK(out == 272);                  /* nothing learned yet */
+  tick(99);
+  ++in.edges_pos;
+  tick(5);
+  ++in.edges_pos;
+  tick(1);
+  CHECK(s.state == DSC_RUNNING && integ() > 0);
+  const int32_t pre = s.learned[0] * 70 / 100;
+  in.ref_rpm = 0;
+  tick(1);
+  CHECK(s.state == DSC_STOPPED && pid.wIntegralTerm == 0 && out == 0); /* no held current on a stop */
+  dsc_reset(&s);                      /* the app resets at every stop */
+  CHECK(pre > 272 && s.learned[0] * 70 / 100 == pre);
+  in.ref_rpm = 51;
+  tick(1);
+  CHECK(s.state == DSC_STARTING && out == pre && s.watching == DSC_W_SETTLE);
+  ++in.edges_pos;
+  tick(9);                            /* the step's wind-up settles: held 10 ms */
+  CHECK(out == pre && s.state == DSC_STARTING);
+  tick(1);
+  CHECK(out == pre + 9);
+  in.ref_rpm = 0;
+  tick(1);
+  in.ref_rpm = -51;
+  tick(1);
+  CHECK(out == -272);                 /* other direction: nothing learned */
+}
+
 int main(void)
 {
   test_ramp_and_failed_start();
@@ -641,6 +720,9 @@ int main(void)
   test_start_while_moving();
   test_stop_and_inactive();
   test_edge_counter_wrap();
+  test_watch_confirms_motion();
+  test_watch_ignores_rocking();
+  test_preload_from_learned();
   puts("OK");
   return 0;
 }

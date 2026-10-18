@@ -90,6 +90,8 @@ extern uint32_t fake_validity[8];
 #define DSC_PCAP_UPDATES_DEFAULT 2
 #define DSC_PCAP_FALLBACK_MS_DEFAULT 150
 #define DSC_HOLD_DECAY_MA_DEFAULT 8
+#define DSC_WATCH_MS_DEFAULT 40
+#define DSC_PRELOAD_PCT_DEFAULT 70
 #define SPEED_REV_FILTER_DEFAULT 1
 ''',
 }
@@ -406,6 +408,7 @@ int main(int argc, char **argv) {
     assert(drive_dsc_cfg.enable == 0 && drive_dsc_cfg.ff_run == 600 * 544 / 1000);
     assert(drive_dsc_cfg.start_slope == 9 && drive_dsc_cfg.start_cap == 1632);
     assert(drive_dsc_cfg.hold_decay == 4);                               /* 8 mA/ms */
+    assert(drive_dsc_cfg.watch_ms == 40 && drive_dsc_cfg.preload_pct == 70);
     assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 40 && pi_calls == 1 && dsc_calls == 0); /* filtered */
     rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_SPEED_REV_FILTER); tick(1);
     assert(drive_rev_enable == 0 && drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 30 && pi_calls == 2);
@@ -420,6 +423,12 @@ int main(int argc, char **argv) {
     rx(CONFIG_SET | 1U, (3U << 16) | ESC_CFG_DSC_PCAP_UPDATES); tick(1);
     rx(CONFIG_SET | 1U, (20U << 16) | ESC_CFG_DSC_HOLD_DECAY_MA); tick(1);
     assert(drive_dsc_cfg.hold_decay == 11);
+    rx(CONFIG_SET | 1U, (25U << 16) | ESC_CFG_DSC_WATCH_MS); tick(1);
+    rx(CONFIG_SET | 1U, (50U << 16) | ESC_CFG_DSC_PRELOAD_PCT); tick(1);
+    assert(drive_dsc_cfg.watch_ms == 25 && drive_dsc_cfg.preload_pct == 50);
+    rx(CONFIG_SET | 1U, (91U << 16) | ESC_CFG_DSC_PRELOAD_PCT); tick(1);
+    assert(drive_dsc_cfg.preload_pct == 50 && drive_app.rejected == 1);
+    drive_app.rejected = 0;
     assert(drive_dsc_cfg.enable == 1 && drive_dsc_enabled() && dsc_resets == 2);
     assert(drive_dsc_cfg.ff_run == 700 * 544 / 1000 && drive_dsc_cfg.start_cap == 2500 * 544 / 1000);
     assert(drive_dsc_cfg.start_slope == 1 && drive_dsc_cfg.start_hold_ms == 200);

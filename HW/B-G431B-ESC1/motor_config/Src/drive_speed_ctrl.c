@@ -93,7 +93,25 @@ int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg
 
 void dsc_reset(dsc_state_t *s)
 {
+  const int16_t pos = s->learned[0], neg = s->learned[1];
   *s = (dsc_state_t){0};
+  s->learned[0] = pos;
+  s->learned[1] = neg;
+}
+
+/* STARTING entry: the ramp begins at start_from, or at preload_pct of the
+ * breakaway learned in this direction when that is higher. */
+static void enter_starting(const dsc_cfg_t *cfg, dsc_state_t *s, uint8_t reason, const dsc_in_t *in,
+                           int32_t from)
+{
+  enter(s, DSC_STARTING, reason, in);
+  const int32_t pre = (int32_t)s->learned[s->dir > 0 ? 0 : 1] * cfg->preload_pct / 100;
+  const int32_t lo = from > cfg->start_from ? from : cfg->start_from;
+  s->ramp = (int16_t)clamp(pre > lo ? pre : lo, 0, cfg->start_cap > 0 ? cfg->start_cap : 0);
+  s->peak = s->along;
+  s->watch_t = 0U;
+  /* a preload is a current step: let the wind-up it causes settle first */
+  s->watching = cfg->watch_ms != 0U && s->ramp > lo ? DSC_W_SETTLE : DSC_W_NONE;
 }
 
 /* P + I + ff against the active limit. Conditional integration: the integral
@@ -136,6 +154,7 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
     s->resticks = 0U;
     const uint8_t reason = in->active ? DSC_R_STOP : DSC_R_INACTIVE;
     if (s->state != DSC_STOPPED || s->dir != 0 || s->reason != reason) {
+      if (s->dir != 0) pid->wIntegralTerm = 0; /* no held current on a zero command */
       s->dir = 0;
       enter(s, DSC_STOPPED, reason, in);
     }
@@ -184,8 +203,7 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       enter(s, DSC_RUNNING, DSC_R_MOVING, in);
       s->capped = 0U;
     } else {
-      enter(s, DSC_STARTING, s->reason, in);
-      s->ramp = (int16_t)clamp(cfg->start_from, 0, INT16_MAX);
+      enter_starting(cfg, s, s->reason, in, 0);
     }
   }
 
@@ -205,18 +223,29 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       s->progressed = 0U;
       if (++s->resticks >= DSC_MAX_RESTICKS) /* rocking or stuck at any speed */
         return fail(s, pid, DSC_R_NO_CAPTURE, in);
-      enter(s, DSC_STARTING, DSC_R_RESTICK, in);
-      { /* resume the ramp at the last hand-off current: below it the wheel just stuck */
-        const int32_t last = s->start_iq < 0 ? -(int32_t)s->start_iq : s->start_iq;
-        s->ramp = (int16_t)clamp(last > cfg->start_from ? last : cfg->start_from, 0, INT16_MAX);
-      }
+      /* resume the ramp at the last hand-off current: below it the wheel just stuck */
+      enter_starting(cfg, s, DSC_R_RESTICK, in, s->start_iq < 0 ? -(int32_t)s->start_iq : s->start_iq);
       s->capped = 0U;
     }
   }
 
   const int32_t ff = s->dir * ((int32_t)cfg->ff_run + (int32_t)cfg->ff_per_krpm * aref / 1000);
   if (s->state == DSC_STARTING) {
-    if ((uint16_t)(raw_along(in, s->dir) - s->edges0) == 0U) {
+    int moved = (uint16_t)(raw_along(in, s->dir) - s->edges0) != 0U;
+    if (cfg->watch_ms != 0U) { /* moved = a second new furthest position under a frozen ramp */
+      const int further = s->along > s->peak;
+      if (further) s->peak = s->along;
+      moved = further && s->watching == DSC_W_CONFIRM && s->watch_t >= DSC_WATCH_MIN_MS;
+      if (further && s->watching == DSC_W_NONE) {
+        s->watching = DSC_W_CONFIRM;
+        s->watch_t = 0U;
+      } else if (s->watching != DSC_W_NONE && !moved) {
+        s->watch_t = sat_inc(s->watch_t);
+        if (s->watch_t >= (s->watching == DSC_W_SETTLE ? DSC_SETTLE_MS : cfg->watch_ms))
+          s->watching = DSC_W_NONE; /* wind-up: it stopped, keep ramping */
+      }
+    }
+    if (!moved) {
       const int32_t cap = clamp(cfg->start_cap, 0, limit);
       if (s->ramp >= cap) {
         s->ramp = (int16_t)cap;
@@ -224,7 +253,7 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
         if (s->at_cap > cfg->start_hold_ms) return fail(s, pid, DSC_R_NO_EDGE, in);
       }
       const int16_t out = (int16_t)(s->dir * s->ramp);
-      s->ramp = (int16_t)clamp((int32_t)s->ramp + cfg->start_slope, 0, cap);
+      if (!s->watching) s->ramp = (int16_t)clamp((int32_t)s->ramp + cfg->start_slope, 0, cap);
       s->p = 0;
       s->i = (int16_t)(pid->wIntegralTerm >> pid->hKiDivisorPOW2);
       s->ff = out;
@@ -237,6 +266,8 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
      * breakaway: dropping to ff_run there re-sticks the wheel (mat 2026-10-17).
      * No integration this tick; P capped until fresh Hall speed arrives. */
     s->start_iq = s->out;
+    if (cfg->watch_ms != 0U) /* confirmed: the next start of this direction preloads from it */
+      s->learned[s->dir > 0 ? 0 : 1] = (int16_t)(s->out < 0 ? -s->out : s->out);
     {
       const int32_t hold = s->dir * ((int32_t)s->out - ff) > 0 ? (int32_t)s->out - ff : 0;
       pid->wIntegralTerm = clamp(hold * (1L << pid->hKiDivisorPOW2), pid->wLowerIntegralLimit,

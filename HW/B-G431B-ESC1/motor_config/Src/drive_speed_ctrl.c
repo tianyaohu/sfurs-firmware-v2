@@ -35,6 +35,25 @@ static int16_t fail(dsc_state_t *s, PID_Handle_t *pid, uint8_t reason, const dsc
   return 0;
 }
 
+int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg, int16_t rpm)
+{
+  const uint16_t dp = (uint16_t)(edges_pos - f->pos), dn = (uint16_t)(edges_neg - f->neg);
+  f->pos = edges_pos;
+  f->neg = edges_neg;
+  if (dp != 0U && dn != 0U) { /* back and forth within one tick */
+    f->dir = 0;
+    f->run = 0U;
+  } else if (dp != 0U || dn != 0U) {
+    const int8_t d = dp != 0U ? 1 : -1;
+    const uint32_t n = dp != 0U ? dp : dn;
+    const uint32_t run = (d == f->dir ? f->run : 0U) + n;
+    f->dir = d;
+    f->run = (uint8_t)(run < 255U ? run : 255U);
+  }
+  if (f->run < 2U || (rpm > 0 && f->dir < 0) || (rpm < 0 && f->dir > 0)) return 0;
+  return rpm;
+}
+
 void dsc_reset(dsc_state_t *s)
 {
   *s = (dsc_state_t){0};

@@ -73,6 +73,8 @@ int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm);
 int drive_dsc_enabled(void);
 extern dsc_cfg_t drive_dsc_cfg;
 extern dsc_state_t drive_dsc;
+extern dsc_rev_t drive_rev;
+extern uint8_t drive_rev_enable; /* ESC_CFG_SPEED_REV_FILTER */
 
 /* Speed-loop recorder (ESC_RECORD_START), from FOC_CalcCurrRef every speed
  * tick with the speed-loop output and the final Iq reference. */

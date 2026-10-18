@@ -89,6 +89,7 @@ extern uint32_t fake_validity[8];
 #define DSC_PCAP_MS_DEFAULT 50
 #define DSC_PCAP_UPDATES_DEFAULT 2
 #define DSC_PCAP_FALLBACK_MS_DEFAULT 150
+#define SPEED_REV_FILTER_DEFAULT 1
 ''',
 }
 
@@ -109,6 +110,9 @@ HALL_Handle_t HALL_M1;
 static int pi_calls, dsc_calls, dsc_resets; static dsc_in_t dsc_last_in;
 int16_t PI_Controller(PID_Handle_t *p, int32_t err) { (void)p; ++pi_calls; return (int16_t)err; }
 void dsc_reset(dsc_state_t *st) { *st = (dsc_state_t){0}; ++dsc_resets; }
+int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t pos, uint16_t neg, int16_t rpm) {
+  (void)f; (void)pos; (void)neg; return (int16_t)(rpm / 2); /* marks "filtered" */
+}
 int16_t dsc_step(const dsc_cfg_t *c, dsc_state_t *st, const dsc_in_t *in, PID_Handle_t *p) {
   (void)c; (void)st; (void)p; ++dsc_calls; dsc_last_in = *in; return 123;
 }
@@ -395,7 +399,12 @@ int main(int argc, char **argv) {
     const uint32_t ma = 544;
     assert(drive_dsc_cfg.enable == 0 && drive_dsc_cfg.ff_run == 600 * 544 / 1000);
     assert(drive_dsc_cfg.start_slope == 9 && drive_dsc_cfg.start_cap == 1632);
-    assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 30 && pi_calls == 1 && dsc_calls == 0);
+    assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 40 && pi_calls == 1 && dsc_calls == 0); /* filtered */
+    rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_SPEED_REV_FILTER); tick(1);
+    assert(drive_rev_enable == 0 && drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 30 && pi_calls == 2);
+    rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_SPEED_REV_FILTER); tick(1);
+    assert(drive_rev_enable == 1);
+    pi_calls = 1;
     rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
     rx(CONFIG_SET | 1U, (700U << 16) | ESC_CFG_DSC_FF_RUN_MA); tick(1);
     rx(CONFIG_SET | 1U, (2500U << 16) | ESC_CFG_DSC_START_CAP_MA); tick(1);

@@ -88,6 +88,8 @@ static uint32_t read_next, read_end, read_bank, read_ch67; /* poll context only 
 
 dsc_cfg_t drive_dsc_cfg;
 dsc_state_t drive_dsc;
+dsc_rev_t drive_rev;
+uint8_t drive_rev_enable = SPEED_REV_FILTER_DEFAULT;
 
 static uint32_t ff_broken_free, ff_stall_ms;
 static int32_t ff_peak; /* highest forward speed since the start, <= FRICTION_FADE_RPM */
@@ -199,6 +201,8 @@ int drive_dsc_enabled(void)
 
 int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
 {
+  const int16_t filtered = dsc_reversal_filter(&drive_rev, HALL_M1.EdgesPos, HALL_M1.EdgesNeg, rpm);
+  if (drive_rev_enable) rpm = filtered;
   if (!drive_dsc_cfg.enable) return PI_Controller(pid, (int32_t)ref_rpm - rpm);
   const dsc_in_t in = { .ref_rpm = ref_rpm, .meas_rpm = rpm,
                         .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg,
@@ -557,6 +561,10 @@ static void apply_config(uint32_t word)
       if ((word & 0xFFFFU) == ESC_CFG_DSC_START_HOLD_MS) drive_dsc_cfg.start_hold_ms = (uint16_t)value;
       else if ((word & 0xFFFFU) == ESC_CFG_DSC_PCAP_MS) drive_dsc_cfg.pcap_ms = (uint16_t)value;
       else drive_dsc_cfg.pcap_fallback_ms = (uint16_t)value;
+      break;
+    case ESC_CFG_SPEED_REV_FILTER:
+      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
+      drive_rev_enable = (uint8_t)value;
       break;
     case ESC_CFG_DSC_PCAP_UPDATES:
       if (value < 1 || value > 6) { ++drive_app.rejected; return; }

@@ -127,6 +127,7 @@ def firmware_defaults():
     return dict(kp=get("PID_SPEED_KP_DEFAULT"), ki=get("PID_SPEED_KI_DEFAULT"),
                 ff_static_ma=get("FRICTION_FF_STATIC_MA_DEFAULT"),
                 ff_kinetic_ma=get("FRICTION_FF_KINETIC_MA_DEFAULT"),
+                speed_rev_filter=get("SPEED_REV_FILTER_DEFAULT"),
                 **{key: get(name) for key, name in DSC_DEFAULTS.items()})
 
 

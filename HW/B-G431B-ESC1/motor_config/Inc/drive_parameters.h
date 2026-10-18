@@ -113,6 +113,11 @@
 #define DSC_PCAP_UPDATES_DEFAULT            2
 #define DSC_PCAP_FALLBACK_MS_DEFAULT        150
 
+/* Hall reversal filter (drive_speed_ctrl.h): a stuck wheel rocking across one
+ * Hall edge reads +-200 RPM and the speed loop answers with +-6 A (FR stall
+ * test 2026-10-17). On by default; CONFIG ESC_CFG_SPEED_REV_FILTER. */
+#define SPEED_REV_FILTER_DEFAULT            1
+
 /* Speed control loop */
 #define SPEED_LOOP_FREQUENCY_HZ             (uint16_t)1000 /*!<Execution rate of speed regulation loop (Hz) */
 

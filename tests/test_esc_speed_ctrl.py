@@ -335,6 +335,31 @@ static void test_cap_reestablished_after_restick_and_reversal(void)
   CHECK(s.state == DSC_RUNNING && s.capped && s.t == 0 && s.at_cap == 0 && pid.wIntegralTerm == 0);
 }
 
+/* FR stall test 2026-10-17: rocking across one edge (+1/-1 every 6 ms) with
+ * the SDK reading +-200 RPM must read 0; real motion passes after 2 edges. */
+static void test_reversal_filter(void)
+{
+  dsc_rev_t f = {0};
+  uint16_t pos = 7, neg = 3;
+  CHECK(dsc_reversal_filter(&f, pos, neg, 0) == 0);
+  for (int k = 0; k < 60; ++k) {          /* rocking */
+    if (k % 2) ++neg; else ++pos;
+    CHECK(dsc_reversal_filter(&f, pos, neg, (int16_t)(k % 2 ? -190 : 210)) == 0);
+    for (int t = 0; t < 5; ++t) CHECK(dsc_reversal_filter(&f, pos, neg, (int16_t)(k % 2 ? -190 : 210)) == 0);
+  }
+  ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 40) == 0);  /* first forward edge after rocking */
+  ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 45) == 45); /* second: real motion */
+  CHECK(dsc_reversal_filter(&f, pos, neg, 47) == 47);        /* between edges: holds */
+  CHECK(dsc_reversal_filter(&f, pos, neg, -30) == 0);        /* sign disagrees with the edges */
+  ++neg; ++pos; CHECK(dsc_reversal_filter(&f, pos, neg, 50) == 0); /* both in one tick */
+  pos = (uint16_t)(pos + 3); CHECK(dsc_reversal_filter(&f, pos, neg, 1500) == 1500); /* fast: 3 at once */
+  dsc_rev_t w = { .pos = 65535, .neg = 0 };
+  CHECK(dsc_reversal_filter(&w, 0, 0, 10) == 0);             /* wrap: one edge */
+  CHECK(dsc_reversal_filter(&w, 1, 0, 10) == 10);            /* second */
+  dsc_rev_t r = {0};
+  for (int k = 0; k < 5; ++k) CHECK(dsc_reversal_filter(&r, 0, (uint16_t)(k + 1), -60) == (k ? -60 : 0)); /* reverse motion */
+}
+
 int main(void)
 {
   test_ramp_and_failed_start();
@@ -348,6 +373,7 @@ int main(void)
   test_threshold_crossing_up();
   test_threshold_crossing_down();
   test_cap_reestablished_after_restick_and_reversal();
+  test_reversal_filter();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

@@ -90,6 +90,20 @@ typedef struct {
   int16_t p, i, ff, out;
 } dsc_state_t;
 
+/* Hall reversal filter, used by both speed loops. A stuck wheel under high
+ * current rocks across one Hall edge: transitions alternate +1/-1 a few ms
+ * apart and the SDK reports the one-interval speed (+-200 RPM), which the
+ * speed loop turns into +-6 A, which drives the next rock - a self-sustaining
+ * limit cycle (FR stall test 2026-10-17: 60 reversals in 384 ms at +-6 A).
+ * Until two consecutive transitions agree in direction, and the SDK speed has
+ * the same sign, the speed fed to the loop is 0. */
+typedef struct {
+  uint16_t pos, neg;  /* edge counters at the last call */
+  int8_t dir;         /* direction of the last transitions, 0 unknown */
+  uint8_t run;        /* consecutive transitions in that direction (saturating) */
+} dsc_rev_t;
+int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg, int16_t rpm);
+
 void dsc_reset(dsc_state_t *s);
 int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_Handle_t *pid);
 

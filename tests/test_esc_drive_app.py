@@ -110,6 +110,8 @@ HALL_Handle_t HALL_M1;
 static int pi_calls, dsc_calls, dsc_resets; static dsc_in_t dsc_last_in;
 int16_t PI_Controller(PID_Handle_t *p, int32_t err) { (void)p; ++pi_calls; return (int16_t)err; }
 void dsc_reset(dsc_state_t *st) { *st = (dsc_state_t){0}; ++dsc_resets; }
+static int rebases;
+void dsc_rev_rebase(dsc_rev_t *f) { (void)f; ++rebases; }
 int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t pos, uint16_t neg, uint16_t caps, int16_t rpm) {
   f->qpos = (uint16_t)(pos + 100); f->qneg = (uint16_t)(neg + 100); f->qcaps = (uint16_t)(caps + 100);
   return (int16_t)(rpm / 2); /* marks "filtered" */
@@ -430,6 +432,12 @@ int main(int argc, char **argv) {
     assert(dsc_last_in.edges_pos == 107 && dsc_last_in.edges_neg == 102 && dsc_last_in.captures == 105); /* qualified */
     assert(dsc_last_in.meas_rpm == 10);                                     /* filtered speed */
     assert(dsc_last_in.limit == 6 * 544 && dsc_last_in.active == 1 && dsc_last_in.ref_rpm == 50);
+    { const int r0 = rebases;                                               /* band origin */
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0);     /* same sign */
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, 0, 20); assert(rebases == r0);      /* stop: none */
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0);     /* same as last */
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, -50, 20); assert(rebases == r0 + 1); /* reversal */
+    }
     rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
     assert(drive_dsc_cfg.enable == 1 && drive_app.rejected == 6); /* only when idle */
     drive_dsc.state = DSC_FAILED; tick(3);

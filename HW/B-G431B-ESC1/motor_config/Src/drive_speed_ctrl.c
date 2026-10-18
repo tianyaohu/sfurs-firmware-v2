@@ -35,6 +35,13 @@ static int16_t fail(dsc_state_t *s, PID_Handle_t *pid, uint8_t reason, const dsc
   return 0;
 }
 
+void dsc_rev_rebase(dsc_rev_t *f)
+{
+  f->net = 0;
+  f->hi = 0;
+  f->lo = 0;
+}
+
 int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg,
                             uint16_t captures, int16_t rpm)
 {
@@ -44,6 +51,11 @@ int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg
   f->neg = edges_neg;
   f->caps = captures;
   f->net += (int32_t)dp - (int32_t)dn;
+  if (f->net > (1L << 30) || f->net < -(1L << 30)) { /* keep the band, move the origin */
+    f->hi -= f->net;
+    f->lo -= f->net;
+    f->net = 0;
+  }
   if (f->net > f->hi) {
     f->qpos = (uint16_t)(f->qpos + (uint32_t)(f->net - f->hi));
     f->hi = f->net;

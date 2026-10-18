@@ -380,6 +380,28 @@ static void test_qualified_feedback(void)
   CHECK(f.qneg == 2);                        /* reversal: first back edge is inside the band */
 }
 
+/* Re-review 5: after a long forward run the band sits at the far position; a
+ * slow reverse start must still hand off on its first edge once rebased. */
+static void test_slow_restart_after_long_run(void)
+{
+  setup();
+  dsc_rev_t f = {0};
+  uint16_t pos = 0, neg = 0, caps = 0;
+  for (int k = 0; k < 100; ++k) { ++pos; ++caps; (void)dsc_reversal_filter(&f, pos, neg, caps, 50); }
+  dsc_rev_rebase(&f);                       /* motor start / command reversal */
+  in.ref_rpm = -5;
+  for (int k = 0; k < 400 && s.state != DSC_RUNNING; ++k) {
+    if (k == 100) ++neg;                    /* first reverse edge */
+    (void)dsc_reversal_filter(&f, pos, neg, caps, 0);
+    in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    tick(1);
+  }
+  CHECK(s.state == DSC_RUNNING && s.reason == DSC_R_EDGE);
+  dsc_rev_t o = { .net = (1L << 30), .hi = (1L << 30), .lo = (1L << 30) - 1 };
+  (void)dsc_reversal_filter(&o, 1, 0, 0, 0);  /* origin moves, band kept */
+  CHECK(o.net == 0 && o.hi == 0 && o.lo == -1 && o.qpos == 1);
+}
+
 static void test_rocking_through_filter_fails_start(void)
 {
   setup();
@@ -416,6 +438,7 @@ int main(void)
   test_reversal_filter();
   test_qualified_feedback();
   test_rocking_through_filter_fails_start();
+  test_slow_restart_after_long_run();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

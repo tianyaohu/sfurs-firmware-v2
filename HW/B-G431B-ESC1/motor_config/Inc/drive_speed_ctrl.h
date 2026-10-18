@@ -110,6 +110,9 @@ typedef struct {
 } dsc_rev_t;
 int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg,
                             uint16_t captures, int16_t rpm);
+/* New origin for the band: call on every deliberate start and command sign
+ * change (not on resticks), so the first edge of the new motion counts. */
+void dsc_rev_rebase(dsc_rev_t *f);
 
 void dsc_reset(dsc_state_t *s);
 int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_Handle_t *pid);

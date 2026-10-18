@@ -35,11 +35,18 @@ bool MC_AcknowledgeFaultMotor1(void);
 int16_t MC_GetMecSpeedAverageMotor1(void);
 qd_t MC_GetIqdMotor1(void); qd_t MC_GetIqdrefMotor1(void);
 ''',
-"mc_config.h": r'''
+"pid_regulator.h": r'''
 #pragma once
 #include <stdint.h>
 typedef struct { int16_t kp, ki; int16_t up, low; int32_t iup, ilow; uint16_t kidiv; } PID_Handle_t;
-typedef struct { int16_t PhaseShift; int8_t Direction; uint8_t HallState; int16_t MeasuredElAngle; } HALL_Handle_t;
+int16_t PI_Controller(PID_Handle_t *p, int32_t err);
+''',
+"mc_config.h": r'''
+#pragma once
+#include <stdint.h>
+#include "pid_regulator.h"
+typedef struct { int16_t PhaseShift; int8_t Direction; uint8_t HallState; int16_t MeasuredElAngle;
+                 uint16_t EdgesPos, EdgesNeg, Captures; } HALL_Handle_t;
 extern PID_Handle_t PIDSpeedHandle_M1, PIDIqHandle_M1, PIDIdHandle_M1; extern HALL_Handle_t HALL_M1;
 static inline void PID_SetKP(PID_Handle_t *p, int16_t v) { p->kp = v; }
 static inline void PID_SetKI(PID_Handle_t *p, int16_t v) { p->ki = v; }
@@ -70,6 +77,17 @@ extern uint32_t fake_validity[8];
 #define MAX_APPLICATION_SPEED_RPM 2976
 #define FRICTION_FF_STATIC_MA_DEFAULT 0
 #define FRICTION_FF_KINETIC_MA_DEFAULT 0
+#define DSC_ENABLE_DEFAULT 0
+#define DSC_FF_RUN_MA_DEFAULT 600
+#define DSC_FF_PER_KRPM_MA_DEFAULT 0
+#define DSC_START_FROM_MA_DEFAULT 500
+#define DSC_START_CAP_MA_DEFAULT 3000
+#define DSC_START_SLOPE_MA_DEFAULT 16
+#define DSC_START_HOLD_MS_DEFAULT 150
+#define DSC_PCAP_MA_DEFAULT 500
+#define DSC_PCAP_MS_DEFAULT 50
+#define DSC_PCAP_UPDATES_DEFAULT 2
+#define DSC_PCAP_FALLBACK_MS_DEFAULT 150
 ''',
 }
 
@@ -87,6 +105,12 @@ HARNESS = r'''
 
 PID_Handle_t PIDSpeedHandle_M1 = { .kidiv = 16384 }, PIDIqHandle_M1, PIDIdHandle_M1;
 HALL_Handle_t HALL_M1;
+static int pi_calls, dsc_calls, dsc_resets; static dsc_in_t dsc_last_in;
+int16_t PI_Controller(PID_Handle_t *p, int32_t err) { (void)p; ++pi_calls; return (int16_t)err; }
+void dsc_reset(dsc_state_t *st) { *st = (dsc_state_t){0}; ++dsc_resets; }
+int16_t dsc_step(const dsc_cfg_t *c, dsc_state_t *st, const dsc_in_t *in, PID_Handle_t *p) {
+  (void)c; (void)st; (void)p; ++dsc_calls; dsc_last_in = *in; return 123;
+}
 RDivider_Handle_t BusVoltageSensor_M1 = { ._Super = { .ConversionFactor = 34, .raw = 23831 } };
 
 /* ---- fake MCSDK state machine ---- */
@@ -362,6 +386,51 @@ int main(int argc, char **argv) {
     assert(state == RUN && starts == 2); /* parking timer reset by the new command */
     rx(STATUS_READ | 1U, 0); speed_cmd(0, 100); tick(200); drive_app_poll(send);
     assert(state == IDLE && (sent[7] & 0x0F) == ESC_STOP_PARKED && !(sent[7] & ESC_FLAG_ACTIVE));
+  } else if (scenario == 15) { /* startup loop: config keys, dispatch, failed-start latch */
+    const uint32_t ma = 544;
+    assert(drive_dsc_cfg.enable == 0 && drive_dsc_cfg.ff_run == 600 * 544 / 1000);
+    assert(drive_dsc_cfg.start_slope == 9 && drive_dsc_cfg.start_cap == 1632);
+    assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 30 && pi_calls == 1 && dsc_calls == 0);
+    rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
+    rx(CONFIG_SET | 1U, (700U << 16) | ESC_CFG_DSC_FF_RUN_MA); tick(1);
+    rx(CONFIG_SET | 1U, (2500U << 16) | ESC_CFG_DSC_START_CAP_MA); tick(1);
+    rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_DSC_START_SLOPE_MA); tick(1);
+    rx(CONFIG_SET | 1U, (200U << 16) | ESC_CFG_DSC_START_HOLD_MS); tick(1);
+    rx(CONFIG_SET | 1U, (3U << 16) | ESC_CFG_DSC_PCAP_UPDATES); tick(1);
+    assert(drive_dsc_cfg.enable == 1 && drive_dsc_enabled() && dsc_resets == 2);
+    assert(drive_dsc_cfg.ff_run == 700 * 544 / 1000 && drive_dsc_cfg.start_cap == 2500 * 544 / 1000);
+    assert(drive_dsc_cfg.start_slope == 1 && drive_dsc_cfg.start_hold_ms == 200);
+    assert(drive_dsc_cfg.pcap_updates == 3 && drive_app.rejected == 0);
+    rx(CONFIG_SET | 1U, (2U << 16) | ESC_CFG_DSC_ENABLE); tick(1);          /* not 0/1 */
+    rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_DSC_START_SLOPE_MA); tick(1);  /* never rises */
+    rx(CONFIG_SET | 1U, (7000U << 16) | ESC_CFG_DSC_PCAP_MA); tick(1);      /* > IQMAX */
+    rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_DSC_PCAP_UPDATES); tick(1);
+    rx(CONFIG_SET | 1U, (3000U << 16) | ESC_CFG_DSC_PCAP_FALLBACK_MS); tick(1);
+    assert(drive_app.rejected == 5 && drive_dsc_cfg.enable == 1 && drive_dsc_cfg.pcap_updates == 3);
+    (void)ma;
+    drive_app.aligned = 1;
+    HALL_M1.EdgesPos = 7; HALL_M1.EdgesNeg = 2; HALL_M1.Captures = 5;
+    speed_cmd(100, 100); tick(3); assert(state == RUN && drive_app.active);
+    assert(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 123 && pi_calls == 1);
+    assert(dsc_last_in.edges_pos == 7 && dsc_last_in.edges_neg == 2 && dsc_last_in.captures == 5);
+    assert(dsc_last_in.limit == 6 * 544 && dsc_last_in.active == 1 && dsc_last_in.ref_rpm == 50);
+    rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
+    assert(drive_dsc_cfg.enable == 1 && drive_app.rejected == 6); /* only when idle */
+    drive_dsc.state = DSC_FAILED; tick(3);
+    assert(state == IDLE && !drive_app.active && drive_app.start_failed);
+    assert(drive_app.stop_reason == ESC_STOP_START_FAILED);
+    drive_dsc.state = DSC_STOPPED;
+    for (int i = 0; i < 10; ++i) { speed_cmd(100, 100); tick(20); }
+    assert(state == IDLE && starts == 1);        /* no automatic retry */
+    speed_cmd(0, 100); tick(1); assert(!drive_app.start_failed);
+    speed_cmd(100, 100); tick(3); assert(state == RUN && starts == 2);
+    drive_dsc.state = DSC_FAILED; tick(3); assert(drive_app.start_failed);
+    drive_dsc.state = DSC_STOPPED;
+    rx(MOTOR_STOP | 1U, 0); tick(1); assert(!drive_app.start_failed);
+    speed_cmd(100, 100); tick(3); assert(state == RUN && starts == 3);
+    drive_dsc.state = DSC_FAILED; tick(3); assert(drive_app.start_failed);
+    drive_dsc.state = DSC_STOPPED;
+    tick(260); assert(!drive_app.start_failed);  /* command gap clears it */
   } else if (scenario == 9) { /* undervolt latched on USB power: STOP clears it once gone */
     state = FAULT_OVER; cur_faults = 4; occ_faults = 4; tick(1);
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2);
@@ -445,6 +514,9 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_parks_at_zero_command(self):
         self.run_scenario(14)
+
+    def test_startup_loop_config_and_failed_latch(self):
+        self.run_scenario(15)
 
 
 if __name__ == "__main__":

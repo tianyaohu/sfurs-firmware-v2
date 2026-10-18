@@ -44,6 +44,7 @@ struct drive_app_state {
   int32_t command_rpm;      /* last SPEED_WRITE target */
   uint32_t park_ms;         /* time at zero command and standstill */
   uint32_t speed_commands, status_replies, rejected;
+  uint32_t start_failed;    /* ESC_STOP_START_FAILED latch */
 };
 extern volatile struct drive_app_state drive_app;
 
@@ -63,6 +64,15 @@ void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
  * FOC_CalcCurrRef (medium-frequency task) with the ramped speed reference and
  * the measured speed. */
 int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm);
+
+/* Speed loop for STC_CalcTorqueReference: PI_Controller, or with the startup
+ * loop enabled (ESC_CFG_DSC_ENABLE) the complete Iq reference from dsc_step().
+ * drive_dsc_enabled() tells FOC_CalcCurrRef to skip drive_speed_iq_ref. */
+#include "drive_speed_ctrl.h"
+int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm);
+int drive_dsc_enabled(void);
+extern dsc_cfg_t drive_dsc_cfg;
+extern dsc_state_t drive_dsc;
 
 void drive_app_init(void);
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length);

@@ -582,6 +582,16 @@ __weak void *HALL_TIMx_CC_IRQHandler(void *pHandleVoid)
       }
     }
 
+    /* USER: count valid transitions (positive order 4-5-1-3-2-6). */
+    {
+      static const uint8_t pos_prev[8] = {0U, 5U, 3U, 1U, 6U, 4U, 2U, 0U};
+      static const uint8_t neg_prev[8] = {0U, 3U, 6U, 2U, 5U, 1U, 4U, 0U};
+      const uint8_t st = pHandle->HallState & 7U;
+      if ((pos_prev[st] != 0U) && (bPrevHallState == pos_prev[st])) { pHandle->EdgesPos++; }
+      else if ((neg_prev[st] != 0U) && (bPrevHallState == neg_prev[st])) { pHandle->EdgesNeg++; }
+      else { /* invalid or repeated state */ }
+    }
+
     /* We need to check that the direction has not changed.
        If it is the case, the sign of the current speed can be the opposite of the
        average speed, and the average time can be close to 0 which lead to a
@@ -717,6 +727,7 @@ __weak void *HALL_TIMx_CC_IRQHandler(void *pHandleVoid)
           pHandle->SensorPeriod[pHandle->SpeedFIFOIdx] *= pHandle->Direction;
         }
           pHandle->ElPeriodSum += pHandle->SensorPeriod[pHandle->SpeedFIFOIdx];
+          pHandle->Captures++; /* USER: fresh speed sample */
         /* Update pointers to speed buffer */
         pHandle->SpeedFIFOIdx++;
         if (pHandle->SpeedFIFOIdx == pHandle->SpeedBufferSize)

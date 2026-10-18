@@ -46,6 +46,11 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Src/drive_app.c</locationURI>
 		</link>
 		<link>
+			<name>Application/User/drive_speed_ctrl.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Src/drive_speed_ctrl.c</locationURI>
+		</link>
+		<link>
 			<name>Application/User/hall_speed_pos_fdbk.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Src/hall_speed_pos_fdbk.c</locationURI>

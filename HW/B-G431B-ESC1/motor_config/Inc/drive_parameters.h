@@ -97,6 +97,22 @@
 #define FRICTION_FF_STATIC_MA_DEFAULT       0
 #define FRICTION_FF_KINETIC_MA_DEFAULT      0
 
+/* Startup speed loop (drive_speed_ctrl.h, notes/ff-design.md stage 1). Off by
+ * default: enable and tune over CAN CONFIG_SET (ESC_CFG_DSC_*). Running ff
+ * 600 mA ~ the carpet steady current at 50 RPM (0.4-0.9 A); the start ramp
+ * 0.5 -> 3 A at 16 A/s crosses the 1.7-2.3 A carpet breakaway in ~80-110 ms. */
+#define DSC_ENABLE_DEFAULT                  0
+#define DSC_FF_RUN_MA_DEFAULT               600
+#define DSC_FF_PER_KRPM_MA_DEFAULT          0
+#define DSC_START_FROM_MA_DEFAULT           500
+#define DSC_START_CAP_MA_DEFAULT            3000
+#define DSC_START_SLOPE_MA_DEFAULT          16
+#define DSC_START_HOLD_MS_DEFAULT           150
+#define DSC_PCAP_MA_DEFAULT                 500
+#define DSC_PCAP_MS_DEFAULT                 50
+#define DSC_PCAP_UPDATES_DEFAULT            2
+#define DSC_PCAP_FALLBACK_MS_DEFAULT        150
+
 /* Speed control loop */
 #define SPEED_LOOP_FREQUENCY_HZ             (uint16_t)1000 /*!<Execution rate of speed regulation loop (Hz) */
 

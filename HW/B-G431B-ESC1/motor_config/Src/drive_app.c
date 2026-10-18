@@ -76,6 +76,9 @@ static volatile int16_t capture_step_counts;
 static uint32_t capture_ms, capture_vbus_cv;
 static uint32_t read_next, read_end, read_bank; /* poll context only */
 
+dsc_cfg_t drive_dsc_cfg;
+dsc_state_t drive_dsc;
+
 static uint32_t ff_broken_free, ff_stall_ms;
 static int32_t ff_peak; /* highest forward speed since the start, <= FRICTION_FADE_RPM */
 
@@ -99,6 +102,19 @@ void drive_app_init(void)
   set_iq_limit(drive_app.iq_max_counts);
   drive_app.ff_static_counts = FRICTION_FF_STATIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
   drive_app.ff_kinetic_counts = FRICTION_FF_KINETIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
+  drive_dsc_cfg = (dsc_cfg_t){
+    .enable = DSC_ENABLE_DEFAULT,
+    .ff_run = (int16_t)(DSC_FF_RUN_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .ff_per_krpm = (int16_t)(DSC_FF_PER_KRPM_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .start_from = (int16_t)(DSC_START_FROM_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .start_cap = (int16_t)(DSC_START_CAP_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .start_slope = (int16_t)((DSC_START_SLOPE_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000),
+    .start_hold_ms = DSC_START_HOLD_MS_DEFAULT,
+    .pcap = (int16_t)(DSC_PCAP_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .pcap_ms = DSC_PCAP_MS_DEFAULT,
+    .pcap_updates = DSC_PCAP_UPDATES_DEFAULT,
+    .pcap_fallback_ms = DSC_PCAP_FALLBACK_MS_DEFAULT };
+  dsc_reset(&drive_dsc);
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by build_cli.py --hall-shift */
 #endif
@@ -163,6 +179,22 @@ int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm)
   if (out > limit) out = limit;
   if (out < -limit) out = -limit;
   return (int16_t)out;
+}
+
+int drive_dsc_enabled(void)
+{
+  return drive_dsc_cfg.enable != 0U;
+}
+
+int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
+{
+  if (!drive_dsc_cfg.enable) return PI_Controller(pid, (int32_t)ref_rpm - rpm);
+  const dsc_in_t in = { .ref_rpm = ref_rpm, .meas_rpm = rpm,
+                        .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg,
+                        .captures = HALL_M1.Captures,
+                        .limit = (int16_t)drive_app.iq_limit_counts,
+                        .active = drive_app.active ? 1U : 0U };
+  return dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);
 }
 
 static uint32_t vbus_centivolts(void)
@@ -398,6 +430,46 @@ static void apply_config(uint32_t word)
       else drive_app.ff_kinetic_counts = counts;
       break;
     }
+    case ESC_CFG_DSC_ENABLE:
+      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
+      drive_dsc_cfg.enable = (uint8_t)value;
+      dsc_reset(&drive_dsc);
+      break;
+    case ESC_CFG_DSC_FF_RUN_MA:
+    case ESC_CFG_DSC_FF_PER_KRPM_MA:
+    case ESC_CFG_DSC_START_FROM_MA:
+    case ESC_CFG_DSC_START_CAP_MA:
+    case ESC_CFG_DSC_START_SLOPE_MA:
+    case ESC_CFG_DSC_PCAP_MA: {
+      if (value < 0 || value > (int16_t)(IQMAX_A * 1000)) { ++drive_app.rejected; return; }
+      const int16_t counts = (int16_t)((int32_t)value * (int32_t)CURRENT_CONV_FACTOR / 1000);
+      switch (word & 0xFFFFU) {
+        case ESC_CFG_DSC_FF_RUN_MA: drive_dsc_cfg.ff_run = counts; break;
+        case ESC_CFG_DSC_FF_PER_KRPM_MA: drive_dsc_cfg.ff_per_krpm = counts; break;
+        case ESC_CFG_DSC_START_FROM_MA: drive_dsc_cfg.start_from = counts; break;
+        case ESC_CFG_DSC_START_CAP_MA: drive_dsc_cfg.start_cap = counts; break;
+        case ESC_CFG_DSC_START_SLOPE_MA: {
+          if (value == 0) { ++drive_app.rejected; return; } /* a ramp that never rises */
+          const int32_t slope = ((int32_t)value * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000;
+          drive_dsc_cfg.start_slope = (int16_t)(slope > 0 ? slope : 1);
+          break;
+        }
+        default: drive_dsc_cfg.pcap = counts; break;
+      }
+      break;
+    }
+    case ESC_CFG_DSC_START_HOLD_MS:
+    case ESC_CFG_DSC_PCAP_MS:
+    case ESC_CFG_DSC_PCAP_FALLBACK_MS:
+      if (value < 0 || value > 2000) { ++drive_app.rejected; return; }
+      if ((word & 0xFFFFU) == ESC_CFG_DSC_START_HOLD_MS) drive_dsc_cfg.start_hold_ms = (uint16_t)value;
+      else if ((word & 0xFFFFU) == ESC_CFG_DSC_PCAP_MS) drive_dsc_cfg.pcap_ms = (uint16_t)value;
+      else drive_dsc_cfg.pcap_fallback_ms = (uint16_t)value;
+      break;
+    case ESC_CFG_DSC_PCAP_UPDATES:
+      if (value < 1 || value > 6) { ++drive_app.rejected; return; }
+      drive_dsc_cfg.pcap_updates = (uint8_t)value;
+      break;
     default: ++drive_app.rejected; break;
   }
 }
@@ -412,6 +484,10 @@ static void speed_command(uint32_t word, uint16_t state)
   drive_app.last_command_ms = drive_app.now_ms;
   drive_app.command_rpm = rpm;
   if (drive_app.fault_latched) return;
+  if (drive_app.start_failed) { /* no automatic retry: wait for a zero command */
+    if (rpm == 0) drive_app.start_failed = 0U;
+    return;
+  }
   if (!drive_app.aligned) { ++drive_app.rejected; return; }
   if (drive_app.active) {
     MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(rpm), ramp_ms);
@@ -485,6 +561,7 @@ void drive_app_tick(void)
   }
   if (stop_received) {
     drive_app.fault_latched = 0U;
+    drive_app.start_failed = 0U;
     if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING) {
       align_finish(ESC_ALIGN_ABORTED);
     } else if (drive_app.capture_phase != CAPTURE_IDLE &&
@@ -528,8 +605,13 @@ void drive_app_tick(void)
       drive_app.capture_phase == CAPTURE_IDLE && !stop_received)
     speed_command(rx_speed_word, state);
 
+  if (drive_app.active && drive_dsc_cfg.enable && drive_dsc.state == DSC_FAILED) {
+    stop(ESC_STOP_START_FAILED);
+    drive_app.start_failed = 1U;
+  }
   if ((uint32_t)(now - drive_app.last_command_ms) >= ESC_COMMAND_TIMEOUT_MS) {
     drive_app.fault_latched = 0U;
+    drive_app.start_failed = 0U;
     if (drive_app.active) stop(ESC_STOP_TIMEOUT);
   }
   park_tick(state);

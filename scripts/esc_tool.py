@@ -148,8 +148,8 @@ def wait_idle(link, indices, timeout=3.0):
 
 def spin(link, name, index, selector, args):
     """Speed step on one wheel; returns the steady-state summary."""
-    if abs(args.rpm) > 300 or not 0 < args.seconds <= 10:
-        raise SystemExit("spin: |rpm| <= 300 and 0 < seconds <= 10")
+    if abs(args.rpm) > 600 or not 0 < args.seconds <= 10:
+        raise SystemExit("spin: |rpm| <= 600 and 0 < seconds <= 10")
     kp0, ki0 = speed_defaults()
     gains = args.kp is not None or args.ki is not None
     kp = kp0 if args.kp is None else args.kp
@@ -240,7 +240,8 @@ def breakaway_summary(starts):
     return out
 
 
-RUNAWAY_RPM = 200     # pulse targets are ~50 RPM; beyond this a wheel is unloaded or limit-cycling
+RUNAWAY_RPM = 200     # floor; beyond max(this, 2x the recent target) a wheel is unloaded or limit-cycling
+RUNAWAY_FACTOR, RUNAWAY_HOLD_S = 2.0, 1.0  # the target counts for 1 s after it drops (coasting to a stop)
 STALL_AMPS, STALL_S = 4.5, 0.6
 
 
@@ -251,16 +252,23 @@ class PulseGuard:
 
     def __init__(self):
         self.stall_since = [None] * 4
+        self.targets = []  # (t, peak |target| over the wheels)
+
+    def runaway_limit(self, e):
+        target = max((abs(x) for x in e.get("target_rpm") or [] if x is not None), default=0)
+        self.targets = [(t, x) for t, x in self.targets if e["t"] - t <= RUNAWAY_HOLD_S] + [(e["t"], target)]
+        return max(RUNAWAY_RPM, RUNAWAY_FACTOR * max(x for _t, x in self.targets))
 
     def check(self, e):
+        limit = self.runaway_limit(e)
         for w, (name, _esc, _sel) in enumerate(ik_link.WHEELS):
             if e["faults"][w]:  # the other wheels would drive on without it
                 return f"{name} fault {','.join(e['faults'][w])}"
             rpm, iq = e["rpm"][w], e["iq_ref_a"][w]
             if rpm is None or iq is None:
                 continue
-            if abs(rpm) > RUNAWAY_RPM:
-                return f"{name} at {rpm} rpm"
+            if abs(rpm) > limit:
+                return f"{name} at {rpm} rpm (limit {limit:.0f})"
             if rpm == 0 and abs(iq) >= STALL_AMPS:
                 self.stall_since[w] = self.stall_since[w] if self.stall_since[w] is not None else e["t"]
                 if e["t"] - self.stall_since[w] >= STALL_S:
@@ -280,10 +288,11 @@ def pulse_plan(twists, seconds, pause=1.0, lead=0.5):
     return plan, t
 
 
-def run_pulse(link, plan, duration, settings, defaults):
+def run_pulse(link, plan, duration, settings, defaults, accel_rpmps=0):
     """Drive `plan` through the Nucleo with per-wheel RAM `settings` (four
     {key: value} dicts), then restore `defaults` on every wheel once they are
-    IDLE. Returns (log, abort reason or None, monotonic time of log t = 0)."""
+    IDLE. accel_rpmps: wheel acceleration limit (0 = Nucleo default 900). Returns (log,
+    abort reason or None, monotonic time of log t = 0)."""
     before = link.rows()
     time.sleep(0.3)
     dead = [name for (name, _e, _s), r0, r in zip(ik_link.WHEELS, before, link.rows())
@@ -296,7 +305,7 @@ def run_pulse(link, plan, duration, settings, defaults):
         for (_name, _i, sel), values in zip(wheels("all"), settings):
             for key, value in values.items():
                 link.send_raw(*ik_link.config_frame(sel, key, value))
-        link.write("accel_rpmps", 0)
+        link.write("accel_rpmps", accel_rpmps)
         t0, next_cmd = time.monotonic(), 0.0
         while (now := time.monotonic() - t0) < duration:
             if now >= next_cmd:
@@ -331,8 +340,8 @@ def run_pulse(link, plan, duration, settings, defaults):
 
 
 def pulse(link, args):
-    if not 0 < args.speed <= 0.3 or not 0 < args.seconds <= 3 or not 1 <= args.reps <= 10:
-        raise SystemExit("pulse: 0 < speed <= 0.3 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
+    if not 0 < args.speed <= 2.0 or not 0 < args.seconds <= 3 or not 1 <= args.reps <= 10:
+        raise SystemExit("pulse: 0 < speed <= 2 m/s, 0 < seconds <= 3, 1 <= reps <= 10")
     defaults = firmware_defaults()
     asked = dict(kp=args.kp, ki=args.ki, ff_static_ma=args.ff_static, ff_kinetic_ma=args.ff_kinetic)
     # Send every tunable, not only the non-default ones: the ESCs may still hold
@@ -342,7 +351,7 @@ def pulse(link, args):
     out = (v, 0, 0) if args.axis == "vx" else (0, v, 0)
     plan, duration = pulse_plan([tw for _ in range(args.reps)
                                  for tw in (out, tuple(-x for x in out))], args.seconds)
-    log, aborted, _t0 = run_pulse(link, plan, duration, [used] * 4, defaults)
+    log, aborted, _t0 = run_pulse(link, plan, duration, [used] * 4, defaults, args.accel)
     if args.log:
         args.log.write_text("".join(json.dumps(e) + "\n" for e in log))
     s = breakaway_summary(breakaways(log))
@@ -391,7 +400,8 @@ def main(argv=None):
     p.add_argument("--log", type=pathlib.Path)
     p = sub.add_parser("pulse")
     p.add_argument("--axis", choices=("vx", "vy"), default="vy", help="vy forward (default), vx right")
-    p.add_argument("--speed", type=float, default=0.2, help="m/s, at most 0.3")
+    p.add_argument("--speed", type=float, default=0.2, help="m/s, at most 2")
+    p.add_argument("--accel", type=int, default=0, help="wheel acceleration limit, RPM/s (0 = Nucleo default 900)")
     p.add_argument("--seconds", type=float, default=1.5)
     p.add_argument("--reps", type=int, default=3)
     p.add_argument("--kp", type=int)

@@ -77,6 +77,16 @@ class Guard(unittest.TestCase):
         self.assertIsNone(g.check(self.entry(0.0, [60, -60, 60, None], [1, 1, 1, None])))
         self.assertIn(WHEELS[1], g.check(self.entry(0.1, [60, -390, 60, 0], [1, 6, 1, 0])))
 
+    def test_runaway_limit_scales_with_target(self):
+        g = esc_tool.PulseGuard()
+        e = lambda t, tgt, rpm: dict(self.entry(t, rpm, [1] * 4), target_rpm=tgt)
+        self.assertIsNone(g.check(e(0.0, [250, -250, 250, -250], [480, -480, 480, -480])))  # 2 x 250
+        self.assertIn("limit 500", g.check(e(0.1, [250, -250, 250, -250], [520, -480, 480, -480])))
+        g = esc_tool.PulseGuard()
+        self.assertIsNone(g.check(e(0.0, [250] * 4, [300] * 4)))
+        self.assertIsNone(g.check(e(0.9, [0] * 4, [450] * 4)))     # coasting: target still counts
+        self.assertIn("limit 200", g.check(e(2.0, [0] * 4, [250] * 4)))  # 1 s later: the floor
+
     def test_stall_needs_time(self):
         g = esc_tool.PulseGuard()
         for k in range(6):

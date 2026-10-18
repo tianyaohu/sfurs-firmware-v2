@@ -217,10 +217,10 @@ def camera_moves(stream, t0, plan):
     return out
 
 
-def stage(link, stream, name, plan, duration, settings, defaults, outdir):
+def stage(link, stream, name, plan, duration, settings, defaults, outdir, accel=0):
     print(f"-- {name}: " + " ".join(f"{n} {s['ff_static_ma']}/{s['ff_kinetic_ma']}" for n, s in zip(NAMES, settings)),
           flush=True)
-    log, aborted, t0 = esc_tool.run_pulse(link, plan, duration, settings, defaults)
+    log, aborted, t0 = esc_tool.run_pulse(link, plan, duration, settings, defaults, accel)
     (outdir / f"{name}.jsonl").write_text("".join(json.dumps(e) + "\n" for e in log))
     if stream is not None:
         time.sleep(0.2)

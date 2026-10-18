@@ -61,6 +61,7 @@ def main():
     p.add_argument("--distance", type=float, default=0.6, help="m per move")
     p.add_argument("--speed", type=float, default=0.2, help="m/s")
     p.add_argument("--reps", type=int, default=1, help="out-and-back pairs")
+    p.add_argument("--accel", type=int, default=0, help="wheel acceleration limit, RPM/s (0 = Nucleo default 900)")
     p.add_argument("--pause", type=float, default=1.5)
     p.add_argument("--kp", type=int)
     p.add_argument("--ki", type=int)
@@ -75,8 +76,8 @@ def main():
     p.add_argument("--sn", default=ik_link.DEFAULT_SN)
     args = p.parse_args()
     seconds = args.distance / args.speed if args.speed else 0
-    if not 0 < args.speed <= 0.3 or not 0 < args.distance <= 1.0 or not 1 <= args.reps <= 3 or seconds > 5:
-        raise SystemExit("0 < speed <= 0.3 m/s, 0 < distance <= 1 m, 1 <= reps <= 3, distance/speed <= 5 s")
+    if not 0 < args.speed <= 2.0 or not 0 < args.distance <= 1.0 or not 1 <= args.reps <= 3 or seconds > 5:
+        raise SystemExit("0 < speed <= 2 m/s, 0 < distance <= 1 m, 1 <= reps <= 3, distance/speed <= 5 s")
     if args.no_camera == bool(args.calibration):
         raise SystemExit("give --calibration, or --no-camera")
 
@@ -120,7 +121,7 @@ def main():
             return
         print(f"-- {args.distance:.2f} m {args.axis} at {args.speed} m/s ({seconds:.1f} s), kp {used['kp']} "
               f"ki {used['ki']} ff {used['ff_static_ma']}/{used['ff_kinetic_ma']} mA", flush=True)
-        s = tg.stage(link, stream, "drive", plan, duration, [used] * 4, defaults, args.out)
+        s = tg.stage(link, stream, "drive", plan, duration, [used] * 4, defaults, args.out, args.accel)
     finally:
         session.close()
         if stream is not None:

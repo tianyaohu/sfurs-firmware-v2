@@ -472,6 +472,26 @@ static void test_slow_motion_no_false_restick(void)
   CHECK(s.state == DSC_RUNNING && resticks == 0);
 }
 
+/* Re-review 8: genuine stick-slip (one forward edge per 600 ms at +5 RPM, no
+ * captures) gains ground every cycle and must not fail. */
+static void test_stick_slip_progress_never_fails(void)
+{
+  setup();
+  dsc_rev_t f = {0};
+  uint16_t pos = 0, neg = 0, caps = 0;
+  in.ref_rpm = 5;
+  for (int k = 0; k < 6000; ++k) {
+    if (k % 600 == 80) ++pos;
+    const uint8_t was = s.state;
+    (void)dsc_reversal_filter(&f, pos, neg, caps, 0);
+    in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    in.raw_pos = pos; in.raw_neg = neg; raw_own = 1;
+    tick(1);
+    if (s.state == DSC_STARTING && was != DSC_STARTING) dsc_rev_rebase(&f, pos, neg, caps);
+    CHECK(s.state != DSC_FAILED);
+  }
+}
+
 static void test_rocking_through_filter_fails_start(void)
 {
   setup();
@@ -514,6 +534,7 @@ int main(void)
   test_slow_restart_after_long_run();
   test_slow_rocking_fails_in_bounded_time();
   test_slow_motion_no_false_restick();
+  test_stick_slip_progress_never_fails();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

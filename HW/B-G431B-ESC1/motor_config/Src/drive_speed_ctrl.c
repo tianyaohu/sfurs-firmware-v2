@@ -129,6 +129,7 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
   if (in->captures != s->caps_seen) { /* any fresh Hall capture is feedback */
     s->caps_seen = in->captures;
     s->resticks = 0U;
+    s->nocap = 0U;
   }
 
   if (cmd == 0) {
@@ -149,6 +150,18 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
     const uint8_t reason = s->dir == 0 ? DSC_R_ARMED : DSC_R_REVERSE;
     s->dir = cmd;
     enter(s, DSC_STOPPED, reason, in);
+    s->net0 = (int16_t)(in->raw_pos - in->raw_neg);
+    s->best = 0;
+    s->progressed = 0U;
+    s->resticks = 0U;
+    s->nocap = 0U;
+  }
+  {
+    const int16_t along_net = (int16_t)(s->dir * (int16_t)((int16_t)(in->raw_pos - in->raw_neg) - s->net0));
+    if (along_net > s->best) {
+      s->best = along_net;
+      s->progressed = 1U;
+    }
   }
 
   const int32_t along = s->dir * (int32_t)in->meas_rpm;
@@ -177,6 +190,8 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       s->since_edge = sat_inc(s->since_edge);
     }
     if (s->since_edge > (2U * edge_ms > DSC_RESTICK_MIN_MS ? 2U * edge_ms : DSC_RESTICK_MIN_MS)) {
+      if (s->progressed) s->resticks = 0U; /* stick-slip that gained ground */
+      s->progressed = 0U;
       if (++s->resticks >= DSC_MAX_RESTICKS) /* rocking or stuck at any speed */
         return fail(s, pid, DSC_R_NO_CAPTURE, in);
       enter(s, DSC_STARTING, DSC_R_RESTICK, in);
@@ -217,11 +232,11 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
   if (s->capped) {
     const uint16_t fresh = (uint16_t)(in->captures - s->caps0);
     const uint32_t slow = 2U * ((uint32_t)cfg->pcap_updates + 1U) * edge_ms;
-    if (aref >= DSC_CAP_MIN_RPM) s->at_cap = sat_inc(s->at_cap);
+    if (aref >= DSC_CAP_MIN_RPM) s->nocap = sat_inc(s->nocap);
     if (s->t >= cfg->pcap_ms && fresh >= cfg->pcap_updates) {
       s->capped = 0U;
       s->resticks = 0U;
-    } else if (s->at_cap >= cfg->pcap_fallback_ms && s->at_cap >= slow) {
+    } else if (s->nocap >= cfg->pcap_fallback_ms && s->nocap >= slow) {
       return fail(s, pid, DSC_R_NO_CAPTURE, in);
     }
   }

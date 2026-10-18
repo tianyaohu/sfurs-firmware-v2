@@ -37,10 +37,13 @@
 /* Below this |ref| the Hall edges come slower than the SDK Hall timeout
  * (150 ms, 1250/150 = 8 RPM, with 2x margin for the acceleration), so speed
  * captures may never arrive: the cap (and frozen integral) stays on, but the
- * capture deadline only counts time spent at or above it. */
+ * capture deadline only counts time spent at or above it. That time adds up
+ * across resticks until a capture arrives. */
 #define DSC_CAP_MIN_RPM 20
-/* Consecutive resticks without qualified progress (a qualified edge or
- * capture) before FAILED, at any speed. */
+/* Consecutive resticks without progress before FAILED, at any speed.
+ * Progress = a new furthest raw net position along the command since it was
+ * given (stick-slip gains ground each cycle, rocking across one edge never
+ * passes its first position), a qualified edge, or a capture. */
 #define DSC_MAX_RESTICKS 3U
 #define DSC_EDGE_PERIOD_MS_RPM 1250  /* 48 edges/rev: edge period [ms] = 1250 / RPM */
 
@@ -79,8 +82,7 @@ typedef struct {
   uint8_t state, reason;
   int8_t dir;               /* +1 / -1 command direction, 0 when stopped */
   uint16_t t;               /* ticks in the current state (saturating) */
-  uint16_t at_cap;          /* STARTING: ticks at start_cap; RUNNING: capped
-                               ticks with |ref| >= DSC_CAP_MIN_RPM */
+  uint16_t at_cap;          /* STARTING: ticks at start_cap */
   uint16_t edges0, caps0;   /* raw commanded-direction edges and qualified
                                captures latched on entering the state */
   int16_t ramp;             /* startup ramp level, counts (magnitude) */
@@ -90,6 +92,11 @@ typedef struct {
   uint16_t since_edge;      /* ticks since that edge (saturating) */
   uint8_t resticks;         /* consecutive resticks without qualified progress */
   uint16_t caps_seen;       /* capture count when resticks was last cleared */
+  int16_t net0;             /* raw net position (pos - neg) when the command was given */
+  int16_t best;             /* furthest raw net position along the command since then */
+  uint8_t progressed;       /* best advanced since the last restick */
+  uint16_t nocap;           /* capped RUNNING ticks with |ref| >= DSC_CAP_MIN_RPM since
+                               the last fresh capture; kept across resticks */
   /* last tick, for the recorder */
   int16_t p, i, ff, out;
 } dsc_state_t;

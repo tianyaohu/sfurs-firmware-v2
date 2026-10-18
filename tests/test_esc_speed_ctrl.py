@@ -310,6 +310,31 @@ static void test_edge_counter_wrap(void)
   CHECK(s.state == DSC_RUNNING);
 }
 
+/* Re-review gap: after a low-speed restick or a reversal, the next hand-off
+ * re-establishes the cap with fresh timers and a zero integral. */
+static void test_cap_reestablished_after_restick_and_reversal(void)
+{
+  setup();
+  start(5, 100);
+  tick(600);                                   /* no edge: restick (> 500 ms) */
+  CHECK(s.state == DSC_STARTING && s.reason == DSC_R_RESTICK && s.at_cap == 0);
+  pid.wIntegralTerm = 77 * 16384;
+  tick(20);
+  ++in.edges_pos;
+  tick(1);
+  CHECK(s.state == DSC_RUNNING && s.capped && s.t == 0 && s.at_cap == 0 && pid.wIntegralTerm == 0);
+  in.captures += 2;
+  in.meas_rpm = 5;
+  tick(60);
+  CHECK(!s.capped);
+  in.ref_rpm = -51;                            /* reversal from slow motion */
+  tick(1);
+  CHECK(s.state == DSC_STARTING && s.reason == DSC_R_REVERSE);
+  ++in.edges_neg;
+  tick(1);
+  CHECK(s.state == DSC_RUNNING && s.capped && s.t == 0 && s.at_cap == 0 && pid.wIntegralTerm == 0);
+}
+
 int main(void)
 {
   test_ramp_and_failed_start();
@@ -322,6 +347,7 @@ int main(void)
   test_slow_without_captures_bounded();
   test_threshold_crossing_up();
   test_threshold_crossing_down();
+  test_cap_reestablished_after_restick_and_reversal();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

@@ -169,14 +169,15 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
   const uint32_t edge_ms = (uint32_t)DSC_EDGE_PERIOD_MS_RPM / (uint32_t)aref;
   if (s->state == DSC_RUNNING) {
     const uint16_t e = edges_along(in, s->dir);
-    if (e != s->edges_last) {
+    if (e != s->edges_last) { /* qualified progress */
       s->edges_last = e;
       s->since_edge = 0U;
+      s->resticks = 0U;
     } else {
       s->since_edge = sat_inc(s->since_edge);
     }
     if (s->since_edge > (2U * edge_ms > DSC_RESTICK_MIN_MS ? 2U * edge_ms : DSC_RESTICK_MIN_MS)) {
-      if (++s->resticks >= DSC_MAX_RESTICKS && aref >= DSC_CAP_MIN_RPM)
+      if (++s->resticks >= DSC_MAX_RESTICKS) /* rocking or stuck at any speed */
         return fail(s, pid, DSC_R_NO_CAPTURE, in);
       enter(s, DSC_STARTING, DSC_R_RESTICK, in);
       s->ramp = (int16_t)clamp(cfg->start_from, 0, INT16_MAX);

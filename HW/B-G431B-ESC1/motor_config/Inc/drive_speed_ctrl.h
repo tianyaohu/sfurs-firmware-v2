@@ -19,7 +19,7 @@
  *      0, until the command returns to stop.
  * RUNNING with no commanded-direction edge for max(DSC_RESTICK_MIN_MS, two
  * edge periods at |ref|) has re-stuck: back to STARTING; DSC_MAX_RESTICKS of
- * those in a row without any fresh Hall capture is FAILED (no capture). A command sign change
+ * those in a row without qualified progress (edge or capture) is FAILED. A command sign change
  * runs plain PI until the wheel has slowed below DSC_REVERSE_RPM, then
  * STARTING; a start while already moving along the command goes straight to
  * RUNNING. Anti-windup: conditional integration against the combined
@@ -39,7 +39,8 @@
  * captures may never arrive: the cap (and frozen integral) stays on, but the
  * capture deadline only counts time spent at or above it. */
 #define DSC_CAP_MIN_RPM 20
-/* Consecutive resticks without a single fresh Hall capture before FAILED. */
+/* Consecutive resticks without qualified progress (a qualified edge or
+ * capture) before FAILED, at any speed. */
 #define DSC_MAX_RESTICKS 3U
 #define DSC_EDGE_PERIOD_MS_RPM 1250  /* 48 edges/rev: edge period [ms] = 1250 / RPM */
 
@@ -87,7 +88,7 @@ typedef struct {
   uint8_t capped;           /* positive-P cap active (integral frozen meanwhile) */
   uint16_t edges_last;      /* commanded-direction edge count at the last edge */
   uint16_t since_edge;      /* ticks since that edge (saturating) */
-  uint8_t resticks;         /* consecutive resticks without a fresh capture */
+  uint8_t resticks;         /* consecutive resticks without qualified progress */
   uint16_t caps_seen;       /* capture count when resticks was last cleared */
   /* last tick, for the recorder */
   int16_t p, i, ff, out;

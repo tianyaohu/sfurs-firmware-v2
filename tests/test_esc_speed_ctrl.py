@@ -414,6 +414,64 @@ static void test_slow_restart_after_long_run(void)
   CHECK(o.net == 0 && o.hi == 0 && o.lo == -1 && o.qpos == 1);
 }
 
+static void rocking_through_filter(int16_t ref, int *ms, int *max_out)
+{
+  setup();
+  dsc_rev_t f = {0};
+  uint16_t pos = 0, neg = 0, caps = 0;
+  in.ref_rpm = ref;
+  *max_out = 0;
+  int k = 0;
+  for (; k < 6000 && s.state != DSC_FAILED; ++k) {
+    if (k == 80) { ++pos; ++caps; }
+    if (k > 80 && k % 6 == 0) { if ((k / 6) % 2) ++pos; else ++neg; ++caps; }
+    int16_t rpm = dsc_reversal_filter(&f, pos, neg, caps, (int16_t)((k / 6) % 2 ? 200 : -200));
+    in.meas_rpm = rpm;
+    in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    in.raw_pos = pos; in.raw_neg = neg; raw_own = 1;
+    const uint8_t was = s.state;
+    tick(1);
+    if (s.state == DSC_STARTING && was != DSC_STARTING) dsc_rev_rebase(&f, pos, neg, caps);
+    if (out > *max_out) *max_out = out;
+  }
+  *ms = k;
+}
+
+/* Re-review 7: rocking below DSC_CAP_MIN_RPM must also end, in bounded time. */
+static void test_slow_rocking_fails_in_bounded_time(void)
+{
+  int ms, max_out;
+  rocking_through_filter(5, &ms, &max_out);
+  CHECK(s.state == DSC_FAILED && ms < 3000 && max_out <= 1632);
+  rocking_through_filter(30, &ms, &max_out);
+  CHECK(s.state == DSC_FAILED && ms < 3000 && max_out <= 1632);
+}
+
+/* Genuine 5 RPM motion (edge every 250 ms) after a raw hand-off inside the
+ * band: no restick, no failure over 3 s. */
+static void test_slow_motion_no_false_restick(void)
+{
+  setup();
+  dsc_rev_t f = {0};
+  uint16_t pos = 0, neg = 0, caps = 0;
+  ++pos; (void)dsc_reversal_filter(&f, pos, neg, caps, 0);  /* band at +1 */
+  in.ref_rpm = -5;
+  int resticks = 0;
+  for (int k = 0; k < 3000; ++k) {
+    if (k % 250 == 100) ++neg;
+    const uint8_t was = s.state;
+    (void)dsc_reversal_filter(&f, pos, neg, caps, 0);
+    in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    in.raw_pos = pos; in.raw_neg = neg; raw_own = 1;
+    tick(1);
+    if (s.state == DSC_STARTING && was != DSC_STARTING) {
+      dsc_rev_rebase(&f, pos, neg, caps);
+      if (s.reason == DSC_R_RESTICK) ++resticks;
+    }
+  }
+  CHECK(s.state == DSC_RUNNING && resticks == 0);
+}
+
 static void test_rocking_through_filter_fails_start(void)
 {
   setup();
@@ -454,6 +512,8 @@ int main(void)
   test_qualified_feedback();
   test_rocking_through_filter_fails_start();
   test_slow_restart_after_long_run();
+  test_slow_rocking_fails_in_bounded_time();
+  test_slow_motion_no_false_restick();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

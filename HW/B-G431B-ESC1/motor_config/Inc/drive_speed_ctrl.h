@@ -11,14 +11,17 @@
  * States: STOPPED (|ref| below the stop threshold: plain PI, no ff)
  *   -> STARTING (no PI: total current ramps from start_from toward start_cap
  *      along the command; integral untouched)
- *   -> RUNNING at the first raw Hall edge in the commanded direction (integral set
- *      to its steady-state value 0, ff_run carries friction, positive-P capped
- *      until pcap_ms have passed and pcap_updates fresh Hall captures arrived)
+ *   -> RUNNING at the first raw Hall edge in the commanded direction (ff_run
+ *      carries friction; the integral holds the rest of the hand-off current,
+ *      never below 0, and decays by hold_decay per tick while positive-P is
+ *      capped, until pcap_ms have passed and pcap_updates fresh Hall captures
+ *      arrived; then plain PI from there)
  *   -> FAILED if no edge within start_hold_ms after reaching start_cap, or no
  *      fresh captures within pcap_fallback_ms of the hand-off; latched, output
  *      0, until the command returns to stop.
  * RUNNING with no commanded-direction edge for max(DSC_RESTICK_MIN_MS, two
- * edge periods at |ref|) has re-stuck: back to STARTING; DSC_MAX_RESTICKS of
+ * edge periods at |ref|) has re-stuck: back to STARTING, the ramp resuming at
+ * the last hand-off current; DSC_MAX_RESTICKS of
  * those in a row without qualified progress (edge or capture) is FAILED. A command sign change
  * runs plain PI until the wheel has slowed below DSC_REVERSE_RPM, then
  * STARTING; a start while already moving along the command goes straight to
@@ -65,6 +68,7 @@ typedef struct {
   uint16_t pcap_ms;         /* minimum cap duration */
   uint8_t pcap_updates;     /* fresh Hall captures needed to release the cap */
   uint16_t pcap_fallback_ms;/* FAILED if those captures have not arrived by then */
+  int16_t hold_decay;       /* hand-off hold decay while capped, counts per tick */
 } dsc_cfg_t;
 
 typedef struct {

@@ -100,7 +100,8 @@
 /* Startup speed loop (drive_speed_ctrl.h, notes/ff-design.md stage 1). Off by
  * default: enable and tune over CAN CONFIG_SET (ESC_CFG_DSC_*). Running ff
  * 600 mA ~ the carpet steady current at 50 RPM (0.4-0.9 A); the start ramp
- * 0.5 -> 3 A at 16 A/s crosses the 1.7-2.3 A carpet breakaway in ~80-110 ms. */
+ * 0.5 -> 3 A at 16 A/s crosses the 1.7-2.3 A carpet breakaway in ~80-110 ms.
+ * Hold decay 8 mA/ms: a 1.5 A hand-off hold is gone in ~190 ms. */
 #define DSC_ENABLE_DEFAULT                  0
 #define DSC_FF_RUN_MA_DEFAULT               600
 #define DSC_FF_PER_KRPM_MA_DEFAULT          0
@@ -112,6 +113,7 @@
 #define DSC_PCAP_MS_DEFAULT                 50
 #define DSC_PCAP_UPDATES_DEFAULT            2
 #define DSC_PCAP_FALLBACK_MS_DEFAULT        150
+#define DSC_HOLD_DECAY_MA_DEFAULT           8
 
 /* Hall reversal filter (drive_speed_ctrl.h): a stuck wheel rocking across one
  * Hall edge reads +-200 RPM and the speed loop answers with +-6 A (FR stall

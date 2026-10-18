@@ -125,7 +125,8 @@ void drive_app_init(void)
     .pcap = (int16_t)(DSC_PCAP_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
     .pcap_ms = DSC_PCAP_MS_DEFAULT,
     .pcap_updates = DSC_PCAP_UPDATES_DEFAULT,
-    .pcap_fallback_ms = DSC_PCAP_FALLBACK_MS_DEFAULT };
+    .pcap_fallback_ms = DSC_PCAP_FALLBACK_MS_DEFAULT,
+    .hold_decay = (int16_t)((DSC_HOLD_DECAY_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000) };
   dsc_reset(&drive_dsc);
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by build_cli.py --hall-shift */
@@ -544,7 +545,8 @@ static void apply_config(uint32_t word)
     case ESC_CFG_DSC_START_FROM_MA:
     case ESC_CFG_DSC_START_CAP_MA:
     case ESC_CFG_DSC_START_SLOPE_MA:
-    case ESC_CFG_DSC_PCAP_MA: {
+    case ESC_CFG_DSC_PCAP_MA:
+    case ESC_CFG_DSC_HOLD_DECAY_MA: {
       if (value < 0 || value > (int16_t)(IQMAX_A * 1000)) { ++drive_app.rejected; return; }
       const int16_t counts = (int16_t)((int32_t)value * (int32_t)CURRENT_CONV_FACTOR / 1000);
       switch (word & 0xFFFFU) {
@@ -558,6 +560,9 @@ static void apply_config(uint32_t word)
           drive_dsc_cfg.start_slope = (int16_t)(slope > 0 ? slope : 1);
           break;
         }
+        case ESC_CFG_DSC_HOLD_DECAY_MA:
+          drive_dsc_cfg.hold_decay = (int16_t)(((int32_t)value * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000);
+          break;
         default: drive_dsc_cfg.pcap = counts; break;
       }
       break;

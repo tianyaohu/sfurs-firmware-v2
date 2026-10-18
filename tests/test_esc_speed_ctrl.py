@@ -41,7 +41,7 @@ static void setup(void)
                         .wUpperIntegralLimit = 3264 * 16384, .wLowerIntegralLimit = -3264 * 16384 };
   cfg = (dsc_cfg_t){ .enable = 1, .ff_run = 326, .start_from = 272, .start_cap = 1632,
                      .start_slope = 9, .start_hold_ms = 100, .pcap = 272, .pcap_ms = 50,
-                     .pcap_updates = 2, .pcap_fallback_ms = 150 };
+                     .pcap_updates = 2, .pcap_fallback_ms = 150, .hold_decay = 0 };
   dsc_reset(&s);
   raw_own = 0;
   in = (dsc_in_t){ .limit = 3264, .active = 1 };
@@ -54,6 +54,8 @@ static void tick(int n)
   }
 }
 static int32_t integ(void) { return pid.wIntegralTerm >> 14; }
+/* hand-off hold the integral should carry: breakaway current above ff_run */
+static int32_t hold(void) { const int32_t h = s.start_iq - s.dir * 326; return s.dir * h > 0 ? h : 0; }
 
 /* Drive to RUNNING via one commanded-direction edge after `ticks` of ramp. */
 static void start(int16_t ref, int ticks)
@@ -99,20 +101,43 @@ static void test_ramp_respects_limit(void)
   CHECK(out == -1000 && s.state == DSC_STARTING);
 }
 
-/* ff-design counterexample: matching total current at the edge stored -P in
- * the integral and settled negative. Here the integral is 0 at the edge, P is
- * capped, and at target speed the command is ff_run (> 0). */
-static void test_handoff_no_negative_settle(void)
+/* Mat 2026-10-17: the first edge on the ground is often wind-up; dropping to
+ * ff_run re-stuck every wheel. The integral holds the hand-off current above
+ * ff_run (P is not subtracted, so the ff-design counterexample - P stored as
+ * -I, settling negative - cannot happen), P capped on top. */
+static void test_handoff_holds_breakaway(void)
 {
   setup();
   start(51, 150);
   CHECK(s.state == DSC_RUNNING && s.reason == DSC_R_EDGE);
-  CHECK(pid.wIntegralTerm == 0);
-  CHECK(s.start_iq > 1000);
-  CHECK(out == 272 + 326);            /* P 816 capped to 272, + ff */
+  CHECK(s.start_iq > 1000 && integ() == hold() && hold() > 0);
+  CHECK(out == 272 + s.start_iq);     /* P 816 capped to 272, + hold + ff */
   in.meas_rpm = 51;
   tick(1);
-  CHECK(out == 326);
+  CHECK(out == s.start_iq);           /* at target: hold + ff, never below ff */
+  setup();
+  cfg.start_from = 200;
+  start(51, 1);                       /* hand-off below ff_run: no negative hold */
+  CHECK(s.start_iq < 326 && pid.wIntegralTerm == 0);
+}
+
+static void test_hold_decays_while_capped(void)
+{
+  setup();
+  cfg.hold_decay = 4;
+  start(51, 100);
+  const int32_t h = integ();
+  CHECK(h > 400);
+  tick(10);
+  CHECK(integ() == h - 40);           /* 4 counts per tick */
+  tick(400);                          /* edges, no captures: stays capped until it fails */
+  CHECK(s.state == DSC_FAILED || pid.wIntegralTerm == 0);
+  setup();
+  cfg.hold_decay = 8;
+  start(-51, 100);
+  CHECK(integ() < -400 && integ() > -8 * 120);
+  for (int k = 0; k < 120; ++k) { if (k % 20 == 0) ++in.edges_neg; tick(1); }
+  CHECK(s.state == DSC_RUNNING && s.capped && pid.wIntegralTerm == 0); /* decayed to 0, not past */
 }
 
 static void test_wrong_direction_edge_ignored(void)
@@ -130,7 +155,7 @@ static void test_cap_release_and_frozen_integral(void)
   setup();
   start(51, 100);
   tick(60);
-  CHECK(s.capped && pid.wIntegralTerm == 0);  /* no fresh captures yet */
+  CHECK(s.capped && integ() == hold());      /* no fresh captures yet: frozen */
   in.captures += 2;
   tick(1);
   CHECK(!s.capped);
@@ -167,7 +192,7 @@ static void test_slow_without_captures_bounded(void)
   int16_t first = out;
   for (int k = 0; k < 3000; ++k) { if (k % 250 == 249) ++in.edges_pos; tick(1); }
   CHECK(s.state == DSC_RUNNING && s.capped);
-  CHECK(pid.wIntegralTerm == 0 && out == first && out == 326 + (4096 * 5 >> 8));
+  CHECK(integ() == hold() && out == first && out == s.start_iq + (4096 * 5 >> 8));
 }
 
 /* Re-review 1: hand-off at 5 RPM, then 51 before any capture: still capped,
@@ -180,7 +205,7 @@ static void test_threshold_crossing_up(void)
   in.ref_rpm = 51;
   ++in.edges_pos;
   tick(1);
-  CHECK(s.state == DSC_RUNNING && s.capped && out == 272 + 326);
+  CHECK(s.state == DSC_RUNNING && s.capped && out == 272 + s.start_iq);
   for (int k = 0; k < 100; ++k) { if (k % 20 == 0) ++in.edges_pos; tick(1); }
   CHECK(s.state == DSC_RUNNING);              /* < 150 ms above the threshold */
   for (int k = 0; k < 100; ++k) { if (k % 20 == 0) ++in.edges_pos; tick(1); }
@@ -224,7 +249,7 @@ static void test_negative_direction_cap(void)
 {
   setup();
   start(-51, 100);
-  CHECK(out == -(272 + 326));
+  CHECK(out == s.start_iq - 272);
 }
 
 static void test_conditional_integration(void)
@@ -266,7 +291,7 @@ static void test_restick(void)
   CHECK(s.state == DSC_RUNNING);
   tick(1);
   CHECK(s.state == DSC_STARTING && s.reason == DSC_R_RESTICK);
-  CHECK(out == 272);
+  CHECK(s.start_iq > 1000 && out == s.start_iq);  /* ramp resumes at the hand-off current */
 }
 
 static void test_reversal_brakes_then_restarts(void)
@@ -324,13 +349,13 @@ static void test_cap_reestablished_after_restick_and_reversal(void)
 {
   setup();
   start(5, 100);
-  tick(600);                                   /* no edge: restick (> 500 ms) */
+  tick(510);                                   /* no edge: restick (> 500 ms) */
   CHECK(s.state == DSC_STARTING && s.reason == DSC_R_RESTICK && s.at_cap == 0);
   pid.wIntegralTerm = 77 * 16384;
   tick(20);
   ++in.edges_pos;
   tick(1);
-  CHECK(s.state == DSC_RUNNING && s.capped && s.t == 0 && s.at_cap == 0 && pid.wIntegralTerm == 0);
+  CHECK(s.state == DSC_RUNNING && s.capped && s.t == 0 && s.at_cap == 0 && integ() == hold());
   in.captures += 2;
   in.meas_rpm = 5;
   tick(60);
@@ -340,7 +365,7 @@ static void test_cap_reestablished_after_restick_and_reversal(void)
   CHECK(s.state == DSC_STARTING && s.reason == DSC_R_REVERSE);
   ++in.edges_neg;
   tick(1);
-  CHECK(s.state == DSC_RUNNING && s.capped && s.t == 0 && s.at_cap == 0 && pid.wIntegralTerm == 0);
+  CHECK(s.state == DSC_RUNNING && s.capped && s.t == 0 && s.at_cap == 0 && integ() == hold());
 }
 
 /* FR stall test 2026-10-17: rocking across one edge (+1/-1 every 6 ms) with
@@ -587,7 +612,8 @@ int main(void)
 {
   test_ramp_and_failed_start();
   test_ramp_respects_limit();
-  test_handoff_no_negative_settle();
+  test_handoff_holds_breakaway();
+  test_hold_decays_while_capped();
   test_wrong_direction_edge_ignored();
   test_cap_release_and_frozen_integral();
   test_cap_fallback_fails();

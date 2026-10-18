@@ -206,7 +206,10 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       if (++s->resticks >= DSC_MAX_RESTICKS) /* rocking or stuck at any speed */
         return fail(s, pid, DSC_R_NO_CAPTURE, in);
       enter(s, DSC_STARTING, DSC_R_RESTICK, in);
-      s->ramp = (int16_t)clamp(cfg->start_from, 0, INT16_MAX);
+      { /* resume the ramp at the last hand-off current: below it the wheel just stuck */
+        const int32_t last = s->start_iq < 0 ? -(int32_t)s->start_iq : s->start_iq;
+        s->ramp = (int16_t)clamp(last > cfg->start_from ? last : cfg->start_from, 0, INT16_MAX);
+      }
       s->capped = 0U;
     }
   }
@@ -228,10 +231,17 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       s->out = out;
       return out;
     }
-    /* Hand-off: integral to its steady-state value, ff_run carries friction.
+    /* Hand-off: the integral holds the breakaway current above ff_run (never
+     * below 0, so no negative settle), decaying by hold_decay per tick while
+     * capped. The first edge on the ground is often tyre and gear wind-up, not
+     * breakaway: dropping to ff_run there re-sticks the wheel (mat 2026-10-17).
      * No integration this tick; P capped until fresh Hall speed arrives. */
     s->start_iq = s->out;
-    pid->wIntegralTerm = 0;
+    {
+      const int32_t hold = s->dir * ((int32_t)s->out - ff) > 0 ? (int32_t)s->out - ff : 0;
+      pid->wIntegralTerm = clamp(hold * (1L << pid->hKiDivisorPOW2), pid->wLowerIntegralLimit,
+                                 pid->wUpperIntegralLimit);
+    }
     if (!s->anchored) { /* progress is measured from the first hand-off of the command */
       s->anchored = 1U;
       s->best = s->along;
@@ -253,6 +263,10 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       s->resticks = 0U;
     } else if (s->nocap >= cfg->pcap_fallback_ms && s->nocap >= slow) {
       return fail(s, pid, DSC_R_NO_CAPTURE, in);
+    } else { /* hand-off hold decays toward 0 */
+      const int32_t d = (int32_t)cfg->hold_decay * (1L << pid->hKiDivisorPOW2);
+      const int32_t w = pid->wIntegralTerm;
+      pid->wIntegralTerm = w > d ? w - d : w < -d ? w + d : 0;
     }
   }
   return pi_ff(s, pid, err, ff, limit, !s->capped, s->capped ? cfg->pcap : -1);

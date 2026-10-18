@@ -150,19 +150,21 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
     s->start_iq = s->out;
     pid->wIntegralTerm = 0;
     enter(s, DSC_RUNNING, DSC_R_EDGE, in);
-    s->capped = aref >= DSC_CAP_MIN_RPM ? 1U : 0U;
-    return pi_ff(s, pid, err, ff, limit, 0, s->capped ? cfg->pcap : -1);
+    s->capped = 1U; /* until fresh Hall speed: P capped, integral frozen */
+    return pi_ff(s, pid, err, ff, limit, 0, cfg->pcap);
   }
 
   /* RUNNING. The cap fallback is at least long enough for pcap_updates + 1
-   * edges at the commanded speed (the SDK discards the first capture). */
+   * edges at the commanded speed (the SDK discards the first capture), and
+   * only counts while |ref| is fast enough for captures to exist. */
   if (s->capped) {
     const uint16_t fresh = (uint16_t)(in->captures - s->caps0);
     const uint32_t slow = 2U * ((uint32_t)cfg->pcap_updates + 1U) * edge_ms;
+    if (aref >= DSC_CAP_MIN_RPM) s->at_cap = sat_inc(s->at_cap);
     if (s->t >= cfg->pcap_ms && fresh >= cfg->pcap_updates) {
       s->capped = 0U;
       s->resticks = 0U;
-    } else if (s->t >= cfg->pcap_fallback_ms && s->t >= slow) {
+    } else if (s->at_cap >= cfg->pcap_fallback_ms && s->at_cap >= slow) {
       return fail(s, pid, DSC_R_NO_CAPTURE, in);
     }
   }

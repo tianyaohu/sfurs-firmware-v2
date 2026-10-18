@@ -234,7 +234,9 @@ static void record_sample(void)
   int16_t *s = capture_mem.rec[rec_index % ESC_RECORD_SAMPLES];
   s[0] = ref;
   s[1] = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
-  if (drive_dsc_cfg.enable) {
+  if (!ran) {
+    s[2] = 0; s[3] = 0; s[4] = 0; /* speed loop not running this tick */
+  } else if (drive_dsc_cfg.enable) {
     s[2] = drive_dsc.p; s[3] = drive_dsc.i; s[4] = drive_dsc.ff;
   } else {
     const int32_t i = PIDSpeedHandle_M1.wIntegralTerm / (int32_t)PID_GetKIDivisor(&PIDSpeedHandle_M1);
@@ -243,9 +245,9 @@ static void record_sample(void)
   s[5] = iq_ref;
   s[6] = MC_GetIqdMotor1().q;
   s[7] = (int16_t)((drive_dsc.state & 3U) | ((drive_dsc.reason & 15U) << 2) |
-                   ((drive_dsc.capped & 1U) << 6) | ((drive_dsc_cfg.enable & 1U) << 7) |
+                   ((ran ? drive_dsc.capped & 1U : 0U) << 6) | ((drive_dsc_cfg.enable & 1U) << 7) |
                    (((uint32_t)(HALL_M1.EdgesPos - HALL_M1.EdgesNeg) & 15U) << 8) |
-                   (((uint32_t)HALL_M1.Captures & 15U) << 12));
+                   (((uint32_t)HALL_M1.Captures & 7U) << 12) | ((ran ? 1U : 0U) << 15));
   if (status == ESC_RECORD_ARMED) {
     if (rec_delay == UINT32_MAX) { /* waiting for the reference to leave zero */
       if (moving && !rec_prev_moving) rec_delay = (rx_record_word >> 9) & 0xFFFU;

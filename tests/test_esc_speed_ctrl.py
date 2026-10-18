@@ -148,15 +148,46 @@ static void test_cap_fallback_scales_at_low_speed(void)
   CHECK(s.state == DSC_RUNNING);   /* fallback max(150, 2*3*50 = 300 ms) not reached */
 }
 
-/* Review finding 3: below DSC_CAP_MIN_RPM the SDK Hall timeout discards every
- * capture, so there is no cap and no capture deadline; slow motion continues. */
-static void test_no_cap_below_hall_timeout_speed(void)
+/* Review finding 3 (+ re-review 1, 2): below DSC_CAP_MIN_RPM the SDK Hall
+ * timeout discards every capture. Slow motion continues (no deadline there),
+ * the cap stays on and the integral stays frozen, so the current is bounded. */
+static void test_slow_without_captures_bounded(void)
 {
   setup();
   start(5, 100);
-  CHECK(s.state == DSC_RUNNING && !s.capped);
+  CHECK(s.state == DSC_RUNNING && s.capped);
+  int16_t first = out;
   for (int k = 0; k < 3000; ++k) { if (k % 250 == 249) ++in.edges_pos; tick(1); }
-  CHECK(s.state == DSC_RUNNING);
+  CHECK(s.state == DSC_RUNNING && s.capped);
+  CHECK(pid.wIntegralTerm == 0 && out == first && out == 326 + (4096 * 5 >> 8));
+}
+
+/* Re-review 1: hand-off at 5 RPM, then 51 before any capture: still capped,
+ * and the deadline starts counting at the crossing, not from the hand-off. */
+static void test_threshold_crossing_up(void)
+{
+  setup();
+  start(5, 100);
+  for (int k = 0; k < 1000; ++k) { if (k % 250 == 249) ++in.edges_pos; tick(1); }
+  in.ref_rpm = 51;
+  ++in.edges_pos;
+  tick(1);
+  CHECK(s.state == DSC_RUNNING && s.capped && out == 272 + 326);
+  for (int k = 0; k < 100; ++k) { if (k % 20 == 0) ++in.edges_pos; tick(1); }
+  CHECK(s.state == DSC_RUNNING);              /* < 150 ms above the threshold */
+  for (int k = 0; k < 100; ++k) { if (k % 20 == 0) ++in.edges_pos; tick(1); }
+  CHECK(s.state == DSC_FAILED && s.reason == DSC_R_NO_CAPTURE);
+}
+
+/* Re-review 1: hand-off at 51, then 5 before any capture: no NO_CAPTURE. */
+static void test_threshold_crossing_down(void)
+{
+  setup();
+  start(51, 100);
+  tick(20);
+  in.ref_rpm = 5;
+  for (int k = 0; k < 3000; ++k) { if (k % 250 == 249) ++in.edges_pos; tick(1); }
+  CHECK(s.state == DSC_RUNNING && s.capped);
 }
 
 /* Review finding 4: edges keep arriving but never a capture; resticks must not
@@ -288,7 +319,9 @@ int main(void)
   test_cap_release_and_frozen_integral();
   test_cap_fallback_fails();
   test_cap_fallback_scales_at_low_speed();
-  test_no_cap_below_hall_timeout_speed();
+  test_slow_without_captures_bounded();
+  test_threshold_crossing_up();
+  test_threshold_crossing_down();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

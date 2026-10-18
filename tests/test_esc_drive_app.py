@@ -504,6 +504,33 @@ int main(int argc, char **argv) {
     assert(f16(frame[0] + 2) == 0 && f16(frame[1] + 2) == 51); /* trigger at the first RUN sample */
     rx(CAPTURE | 1U, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); tick(2);
     assert(drive_app.capture_status == ESC_CAPTURE_RUNNING); /* buffer released */
+  } else if (scenario == 18) { /* recorder, startup loop enabled: stopped samples drop loop terms */
+    const uint32_t rec = (uint32_t)ESC_RECORD_START << 24, read = (uint32_t)ESC_CAPTURE_READ << 24;
+    drive_app.aligned = 1; speed_ref = 51;
+    rx(CONFIG_SET | 1U, (1U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
+    rx(CAPTURE | 1U, rec | 0U); tick(2);
+    speed_cmd(51, 20); tick(3); assert(state == RUN);
+    drive_dsc = (dsc_state_t){ .state = DSC_RUNNING, .reason = DSC_R_EDGE, .capped = 1,
+                               .p = 200, .i = 100, .ff = 326 };
+    tick(10);
+    drive_dsc.state = DSC_FAILED; drive_dsc.reason = DSC_R_NO_EDGE;
+    tick(3); assert(state == IDLE && drive_app.start_failed);
+    tick(400);
+    rx(CAPTURE | 1U, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
+    assert(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == 0);
+    rx(CAPTURE | 1U, read | (1U << 16) | (1U << 10) | 5U); frames = 0; drive_app_poll(send);
+    assert(f16(frame[0] + 2) == 100 && f16(frame[0] + 4) == 326);           /* running: I, ff */
+    rx(CAPTURE | 1U, read | ESC_RECORD_READ_CH67 | (1U << 10) | 5U); frames = 0; drive_app_poll(send);
+    uint16_t packed = (uint16_t)f16(frame[0] + 4);
+    assert((packed & 3U) == DSC_RUNNING && (packed & 0x40U) && (packed & 0x80U) && (packed & 0x8000U));
+    rx(CAPTURE | 1U, read | (0U << 16) | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
+    assert(f16(frame[0] + 2) == 0 && f16(frame[0] + 6) == 0);               /* stopped: ref, P */
+    rx(CAPTURE | 1U, read | (1U << 16) | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
+    assert(f16(frame[0] + 2) == 0 && f16(frame[0] + 4) == 0 && f16(frame[0] + 6) == 0); /* I, ff, Iq ref */
+    rx(CAPTURE | 1U, read | ESC_RECORD_READ_CH67 | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
+    packed = (uint16_t)f16(frame[0] + 4);
+    assert((packed & 3U) == DSC_FAILED && ((packed >> 2) & 15U) == DSC_R_NO_EDGE); /* failure kept */
+    assert(!(packed & 0x40U) && !(packed & 0x8000U));                     /* not capped, loop off */
   } else if (scenario == 9) { /* undervolt latched on USB power: STOP clears it once gone */
     state = FAULT_OVER; cur_faults = 4; occ_faults = 4; tick(1);
     rx(HALL_ALIGN | 1U, HALL_ALIGN_MAGIC); tick(2);
@@ -596,6 +623,9 @@ class EscDriveAppTest(unittest.TestCase):
 
     def test_recorder_idle_arm_and_early_stop(self):
         self.run_scenario(17)
+
+    def test_recorder_dsc_stop_drops_loop_terms(self):
+        self.run_scenario(18)
 
 
 if __name__ == "__main__":

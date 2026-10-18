@@ -137,7 +137,7 @@ def unpack_record(sample):
                 iq_a=sample["iq"] / COUNTS_PER_AMP, state=DSC_STATES[p & 3],
                 reason=DSC_REASONS[(p >> 2) & 15] if (p >> 2) & 15 < len(DSC_REASONS) else str((p >> 2) & 15),
                 capped=bool(p & 0x40), dsc=bool(p & 0x80), edges_mod16=(p >> 8) & 15,
-                captures_mod16=(p >> 12) & 15)
+                captures_mod8=(p >> 12) & 7, loop=bool(p & 0x8000))
 
 
 def config_frame(selector, key, value):

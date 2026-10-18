@@ -44,11 +44,11 @@ class Record(unittest.TestCase):
             ik_link.record_read_word(2, 0, 1)
 
     def test_unpack(self):
-        packed = 2 | 2 << 2 | 0x40 | 0x80 | 3 << 8 | 5 << 12
+        packed = 2 | 2 << 2 | 0x40 | 0x80 | 3 << 8 | 5 << 12 | 1 << 15
         r = ik_link.unpack_record(dict(ref_rpm=51, rpm=40, p=272, i=0, ff=326, iq_ref=598,
                                        iq=-544, packed=packed - 65536 if packed > 32767 else packed))
         self.assertEqual((r["state"], r["reason"], r["capped"], r["dsc"]), ("running", "edge", True, True))
-        self.assertEqual((r["edges_mod16"], r["captures_mod16"]), (3, 5))
+        self.assertEqual((r["edges_mod16"], r["captures_mod8"], r["loop"]), (3, 5, True))
         self.assertAlmostEqual(r["p_a"], 0.5)
         self.assertAlmostEqual(r["iq_a"], -1.0)
 

@@ -35,9 +35,9 @@
 #define DSC_REVERSE_RPM 45  /* standstill threshold (Hall rocking reads +-25-32) */
 #define DSC_RESTICK_MIN_MS 100U
 /* Below this |ref| the Hall edges come slower than the SDK Hall timeout
- * (150 ms, 1250/150 = 8 RPM, with 2x margin for the acceleration), so no
- * speed captures arrive: no P cap and no capture deadline there (P <= Kp*ref
- * is small anyway). */
+ * (150 ms, 1250/150 = 8 RPM, with 2x margin for the acceleration), so speed
+ * captures may never arrive: the cap (and frozen integral) stays on, but the
+ * capture deadline only counts time spent at or above it. */
 #define DSC_CAP_MIN_RPM 20
 /* Consecutive resticks without a single fresh Hall capture before FAILED. */
 #define DSC_MAX_RESTICKS 3U
@@ -76,7 +76,8 @@ typedef struct {
   uint8_t state, reason;
   int8_t dir;               /* +1 / -1 command direction, 0 when stopped */
   uint16_t t;               /* ticks in the current state (saturating) */
-  uint16_t at_cap;          /* ticks spent at start_cap */
+  uint16_t at_cap;          /* STARTING: ticks at start_cap; RUNNING: capped
+                               ticks with |ref| >= DSC_CAP_MIN_RPM */
   uint16_t edges0, caps0;   /* counters latched on entering the state */
   int16_t ramp;             /* startup ramp level, counts (magnitude) */
   int16_t start_iq;         /* command at the hand-off edge: apparent breakaway */

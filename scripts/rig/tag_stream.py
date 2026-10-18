@@ -31,6 +31,7 @@ class TagStream:
         self.basis = self.origin = None  # floor plane, None in single-tag mode
         self.height_mm = tag_height_mm
         self.floor_seen = 0
+        self.floor_centers = []  # camera frame, mm, frozen at start
         self.ready = threading.Event()
         self.frames = []  # (t, pose or None, reliable), from when ready
         self._stop = threading.Event()
@@ -63,6 +64,7 @@ class TagStream:
     def _freeze_floor(self, floor, tag_centers):
         full = [np.median(q, axis=0) for q in floor.values() if len(q) >= 5]
         self.floor_seen = len(full)
+        self.floor_centers = full
         if len(full) >= 3:
             self.basis, self.origin = floor_basis(full), np.mean(full, axis=0)
             if self.height_mm is None and tag_centers:
@@ -136,3 +138,14 @@ def move_summary(frames, ref_window, end_window, commanded_mm=None, basis=None):
     out = path_summary(path, displacement(ref, end, basis), commanded_mm)
     out["direction_deg"] = float(np.degrees(np.arctan2(out["end_y_mm"], out["end_x_mm"])))
     return out
+
+
+def inside_floor(point, floor_centers, basis):
+    """True when `point` (camera frame) lies inside the polygon of the floor tag centres,
+    seen along the floor normal: the mat area the tags mark out."""
+    if basis is None or len(floor_centers) < 3:
+        return False
+    pts = np.array([basis[:2] @ c for c in floor_centers])
+    q = basis[:2] @ np.asarray(point, float)
+    hull = cv2.convexHull(pts.astype(np.float32)).reshape(-1, 2)
+    return cv2.pointPolygonTest(hull, (float(q[0]), float(q[1])), False) >= 0

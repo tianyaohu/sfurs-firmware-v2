@@ -12,10 +12,13 @@ MOTION: drives `distance` along +axis, stops, then the same back (vy = forward, 
 right); reps repeat the pair. Place the robot so the whole path stays in view, starting
 `distance`/2 behind the image centre along the axis. Each move is judged on the camera:
 distance vs commanded (the +-10 cm goal over 1 m), sideways drift and heading change.
+Before driving, the planned end points (with --length-margin and +-cone-deg slack) must lie
+inside the floor tags' polygon (the mat), predicted from the tag pose and --forward-deg.
 Writes DIR/result.json, DIR/drive.jsonl and DIR/drive.camera.jsonl.
 """
 import argparse
 import json
+import math
 import pathlib
 import sys
 import time
@@ -25,6 +28,25 @@ sys.path[:0] = [str(HERE), str(HERE / "rig")]
 import esc_tool  # noqa: E402
 import ik_link  # noqa: E402
 import tune_ground as tg  # noqa: E402
+
+
+def path_outside(start, stream, args, inside_floor):
+    """Planned end points that fall outside the floor tags' polygon, with slack."""
+    t, R = start
+    x, y = R[:, 0], R[:, 1]  # tag axes, in the floor plane (floor-plane poses)
+    axis_deg = args.forward_deg - (90.0 if args.axis == "vx" else 0.0)  # vx = right = forward - 90
+    bad = []
+    for sign, name in ((1, "out"), (-1, "back")):
+        for cone in (-args.cone_deg, 0.0, args.cone_deg):
+            a = math.radians(axis_deg + cone)
+            end = t + 1000 * args.distance * args.length_margin * (math.cos(a) * x + math.sin(a) * y)
+            if sign < 0:  # coming back from the nominal far end can overshoot past the start
+                far = t + 1000 * args.distance * (math.cos(math.radians(axis_deg)) * x +
+                                                  math.sin(math.radians(axis_deg)) * y)
+                end = far - (end - t)
+            if not inside_floor(end, stream.floor_centers, stream.basis):
+                bad.append(f"{name} end at {cone:+.0f} deg")
+    return bad
 
 
 def main():
@@ -43,7 +65,12 @@ def main():
     p.add_argument("--kp", type=int)
     p.add_argument("--ki", type=int)
     p.add_argument("--ff", type=int, help="friction feed-forward mA, static = kinetic, all wheels")
+    p.add_argument("--forward-deg", type=float, default=108.0,
+                   help="robot +vy from the tag's x-axis toward its y-axis (measured 2026-10-17 run A)")
+    p.add_argument("--length-margin", type=float, default=1.2, help="path check: overshoot factor")
+    p.add_argument("--cone-deg", type=float, default=20.0, help="path check: heading slack")
     p.add_argument("--min-vbus", type=float, default=11.0)
+    p.add_argument("--check", action="store_true", help="preflight and path check only, no motion")
     p.add_argument("--elf", type=pathlib.Path, default=ik_link.DEFAULT_ELF)
     p.add_argument("--sn", default=ik_link.DEFAULT_SN)
     args = p.parse_args()
@@ -69,17 +96,28 @@ def main():
     try:
         problems = tg.preflight(link, args.min_vbus)
         if not args.no_camera:
-            from tag_stream import TagStream, still_pose
+            from tag_stream import TagStream, inside_floor, still_pose
             stream = TagStream(args.calibration, args.camera, args.exposure, tag_height_mm=args.tag_height_mm).start()
             time.sleep(1.0)
             now = time.monotonic()
             print(f"camera: {stream.mode} mode ({stream.floor_seen} floor tags), tag height "
                   f"{'-' if stream.height_mm is None else f'{stream.height_mm:.0f} mm'}", flush=True)
             result["camera"] = dict(mode=stream.mode, floor_tags=stream.floor_seen, tag_height_mm=stream.height_mm)
-            if still_pose(stream.snapshot(), now - 1.0, now) is None:
+            start = still_pose(stream.snapshot(), now - 1.0, now)
+            if start is None:
                 problems.append("camera: tag 0 not seen still")
+            elif stream.basis is None:
+                problems.append("camera: no floor plane (>= 3 floor tags), cannot check the path")
+            else:
+                outside = path_outside(start, stream, args, inside_floor)
+                result["path_check"] = outside or "ok"
+                if outside:
+                    problems.append("path leaves the mat: " + "; ".join(outside))
         if problems:
             raise SystemExit("preflight failed:\n  " + "\n  ".join(problems))
+        if args.check:
+            print("preflight and path check passed (no motion: --check)")
+            return
         print(f"-- {args.distance:.2f} m {args.axis} at {args.speed} m/s ({seconds:.1f} s), kp {used['kp']} "
               f"ki {used['ki']} ff {used['ff_static_ma']}/{used['ff_kinetic_ma']} mA", flush=True)
         s = tg.stage(link, stream, "drive", plan, duration, [used] * 4, defaults, args.out)

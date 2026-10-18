@@ -107,17 +107,19 @@ HARNESS = r'''
 
 PID_Handle_t PIDSpeedHandle_M1 = { .kidiv = 16384 }, PIDIqHandle_M1, PIDIdHandle_M1;
 HALL_Handle_t HALL_M1;
-static int pi_calls, dsc_calls, dsc_resets; static dsc_in_t dsc_last_in;
+static int pi_calls, dsc_calls, dsc_resets, fake_next_state = -1; static dsc_in_t dsc_last_in;
 int16_t PI_Controller(PID_Handle_t *p, int32_t err) { (void)p; ++pi_calls; return (int16_t)err; }
 void dsc_reset(dsc_state_t *st) { *st = (dsc_state_t){0}; ++dsc_resets; }
 static int rebases;
-void dsc_rev_rebase(dsc_rev_t *f) { (void)f; ++rebases; }
+void dsc_rev_rebase(dsc_rev_t *f, uint16_t p, uint16_t n, uint16_t c) { (void)f; (void)p; (void)n; (void)c; ++rebases; }
 int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t pos, uint16_t neg, uint16_t caps, int16_t rpm) {
   f->qpos = (uint16_t)(pos + 100); f->qneg = (uint16_t)(neg + 100); f->qcaps = (uint16_t)(caps + 100);
   return (int16_t)(rpm / 2); /* marks "filtered" */
 }
 int16_t dsc_step(const dsc_cfg_t *c, dsc_state_t *st, const dsc_in_t *in, PID_Handle_t *p) {
-  (void)c; (void)st; (void)p; ++dsc_calls; dsc_last_in = *in; return 123;
+  (void)c; (void)p; ++dsc_calls; dsc_last_in = *in;
+  if (fake_next_state >= 0) st->state = (uint8_t)fake_next_state;
+  return 123;
 }
 RDivider_Handle_t BusVoltageSensor_M1 = { ._Super = { .ConversionFactor = 34, .raw = 23831 } };
 
@@ -432,11 +434,15 @@ int main(int argc, char **argv) {
     assert(dsc_last_in.edges_pos == 107 && dsc_last_in.edges_neg == 102 && dsc_last_in.captures == 105); /* qualified */
     assert(dsc_last_in.meas_rpm == 10);                                     /* filtered speed */
     assert(dsc_last_in.limit == 6 * 544 && dsc_last_in.active == 1 && dsc_last_in.ref_rpm == 50);
-    { const int r0 = rebases;                                               /* band origin */
-      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0);     /* same sign */
-      (void)drive_speed_pi(&PIDSpeedHandle_M1, 0, 20); assert(rebases == r0);      /* stop: none */
-      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0);     /* same as last */
-      (void)drive_speed_pi(&PIDSpeedHandle_M1, -50, 20); assert(rebases == r0 + 1); /* reversal */
+    { const int r0 = rebases;                       /* band origin: on entering STARTING only */
+      drive_dsc.state = DSC_RUNNING;
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0); /* fake step keeps RUNNING */
+      drive_dsc.state = DSC_STOPPED;
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0);
+      fake_next_state = DSC_STARTING;
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0 + 1); /* entered */
+      (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); assert(rebases == r0 + 1); /* stays */
+      fake_next_state = -1; drive_dsc.state = DSC_STOPPED;
     }
     rx(CONFIG_SET | 1U, (0U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
     assert(drive_dsc_cfg.enable == 1 && drive_app.rejected == 6); /* only when idle */

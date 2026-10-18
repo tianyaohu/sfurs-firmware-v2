@@ -31,6 +31,7 @@ static dsc_cfg_t cfg;
 static dsc_state_t s;
 static dsc_in_t in;
 static int16_t out;
+static int raw_own; /* test sets in.raw_* itself */
 
 static void setup(void)
 {
@@ -42,9 +43,16 @@ static void setup(void)
                      .start_slope = 9, .start_hold_ms = 100, .pcap = 272, .pcap_ms = 50,
                      .pcap_updates = 2, .pcap_fallback_ms = 150 };
   dsc_reset(&s);
+  raw_own = 0;
   in = (dsc_in_t){ .limit = 3264, .active = 1 };
 }
-static void tick(int n) { while (n--) out = dsc_step(&cfg, &s, &in, &pid); }
+static void tick(int n)
+{
+  while (n--) {
+    if (!raw_own) { in.raw_pos = in.edges_pos; in.raw_neg = in.edges_neg; }
+    out = dsc_step(&cfg, &s, &in, &pid);
+  }
+}
 static int32_t integ(void) { return pid.wIntegralTerm >> 14; }
 
 /* Drive to RUNNING via one commanded-direction edge after `ticks` of ramp. */
@@ -388,13 +396,17 @@ static void test_slow_restart_after_long_run(void)
   dsc_rev_t f = {0};
   uint16_t pos = 0, neg = 0, caps = 0;
   for (int k = 0; k < 100; ++k) { ++pos; ++caps; (void)dsc_reversal_filter(&f, pos, neg, caps, 50); }
-  dsc_rev_rebase(&f);                       /* motor start / command reversal */
+  ++pos; ++neg;                             /* pending idle motion, not yet consumed */
   in.ref_rpm = -5;
   for (int k = 0; k < 400 && s.state != DSC_RUNNING; ++k) {
-    if (k == 100) ++neg;                    /* first reverse edge */
+    if (k == 100) ++neg;                    /* first reverse edge of the attempt */
+    if (k > 10 && k < 60 && k % 10 == 0) ++pos; /* old-direction coasting after the request */
+    const uint8_t was = s.state;
     (void)dsc_reversal_filter(&f, pos, neg, caps, 0);
     in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    in.raw_pos = pos; in.raw_neg = neg; raw_own = 1;
     tick(1);
+    if (s.state == DSC_STARTING && was != DSC_STARTING) dsc_rev_rebase(&f, pos, neg, caps);
   }
   CHECK(s.state == DSC_RUNNING && s.reason == DSC_R_EDGE);
   dsc_rev_t o = { .net = (1L << 30), .hi = (1L << 30), .lo = (1L << 30) - 1 };
@@ -415,7 +427,10 @@ static void test_rocking_through_filter_fails_start(void)
     int16_t rpm = dsc_reversal_filter(&f, pos, neg, caps, (int16_t)((k / 6) % 2 ? 200 : -200));
     in.meas_rpm = rpm;
     in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
+    in.raw_pos = pos; in.raw_neg = neg; raw_own = 1;
+    const uint8_t was = s.state;
     tick(1);
+    if (s.state == DSC_STARTING && was != DSC_STARTING) dsc_rev_rebase(&f, pos, neg, caps);
     if (out > max_out) max_out = out;
   }
   CHECK(s.state == DSC_FAILED);

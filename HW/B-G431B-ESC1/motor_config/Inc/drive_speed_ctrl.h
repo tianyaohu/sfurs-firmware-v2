@@ -11,7 +11,7 @@
  * States: STOPPED (|ref| below the stop threshold: plain PI, no ff)
  *   -> STARTING (no PI: total current ramps from start_from toward start_cap
  *      along the command; integral untouched)
- *   -> RUNNING at the first Hall edge in the commanded direction (integral set
+ *   -> RUNNING at the first raw Hall edge in the commanded direction (integral set
  *      to its steady-state value 0, ff_run carries friction, positive-P capped
  *      until pcap_ms have passed and pcap_updates fresh Hall captures arrived)
  *   -> FAILED if no edge within start_hold_ms after reaching start_cap, or no
@@ -65,11 +65,13 @@ typedef struct {
 typedef struct {
   int16_t ref_rpm;          /* ramped speed reference */
   int16_t meas_rpm;         /* SDK average speed */
-  uint16_t edges_pos;       /* cumulative valid Hall transitions, + direction */
-  uint16_t edges_neg;       /* cumulative valid Hall transitions, - direction */
-  uint16_t captures;        /* cumulative valid Hall period captures */
+  uint16_t edges_pos;       /* cumulative qualified progress edges, + direction */
+  uint16_t edges_neg;       /* cumulative qualified progress edges, - direction */
+  uint16_t captures;        /* cumulative qualified Hall period captures */
   int16_t limit;            /* active |iq| limit, counts (thermal derate included) */
   uint8_t active;           /* motor running under drive control */
+  uint16_t raw_pos;         /* cumulative raw valid Hall transitions, + direction */
+  uint16_t raw_neg;         /* cumulative raw valid Hall transitions, - direction */
 } dsc_in_t;
 
 typedef struct {
@@ -78,7 +80,8 @@ typedef struct {
   uint16_t t;               /* ticks in the current state (saturating) */
   uint16_t at_cap;          /* STARTING: ticks at start_cap; RUNNING: capped
                                ticks with |ref| >= DSC_CAP_MIN_RPM */
-  uint16_t edges0, caps0;   /* counters latched on entering the state */
+  uint16_t edges0, caps0;   /* raw commanded-direction edges and qualified
+                               captures latched on entering the state */
   int16_t ramp;             /* startup ramp level, counts (magnitude) */
   int16_t start_iq;         /* command at the hand-off edge: apparent breakaway */
   uint8_t capped;           /* positive-P cap active (integral frozen meanwhile) */
@@ -110,9 +113,12 @@ typedef struct {
 } dsc_rev_t;
 int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg,
                             uint16_t captures, int16_t rpm);
-/* New origin for the band: call on every deliberate start and command sign
- * change (not on resticks), so the first edge of the new motion counts. */
-void dsc_rev_rebase(dsc_rev_t *f);
+/* New band origin at the current raw counters (edges and captures since the
+ * last call are dropped, not counted): call whenever the startup loop enters
+ * STARTING (start, reversal, restick) and at motor start, so the first edge of
+ * the attempt always counts. Rocking stays harmless across rebases because
+ * qualified captures still need two agreeing transitions. */
+void dsc_rev_rebase(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg, uint16_t captures);
 
 void dsc_reset(dsc_state_t *s);
 int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_Handle_t *pid);

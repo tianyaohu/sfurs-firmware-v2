@@ -15,14 +15,22 @@ static uint16_t edges_along(const dsc_in_t *in, int8_t dir)
   return dir > 0 ? in->edges_pos : in->edges_neg;
 }
 
+/* The hand-off takes the first raw edge along the command: coasting the other
+ * way cannot fake it and a rock into it is handed off capped with a frozen
+ * integral. Progress (restick) and captures use the qualified counters. */
+static uint16_t raw_along(const dsc_in_t *in, int8_t dir)
+{
+  return dir > 0 ? in->raw_pos : in->raw_neg;
+}
+
 static void enter(dsc_state_t *s, uint8_t state, uint8_t reason, const dsc_in_t *in)
 {
   s->state = state;
   s->reason = reason;
   s->t = 0U;
   s->at_cap = 0U;
-  s->edges0 = edges_along(in, s->dir);
-  s->edges_last = s->edges0;
+  s->edges0 = raw_along(in, s->dir);
+  s->edges_last = edges_along(in, s->dir);
   s->since_edge = 0U;
   s->caps0 = in->captures;
 }
@@ -35,8 +43,11 @@ static int16_t fail(dsc_state_t *s, PID_Handle_t *pid, uint8_t reason, const dsc
   return 0;
 }
 
-void dsc_rev_rebase(dsc_rev_t *f)
+void dsc_rev_rebase(dsc_rev_t *f, uint16_t edges_pos, uint16_t edges_neg, uint16_t captures)
 {
+  f->pos = edges_pos;
+  f->neg = edges_neg;
+  f->caps = captures;
   f->net = 0;
   f->hi = 0;
   f->lo = 0;
@@ -175,7 +186,7 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
 
   const int32_t ff = s->dir * ((int32_t)cfg->ff_run + (int32_t)cfg->ff_per_krpm * aref / 1000);
   if (s->state == DSC_STARTING) {
-    if ((uint16_t)(edges_along(in, s->dir) - s->edges0) == 0U) {
+    if ((uint16_t)(raw_along(in, s->dir) - s->edges0) == 0U) {
       const int32_t cap = clamp(cfg->start_cap, 0, limit);
       if (s->ramp >= cap) {
         s->ramp = (int16_t)cap;

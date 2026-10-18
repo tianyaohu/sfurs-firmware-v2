@@ -89,7 +89,6 @@ static uint32_t read_next, read_end, read_bank, read_ch67; /* poll context only 
 dsc_cfg_t drive_dsc_cfg;
 dsc_state_t drive_dsc;
 dsc_rev_t drive_rev;
-static int8_t rev_cmd_sign; /* last command sign seen by drive_speed_pi */
 uint8_t drive_rev_enable = SPEED_REV_FILTER_DEFAULT;
 
 static uint32_t ff_broken_free, ff_stall_ms;
@@ -203,9 +202,6 @@ int drive_dsc_enabled(void)
 int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
 {
   const uint16_t pos = HALL_M1.EdgesPos, neg = HALL_M1.EdgesNeg, caps = HALL_M1.Captures;
-  const int8_t sign = ref_rpm >= DSC_STOP_RPM ? 1 : ref_rpm <= -DSC_STOP_RPM ? -1 : 0;
-  if (sign != 0 && sign != rev_cmd_sign) dsc_rev_rebase(&drive_rev); /* start or reversal */
-  if (sign != 0) rev_cmd_sign = sign;
   const int16_t filtered = dsc_reversal_filter(&drive_rev, pos, neg, caps, rpm);
   const int on = drive_rev_enable != 0U;
   if (on) rpm = filtered;
@@ -215,8 +211,13 @@ int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
                         .edges_neg = on ? drive_rev.qneg : neg,
                         .captures = on ? drive_rev.qcaps : caps,
                         .limit = (int16_t)drive_app.iq_limit_counts,
-                        .active = drive_app.active ? 1U : 0U };
-  return dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);
+                        .active = drive_app.active ? 1U : 0U,
+                        .raw_pos = pos, .raw_neg = neg };
+  const uint8_t was = drive_dsc.state;
+  const int16_t out = dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);
+  if (drive_dsc.state == DSC_STARTING && was != DSC_STARTING)
+    dsc_rev_rebase(&drive_rev, pos, neg, caps); /* this tick's edges are already consumed */
+  return out;
 }
 
 static volatile int16_t rec_pi_out, rec_iq_ref;
@@ -608,8 +609,7 @@ static void speed_command(uint32_t word, uint16_t state)
   MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(rpm), ramp_ms);
   if (MC_StartMotor1()) {
     dsc_reset(&drive_dsc); /* a FAILED attempt must not outlive the stop */
-    dsc_rev_rebase(&drive_rev);
-    rev_cmd_sign = 0;
+    dsc_rev_rebase(&drive_rev, HALL_M1.EdgesPos, HALL_M1.EdgesNeg, HALL_M1.Captures);
     drive_app.active = 1U;
     drive_app.stop_reason = ESC_STOP_NONE;
   } else {

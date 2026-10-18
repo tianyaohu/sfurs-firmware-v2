@@ -537,6 +537,29 @@ static void test_progress_after_long_run_and_reversal(void)
   CHECK(!stick_slip_fails(5, p, 0, 0));
 }
 
+/* Re-review 10: raw counter wrap through STARTING, and the rebase boundary. */
+static void test_progress_wrap_and_rebase(void)
+{
+  setup();
+  in.ref_rpm = 5; raw_own = 1;
+  in.raw_pos = 65534; in.edges_pos = 65534;
+  tick(5);
+  CHECK(s.state == DSC_STARTING);
+  in.raw_pos = 65535; tick(1);                 /* hand-off edge */
+  CHECK(s.state == DSC_RUNNING && s.anchored && s.best == s.along);
+  in.raw_pos = 0; tick(1);                     /* wraps: progress */
+  CHECK(s.progressed && s.along == 2);
+  setup();
+  s.dir = 1; s.anchored = 1; s.along = (1L << 30) + 1; s.best = (1L << 30) + 10;
+  in.ref_rpm = 51; in.meas_rpm = 51; raw_own = 1; s.state = DSC_RUNNING;
+  s.rp = in.raw_pos; s.rn = in.raw_neg;
+  tick(1);                                     /* past 2^30, behind best: origin moves, gap kept */
+  CHECK(s.along == 0 && s.best == 9);
+  s.anchored = 0; s.along = (1L << 30) + 1; s.best = -(1L << 30);
+  tick(1);
+  CHECK(s.along == 0 && s.best == 0);          /* unanchored: no stale gap */
+}
+
 static void test_rocking_through_filter_fails_start(void)
 {
   setup();
@@ -581,6 +604,7 @@ int main(void)
   test_slow_motion_no_false_restick();
   test_stick_slip_progress_never_fails();
   test_progress_after_long_run_and_reversal();
+  test_progress_wrap_and_rebase();
   test_resticks_without_captures_fail();
   test_restick_count_resets_with_captures();
   test_negative_direction_cap();

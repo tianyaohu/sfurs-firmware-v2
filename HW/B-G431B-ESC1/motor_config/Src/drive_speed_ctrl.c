@@ -169,7 +169,8 @@ int16_t dsc_step(const dsc_cfg_t *cfg, dsc_state_t *s, const dsc_in_t *in, PID_H
       s->progressed = 1U;
     }
     if (s->along > (1L << 30) || s->along < -(1L << 30)) { /* move the origin, keep the gap */
-      s->best -= s->along;
+      const int32_t gap = s->anchored ? s->best - s->along : 0;
+      s->best = gap < -(1L << 30) ? -(1L << 30) : gap; /* bounded: never overflows */
       s->along = 0;
     }
   }

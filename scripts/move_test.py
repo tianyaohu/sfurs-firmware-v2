@@ -6,7 +6,9 @@
 """Straight-line drive test, measured by the overhead camera.
 
   uv run scripts/move_test.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
-      [--axis vy] [--distance 0.6] [--speed 0.2] [--reps 1] [--kp N --ki N] [--ff MA]
+      [--axis vy] [--distance 0.6] [--speed 0.2] [--reps 1] [--kp N --ki N] [--ff MA | --ff-static MA --ff-kinetic MA]
+      [--dsc [--dsc-ff-run MA --dsc-cap MA --dsc-slope MA_PER_MS --dsc-pcap MA --dsc-hold-decay MA_PER_MS
+              --dsc-watch MS --dsc-preload PCT]] [--record [--record-pre N --record-delay MS]]
 
 MOTION: drives `distance` along +axis, stops, then the same back (vy = forward, vx =
 right); reps repeat the pair. Place the robot so the whole path stays in view, starting
@@ -14,6 +16,10 @@ right); reps repeat the pair. Place the robot so the whole path stays in view, s
 distance vs commanded (the +-10 cm goal over 1 m), sideways drift and heading change.
 Before driving, the planned end points (with --length-margin and +-cone-deg slack) must lie
 inside the floor tags' polygon (the mat), predicted from the tag pose and --forward-deg.
+--dsc switches the ESCs to the startup speed loop (ramp to the first Hall edge, then
+running ff + PI; notes/ff-design.md) for this run; --record arms each ESC's 1 kHz speed-loop
+recorder, which captures the first start (384 ms, --record-pre ms before it, or a window
+--record-delay ms later) and is read back after the drive into DIR/record.json.
 Writes DIR/result.json, DIR/drive.jsonl and DIR/drive.camera.jsonl.
 """
 import argparse
@@ -49,6 +55,35 @@ def path_outside(start, stream, args, inside_floor):
     return bad
 
 
+def record_summary(info, rows):
+    """Hand-off time and current from one wheel's decoded recording. Only an
+    observed STARTING -> RUNNING step counts: a delayed window starts with a
+    stale "edge" reason and holds no breakaway current."""
+    handoff = next((k for k in range(1, len(rows)) if rows[k - 1]["state"] == "starting"
+                    and rows[k]["state"] == "running" and rows[k]["reason"] == "edge"), None)
+    return dict(samples=info["samples"], trigger=info["trigger_index"],
+                handoff_ms=None if handoff is None else handoff - info["trigger_index"],
+                handoff_iq_a=None if handoff is None else round(rows[handoff - 1]["iq_ref_a"], 2),
+                peak_rpm=max((abs(r["rpm"]) for r in rows), default=0))
+
+
+def read_records(link, path):
+    """Read every wheel's speed-loop recorder into `path`; returns a summary."""
+    out, summary = {}, {}
+    for name, _esc, sel in ik_link.WHEELS:
+        try:
+            info, samples = link.record_read(sel)
+        except RuntimeError as e:
+            summary[name] = str(e)
+            continue
+        rows = [ik_link.unpack_record(x) for x in samples]
+        out[name] = dict(info=info, samples=rows)
+        summary[name] = record_summary(info, rows)
+        print(f"   record {name}: {summary[name]}")
+    path.write_text(json.dumps(out))
+    return summary
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out", type=pathlib.Path, required=True)
@@ -57,15 +92,32 @@ def main():
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--exposure", type=float, default=100)
     p.add_argument("--tag-height-mm", type=float, help="robot tag above the floor tags (default: estimated)")
-    p.add_argument("--axis", choices=["vx", "vy"], default="vy", help="vy = forward, vx = right")
+    p.add_argument("--axis", choices=["vx", "vy", "wz"], default="vy",
+                   help="vy = forward, vx = right, wz = turn left (speed rad/s, distance rad; --no-camera only)")
     p.add_argument("--distance", type=float, default=0.6, help="m per move")
     p.add_argument("--speed", type=float, default=0.2, help="m/s")
     p.add_argument("--reps", type=int, default=1, help="out-and-back pairs")
     p.add_argument("--accel", type=int, default=0, help="wheel acceleration limit, RPM/s (0 = Nucleo default 900)")
+    p.add_argument("--first-back", action="store_true", help="drive -axis first (back-and-out pairs)")
     p.add_argument("--pause", type=float, default=1.5)
     p.add_argument("--kp", type=int)
     p.add_argument("--ki", type=int)
     p.add_argument("--ff", type=int, help="friction feed-forward mA, static = kinetic, all wheels")
+    p.add_argument("--ff-static", type=int, help="start (breakaway) feed-forward mA, all wheels; overrides --ff")
+    p.add_argument("--ff-kinetic", type=int, help="running feed-forward mA, all wheels; overrides --ff")
+    p.add_argument("--edge-speed", type=int, choices=[0, 1], help="low-speed speed from Hall edge timing")
+    p.add_argument("--dsc", action="store_true", help="startup speed loop on all wheels")
+    p.add_argument("--dsc-ff-run", type=int, help="running ff mA (default: firmware)")
+    p.add_argument("--dsc-from", type=int, help="startup ramp start mA")
+    p.add_argument("--dsc-cap", type=int, help="startup ramp ceiling mA")
+    p.add_argument("--dsc-slope", type=int, help="startup ramp mA per ms")
+    p.add_argument("--dsc-pcap", type=int, help="positive-P cap after the hand-off, mA")
+    p.add_argument("--dsc-hold-decay", type=int, help="hand-off hold decay, mA per ms")
+    p.add_argument("--dsc-watch", type=int, help="motion confirmation before the hand-off, ms (0: first edge)")
+    p.add_argument("--dsc-preload", type=int, help="ramp start, %% of the learned breakaway (0: off)")
+    p.add_argument("--record", action="store_true", help="arm the ESC speed-loop recorders")
+    p.add_argument("--record-pre", type=int, default=50, help="recorder samples before the start")
+    p.add_argument("--record-delay", type=int, default=0, help="recorder trigger delay ms")
     p.add_argument("--forward-deg", type=float, default=108.0,
                    help="robot +vy from the tag's x-axis toward its y-axis (measured 2026-10-17 run A)")
     p.add_argument("--length-margin", type=float, default=1.2, help="path check: overshoot factor")
@@ -76,17 +128,32 @@ def main():
     p.add_argument("--sn", default=ik_link.DEFAULT_SN)
     args = p.parse_args()
     seconds = args.distance / args.speed if args.speed else 0
-    if not 0 < args.speed <= 2.0 or not 0 < args.distance <= 1.0 or not 1 <= args.reps <= 3 or seconds > 5:
-        raise SystemExit("0 < speed <= 2 m/s, 0 < distance <= 1 m, 1 <= reps <= 3, distance/speed <= 5 s")
+    top = 2.0
+    if not 0 < args.speed <= top or not 0 < args.distance <= 1.0 or not 1 <= args.reps <= 3 or seconds > 5:
+        raise SystemExit("0 < speed <= 2 m/s (wz: 2 rad/s), 0 < distance <= 1 m (wz: 1 rad), 1 <= reps <= 3, "
+                         "distance/speed <= 5 s")
+    if args.axis == "wz" and not args.no_camera:
+        raise SystemExit("--axis wz has no camera path check: use --no-camera")
     if args.no_camera == bool(args.calibration):
         raise SystemExit("give --calibration, or --no-camera")
 
     defaults = esc_tool.firmware_defaults()
-    used = {**defaults, **{k: v for k, v in dict(kp=args.kp, ki=args.ki, ff_static_ma=args.ff,
-                                                  ff_kinetic_ma=args.ff).items() if v is not None}}
+    used = {**defaults, **{k: v for k, v in dict(
+        kp=args.kp, ki=args.ki, speed_edge_est=args.edge_speed,
+        ff_static_ma=args.ff if args.ff_static is None else args.ff_static,
+        ff_kinetic_ma=args.ff if args.ff_kinetic is None else args.ff_kinetic,
+        dsc_enable=1 if args.dsc else None, dsc_ff_run_ma=args.dsc_ff_run, dsc_start_from_ma=args.dsc_from,
+        dsc_start_cap_ma=args.dsc_cap,
+        dsc_start_slope_ma=args.dsc_slope, dsc_pcap_ma=args.dsc_pcap, dsc_hold_decay_ma=args.dsc_hold_decay,
+        dsc_watch_ms=args.dsc_watch, dsc_preload_pct=args.dsc_preload).items() if v is not None}}
+    if not args.dsc and any(x is not None for x in (args.dsc_ff_run, args.dsc_from, args.dsc_cap, args.dsc_slope, args.dsc_pcap,
+                                                    args.dsc_hold_decay, args.dsc_watch, args.dsc_preload)):
+        raise SystemExit("--dsc-* options need --dsc")
     v = round(args.speed * 1000)
-    out = (v, 0, 0) if args.axis == "vx" else (0, v, 0)
+    out = {"vx": (v, 0, 0), "vy": (0, v, 0), "wz": (0, 0, v)}[args.axis]
     back = tuple(-x for x in out)
+    if args.first_back:
+        out, back = back, out
     plan, duration = esc_tool.pulse_plan([out, back] * args.reps, seconds, pause=args.pause)
     args.out.mkdir(parents=True, exist_ok=True)
     result = dict(date=time.strftime("%Y-%m-%d %H:%M:%S"), args={k: str(x) for k, x in vars(args).items()},
@@ -119,9 +186,19 @@ def main():
         if args.check:
             print("preflight and path check passed (no motion: --check)")
             return
+        loop = (f"startup loop ff_run {used['dsc_ff_run_ma']} from {used['dsc_start_from_ma']} cap {used['dsc_start_cap_ma']} "
+                f"slope {used['dsc_start_slope_ma']} mA/ms pcap {used['dsc_pcap_ma']} decay "
+                f"{used['dsc_hold_decay_ma']} watch {used['dsc_watch_ms']} ms preload {used['dsc_preload_pct']} %"
+                if args.dsc else
+                f"ff {used['ff_static_ma']}/{used['ff_kinetic_ma']} mA") + f", edge speed {used['speed_edge_est']}"
         print(f"-- {args.distance:.2f} m {args.axis} at {args.speed} m/s ({seconds:.1f} s), kp {used['kp']} "
-              f"ki {used['ki']} ff {used['ff_static_ma']}/{used['ff_kinetic_ma']} mA", flush=True)
+              f"ki {used['ki']} {loop}", flush=True)
+        if args.record:
+            for _name, _esc, sel in ik_link.WHEELS:
+                link.record_start(sel, args.record_pre, args.record_delay)
         s = tg.stage(link, stream, "drive", plan, duration, [used] * 4, defaults, args.out, args.accel)
+        if args.record:
+            result["record"] = read_records(link, args.out / "record.json")
     finally:
         session.close()
         if stream is not None:

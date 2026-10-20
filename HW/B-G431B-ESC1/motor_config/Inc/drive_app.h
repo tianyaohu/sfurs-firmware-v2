@@ -44,6 +44,7 @@ struct drive_app_state {
   int32_t command_rpm;      /* last SPEED_WRITE target */
   uint32_t park_ms;         /* time at zero command and standstill */
   uint32_t speed_commands, status_replies, rejected;
+  uint32_t start_failed;    /* ESC_STOP_START_FAILED latch */
 };
 extern volatile struct drive_app_state drive_app;
 
@@ -69,6 +70,21 @@ int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm);
  * interval, and a single noisy edge reads 4-5x the true speed. Caps the
  * measured speed in place (also what telemetry reports). */
 void drive_speed_plausible(int16_t *rpm, int16_t ref_rpm);
+/* Speed loop for STC_CalcTorqueReference: PI_Controller, or with the startup
+ * loop enabled (ESC_CFG_DSC_ENABLE) the complete Iq reference from dsc_step().
+ * drive_dsc_enabled() tells FOC_CalcCurrRef to skip drive_speed_iq_ref. */
+#include "drive_speed_ctrl.h"
+int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm);
+int drive_dsc_enabled(void);
+extern dsc_cfg_t drive_dsc_cfg;
+extern dsc_state_t drive_dsc;
+extern dsc_rev_t drive_rev;
+extern uint8_t drive_rev_enable; /* ESC_CFG_SPEED_REV_FILTER */
+extern uint8_t drive_edge_speed; /* ESC_CFG_SPEED_EDGE_EST */
+
+/* Speed-loop recorder (ESC_RECORD_START), from FOC_CalcCurrRef every speed
+ * tick with the speed-loop output and the final Iq reference. */
+void drive_record_tick(int16_t pi_out, int16_t iq_ref);
 
 void drive_app_init(void);
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length);

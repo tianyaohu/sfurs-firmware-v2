@@ -34,7 +34,21 @@ CAPTURE_HEADER = ("frames", "source", "status", "vbus_centivolts", "samples")
 CAPTURE_CHANNELS = ("id", "iq", "vd", "vq", "id_ref", "angle")
 HALL_ALIGN_MAGIC = 0x4E4C4148
 CONFIG_KEYS = {"kp": 1, "ki": 2, "shift": 3, "iqmax_ma": 4, "current_kp": 5, "current_ki": 6,
-               "ff_static_ma": 7, "ff_kinetic_ma": 8}
+               "ff_static_ma": 7, "ff_kinetic_ma": 8,
+               # startup speed loop (drive_speed_ctrl.h)
+               "dsc_enable": 9, "dsc_ff_run_ma": 10, "dsc_ff_per_krpm_ma": 11,
+               "dsc_start_from_ma": 12, "dsc_start_cap_ma": 13, "dsc_start_slope_ma": 14,
+               "dsc_start_hold_ms": 15, "dsc_pcap_ma": 16, "dsc_pcap_ms": 17,
+               "dsc_pcap_updates": 18, "dsc_pcap_fallback_ms": 19,
+               "speed_rev_filter": 20, "dsc_hold_decay_ma": 21,
+               "dsc_watch_ms": 22, "dsc_preload_pct": 23, "speed_edge_est": 24}
+# Speed-loop recorder (can_datatypes.h ESC_RECORD_*)
+RECORD_START_OP, RECORD_SAMPLES, RECORD_INFO_SAMPLE, RECORD_READ_CH67 = 0x5E, 384, 1, 1 << 18
+RECORD_STATUS = {0: "none", 1: "armed", 2: "triggered", 3: "done", 4: "rejected"}
+RECORD_CHANNELS = ("ref_rpm", "rpm", "p", "i", "ff", "iq_ref", "iq", "packed")
+DSC_STATES = ("stopped", "starting", "running", "failed")
+DSC_REASONS = ("none", "armed", "edge", "stop", "reverse", "no_edge", "no_capture", "inactive",
+               "restick", "moving")
 
 SCALARS = ("abi", "vx_mmps", "vy_mmps", "omega_mradps", "enable", "heartbeat",
            "accel_rpmps", "raw_id", "raw_data", "raw_seq", "state", "raw_done",
@@ -100,6 +114,32 @@ def capture_read_word(bank, first, count):
             not 1 <= count <= CAPTURE_READ_MAX:
         raise ValueError("bad capture read")
     return (CAPTURE_READ_OP << 24) | (bank << 16) | (count << 10) | first
+
+
+def record_start_word(pre=50, delay_ms=0):
+    if not 0 <= pre < RECORD_SAMPLES or not 0 <= delay_ms <= 4095:
+        raise ValueError(f"pre 0..{RECORD_SAMPLES - 1}, delay 0..4095 ms")
+    return (RECORD_START_OP << 24) | (delay_ms << 9) | pre
+
+
+def record_read_word(bank, first, count, ch67=False):
+    if bank not in (0, 1) or (ch67 and bank != 0) or not 0 <= first < RECORD_SAMPLES or \
+            not 1 <= count <= CAPTURE_READ_MAX:
+        raise ValueError("bad record read")
+    return (CAPTURE_READ_OP << 24) | (RECORD_READ_CH67 if ch67 else 0) | (bank << 16) | \
+        (count << 10) | first
+
+
+def unpack_record(sample):
+    """Decode one recorder sample (dict of RECORD_CHANNELS, counts) into units."""
+    p = sample["packed"] & 0xFFFF
+    return dict(ref_rpm=sample["ref_rpm"], rpm=sample["rpm"],
+                p_a=sample["p"] / COUNTS_PER_AMP, i_a=sample["i"] / COUNTS_PER_AMP,
+                ff_a=sample["ff"] / COUNTS_PER_AMP, iq_ref_a=sample["iq_ref"] / COUNTS_PER_AMP,
+                iq_a=sample["iq"] / COUNTS_PER_AMP, state=DSC_STATES[p & 3],
+                reason=DSC_REASONS[(p >> 2) & 15] if (p >> 2) & 15 < len(DSC_REASONS) else str((p >> 2) & 15),
+                capped=bool(p & 0x40), dsc=bool(p & 0x80), edges_mod16=(p >> 8) & 15,
+                captures_mod8=(p >> 12) & 7, loop=bool(p & 0x8000))
 
 
 def config_frame(selector, key, value):
@@ -218,6 +258,51 @@ class Link:
         samples = [dict(zip(CAPTURE_CHANNELS, struct.unpack_from("<6h", raw, 12 * i)))
                    for i in range(CAPTURE_SAMPLES)]
         return info, samples
+
+    def record_start(self, selector, pre=50, delay_ms=0):
+        """Arm the speed-loop recorder on one wheel (observe only; drive stopped
+        for the raw frame, motion may follow)."""
+        self.send_raw(CAPTURE | selector, record_start_word(pre, delay_ms))
+
+    def record_info(self, selector):
+        """(status name, samples, trigger index) of one wheel's recorder. The
+        Nucleo stores the info frame in the capture header fields."""
+        before = self.capture_header()["frames"]
+        self.send_raw(CAPTURE | selector, (CAPTURE_READ_OP << 24) | (CAPTURE_INFO_BANK << 16) |
+                      (1 << 10) | RECORD_INFO_SAMPLE)
+        if not self._wait_frames(before + 1, 0.3):
+            raise RuntimeError("recorder info: no reply")
+        h = self.capture_header()
+        return RECORD_STATUS.get(h["status"], str(h["status"])), h["vbus_centivolts"], h["samples"]
+
+    def record_read(self, selector):
+        """Read a finished recording: (info dict, list of RECORD_CHANNELS dicts)."""
+        import struct
+        status, samples, trigger = self.record_info(selector)
+        if status != "done":
+            raise RuntimeError(f"recorder {status}")
+        channels = [[0] * 8 for _ in range(samples)]
+        for passes in (((0, False), (1, False)), ((0, True),)):
+            for bank, ch67 in passes:
+                for first in range(0, samples, CAPTURE_READ_MAX):
+                    count = min(CAPTURE_READ_MAX, samples - first)
+                    for _attempt in range(3):  # CAN frames are not retransmitted
+                        before = self.capture_header()["frames"]
+                        self.send_raw(CAPTURE | selector, record_read_word(bank, first, count, ch67))
+                        if self._wait_frames(before + count, 0.5):
+                            break
+                    else:
+                        raise RuntimeError(f"recorder readout bank {bank}{' ch67' if ch67 else ''} @{first}")
+            raw = bytes(self.target.read_memory_block8(
+                self.addrs["capture"] + 4 * len(CAPTURE_HEADER), samples * 12))
+            for i in range(samples):
+                v = struct.unpack_from("<6h", raw, 12 * i)
+                if passes[0][1]:  # ch67 pass lands in slots 0, 1
+                    channels[i][6], channels[i][7] = v[0], v[1]
+                else:
+                    channels[i][:6] = v
+        info = dict(status=status, samples=samples, trigger_index=trigger)
+        return info, [dict(zip(RECORD_CHANNELS, c)) for c in channels]
 
     def send_raw(self, can_id, word, timeout=1.0):
         """One 4-byte frame through the Nucleo; only accepted while STOPPED."""

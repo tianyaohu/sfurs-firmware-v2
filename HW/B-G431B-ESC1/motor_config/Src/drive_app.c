@@ -79,11 +79,27 @@ static volatile uint8_t status_pending, diag_pending, ident_pending;
 static uint32_t seen_speed, seen_stop, seen_align, seen_config, seen_capture, seen_read;
 
 /* FOC ISR <-> tick: the tick arms, the ISR records and disarms when full. */
-static int16_t capture_buf[ESC_CAPTURE_SAMPLES][6];
+/* Shared by the current-loop capture and the speed-loop recorder. */
+static union {
+  int16_t cur[ESC_CAPTURE_SAMPLES][6];
+  int16_t rec[ESC_RECORD_SAMPLES][8];
+} capture_mem;
+_Static_assert(sizeof(capture_mem.rec) == sizeof(capture_mem.cur), "recorder reuses capture RAM");
+#define capture_buf capture_mem.cur
+static volatile uint32_t rec_status, rec_index, rec_remaining, rec_delay, rec_trigger_index;
+static uint32_t rec_pre, rec_prev_moving, rec_owner; /* rec_owner: buffer holds a recording */
+static volatile uint32_t rx_record_word, rx_record_count;
+static uint32_t seen_record;
 static volatile uint32_t capture_armed, capture_index;
 static volatile int16_t capture_step_counts;
 static uint32_t capture_ms, capture_vbus_cv;
-static uint32_t read_next, read_end, read_bank; /* poll context only */
+static uint32_t read_next, read_end, read_bank, read_ch67; /* poll context only */
+
+dsc_cfg_t drive_dsc_cfg;
+dsc_state_t drive_dsc;
+dsc_rev_t drive_rev;
+uint8_t drive_rev_enable = SPEED_REV_FILTER_DEFAULT;
+uint8_t drive_edge_speed = SPEED_EDGE_EST_DEFAULT;
 
 static uint32_t ff_broken_free, ff_stall_ms;
 static int32_t ff_peak; /* highest forward speed since the start, <= FRICTION_FADE_RPM */
@@ -108,6 +124,22 @@ void drive_app_init(void)
   set_iq_limit(drive_app.iq_max_counts);
   drive_app.ff_static_counts = FRICTION_FF_STATIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
   drive_app.ff_kinetic_counts = FRICTION_FF_KINETIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
+  drive_dsc_cfg = (dsc_cfg_t){
+    .enable = DSC_ENABLE_DEFAULT,
+    .ff_run = (int16_t)(DSC_FF_RUN_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .ff_per_krpm = (int16_t)(DSC_FF_PER_KRPM_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .start_from = (int16_t)(DSC_START_FROM_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .start_cap = (int16_t)(DSC_START_CAP_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .start_slope = (int16_t)((DSC_START_SLOPE_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000),
+    .start_hold_ms = DSC_START_HOLD_MS_DEFAULT,
+    .pcap = (int16_t)(DSC_PCAP_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
+    .pcap_ms = DSC_PCAP_MS_DEFAULT,
+    .pcap_updates = DSC_PCAP_UPDATES_DEFAULT,
+    .pcap_fallback_ms = DSC_PCAP_FALLBACK_MS_DEFAULT,
+    .hold_decay = (int16_t)((DSC_HOLD_DECAY_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000),
+    .watch_ms = DSC_WATCH_MS_DEFAULT,
+    .preload_pct = DSC_PRELOAD_PCT_DEFAULT };
+  dsc_reset(&drive_dsc);
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by build_cli.py --hall-shift */
 #endif
@@ -127,6 +159,7 @@ void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length)
     case IDENT_READ: ident_pending = 1U; break;
     case CAPTURE:
       if ((word >> 24) == ESC_CAPTURE_START) { rx_capture_word = word; ++rx_capture_count; }
+      else if ((word >> 24) == ESC_RECORD_START) { rx_record_word = word; ++rx_record_count; }
       else if ((word >> 24) == ESC_CAPTURE_READ) { rx_read_word = word; ++rx_read_count; }
       break;
     default: break;
@@ -182,6 +215,115 @@ void drive_speed_plausible(int16_t *rpm, int16_t ref_rpm)
   const int32_t cap = ref * STARTUP_MAX_RATIO_PCT / 100 + STARTUP_MARGIN_RPM;
   if (*rpm > cap) *rpm = (int16_t)cap;
   else if (*rpm < -cap) *rpm = (int16_t)-cap;
+}
+
+int drive_dsc_enabled(void)
+{
+  return drive_dsc_cfg.enable != 0U;
+}
+
+int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
+{
+  const uint16_t pos = HALL_M1.EdgesPos, neg = HALL_M1.EdgesNeg, caps = HALL_M1.Captures;
+  const int16_t filtered = dsc_reversal_filter(&drive_rev, pos, neg, caps, rpm);
+  const int on = drive_rev_enable != 0U;
+  if (on) rpm = filtered;
+  if (drive_edge_speed) { /* low speed, or the SDK speed not alive yet: edge timing */
+    const int16_t edge = dsc_edge_rpm(&drive_rev);
+    if (rpm == 0 || (edge < DSC_EDGE_SPEED_MAX_RPM && edge > -DSC_EDGE_SPEED_MAX_RPM)) rpm = edge;
+  }
+  if (!drive_dsc_cfg.enable) return PI_Controller(pid, (int32_t)ref_rpm - rpm);
+  const dsc_in_t in = { .ref_rpm = ref_rpm, .meas_rpm = rpm,
+                        .edges_pos = on ? drive_rev.qpos : pos,
+                        .edges_neg = on ? drive_rev.qneg : neg,
+                        .captures = on ? drive_rev.qcaps : caps,
+                        .limit = (int16_t)drive_app.iq_limit_counts,
+                        .active = drive_app.active ? 1U : 0U,
+                        .raw_pos = pos, .raw_neg = neg };
+  const uint8_t was = drive_dsc.state;
+  const int16_t out = dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);
+  if (drive_dsc.state == DSC_STARTING && was != DSC_STARTING)
+    dsc_rev_rebase(&drive_rev, pos, neg, caps); /* this tick's edges are already consumed */
+  return out;
+}
+
+static volatile int16_t rec_pi_out, rec_iq_ref;
+static volatile uint32_t rec_loop_ran;
+
+void drive_record_tick(int16_t pi_out, int16_t iq_ref)
+{
+  rec_pi_out = pi_out;
+  rec_iq_ref = iq_ref;
+  rec_loop_ran = 1U;
+}
+
+/* One recorder sample per drive_app_tick (1 kHz in every MCSDK state), so it
+ * sees the stopped reference before a start and finishes after a stop. Speed
+ * loop values are those of this tick's FOC_CalcCurrRef, or 0 when the speed
+ * loop did not run (IDLE, STOP, alignment, capture). */
+static void record_sample(void)
+{
+  const uint32_t status = rec_status;
+  const uint32_t ran = rec_loop_ran;
+  rec_loop_ran = 0U;
+  if (status != ESC_RECORD_ARMED && status != ESC_RECORD_TRIGGERED) return;
+  const int16_t pi_out = ran ? rec_pi_out : 0, iq_ref = ran ? rec_iq_ref : 0;
+  const int16_t ref = ran ? (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()) : 0;
+  const uint32_t moving = ref >= DSC_STOP_RPM || ref <= -DSC_STOP_RPM;
+  int16_t *s = capture_mem.rec[rec_index % ESC_RECORD_SAMPLES];
+  s[0] = ref;
+  s[1] = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
+  if (!ran) {
+    s[2] = 0; s[3] = 0; s[4] = 0; /* speed loop not running this tick */
+  } else if (drive_dsc_cfg.enable) {
+    s[2] = drive_dsc.p; s[3] = drive_dsc.i; s[4] = drive_dsc.ff;
+  } else {
+    const int32_t i = PIDSpeedHandle_M1.wIntegralTerm / (int32_t)PID_GetKIDivisor(&PIDSpeedHandle_M1);
+    s[2] = (int16_t)(pi_out - i); s[3] = (int16_t)i; s[4] = (int16_t)(iq_ref - pi_out);
+  }
+  s[5] = iq_ref;
+  s[6] = MC_GetIqdMotor1().q;
+  s[7] = (int16_t)((drive_dsc.state & 3U) | ((drive_dsc.reason & 15U) << 2) |
+                   ((ran ? drive_dsc.capped & 1U : 0U) << 6) | ((drive_dsc_cfg.enable & 1U) << 7) |
+                   (((uint32_t)(HALL_M1.EdgesPos - HALL_M1.EdgesNeg) & 15U) << 8) |
+                   (((uint32_t)HALL_M1.Captures & 7U) << 12) | ((ran ? 1U : 0U) << 15));
+  if (status == ESC_RECORD_ARMED) {
+    if (rec_delay == UINT32_MAX) { /* waiting for the reference to leave zero */
+      if (moving && !rec_prev_moving) rec_delay = (rx_record_word >> 9) & 0xFFFU;
+    }
+    if (rec_delay != UINT32_MAX && rec_delay-- == 0U) {
+      rec_status = ESC_RECORD_TRIGGERED;
+      rec_trigger_index = rec_index;
+      rec_remaining = ESC_RECORD_SAMPLES - rec_pre;
+    }
+  }
+  rec_prev_moving = moving;
+  ++rec_index;
+  if (rec_status == ESC_RECORD_TRIGGERED && --rec_remaining == 0U) rec_status = ESC_RECORD_DONE;
+}
+
+static void record_begin(uint32_t word)
+{
+  const uint32_t pre = word & 0x1FFU;
+  if (drive_app.capture_phase != CAPTURE_IDLE || pre >= ESC_RECORD_SAMPLES) {
+    rec_status = ESC_RECORD_REJECTED;
+    ++drive_app.rejected;
+    return;
+  }
+  rec_status = ESC_RECORD_NONE; /* the speed tick stops writing first */
+  rec_owner = 1U;
+  rec_pre = pre;
+  rec_index = 0U;
+  rec_trigger_index = 0U;
+  rec_prev_moving = 1U; /* a start must follow a zero reference */
+  rec_delay = UINT32_MAX;
+  rec_status = ESC_RECORD_ARMED;
+}
+
+/* Oldest recorded sample: the window is the last ESC_RECORD_SAMPLES written. */
+static uint32_t record_first(void)
+{
+  return rec_index > ESC_RECORD_SAMPLES ? rec_index - ESC_RECORD_SAMPLES : 0U;
 }
 
 static uint32_t vbus_centivolts(void)
@@ -326,6 +468,8 @@ static void capture_begin(uint32_t step_ma)
     ++drive_app.rejected;
     return;
   }
+  rec_status = ESC_RECORD_NONE; /* the capture overwrites the recorder RAM */
+  rec_owner = 0U;
   capture_step_counts = (int16_t)(step_ma * (uint32_t)CURRENT_CONV_FACTOR / 1000U);
   capture_armed = 0U;
   capture_index = 0U;
@@ -417,6 +561,64 @@ static void apply_config(uint32_t word)
       else drive_app.ff_kinetic_counts = counts;
       break;
     }
+    case ESC_CFG_DSC_ENABLE:
+      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
+      drive_dsc_cfg.enable = (uint8_t)value;
+      dsc_reset(&drive_dsc);
+      break;
+    case ESC_CFG_DSC_FF_RUN_MA:
+    case ESC_CFG_DSC_FF_PER_KRPM_MA:
+    case ESC_CFG_DSC_START_FROM_MA:
+    case ESC_CFG_DSC_START_CAP_MA:
+    case ESC_CFG_DSC_START_SLOPE_MA:
+    case ESC_CFG_DSC_PCAP_MA:
+    case ESC_CFG_DSC_HOLD_DECAY_MA: {
+      if (value < 0 || value > (int16_t)(IQMAX_A * 1000)) { ++drive_app.rejected; return; }
+      const int16_t counts = (int16_t)((int32_t)value * (int32_t)CURRENT_CONV_FACTOR / 1000);
+      switch (word & 0xFFFFU) {
+        case ESC_CFG_DSC_FF_RUN_MA: drive_dsc_cfg.ff_run = counts; break;
+        case ESC_CFG_DSC_FF_PER_KRPM_MA: drive_dsc_cfg.ff_per_krpm = counts; break;
+        case ESC_CFG_DSC_START_FROM_MA: drive_dsc_cfg.start_from = counts; break;
+        case ESC_CFG_DSC_START_CAP_MA: drive_dsc_cfg.start_cap = counts; break;
+        case ESC_CFG_DSC_START_SLOPE_MA: {
+          if (value == 0) { ++drive_app.rejected; return; } /* a ramp that never rises */
+          const int32_t slope = ((int32_t)value * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000;
+          drive_dsc_cfg.start_slope = (int16_t)(slope > 0 ? slope : 1);
+          break;
+        }
+        case ESC_CFG_DSC_HOLD_DECAY_MA:
+          drive_dsc_cfg.hold_decay = (int16_t)(((int32_t)value * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000);
+          break;
+        default: drive_dsc_cfg.pcap = counts; break;
+      }
+      break;
+    }
+    case ESC_CFG_DSC_START_HOLD_MS:
+    case ESC_CFG_DSC_PCAP_MS:
+    case ESC_CFG_DSC_PCAP_FALLBACK_MS:
+    case ESC_CFG_DSC_WATCH_MS:
+      if (value < 0 || value > 2000) { ++drive_app.rejected; return; }
+      if ((word & 0xFFFFU) == ESC_CFG_DSC_START_HOLD_MS) drive_dsc_cfg.start_hold_ms = (uint16_t)value;
+      else if ((word & 0xFFFFU) == ESC_CFG_DSC_PCAP_MS) drive_dsc_cfg.pcap_ms = (uint16_t)value;
+      else if ((word & 0xFFFFU) == ESC_CFG_DSC_WATCH_MS) drive_dsc_cfg.watch_ms = (uint16_t)value;
+      else drive_dsc_cfg.pcap_fallback_ms = (uint16_t)value;
+      break;
+    case ESC_CFG_DSC_PRELOAD_PCT:
+      if (value < 0 || value > 90) { ++drive_app.rejected; return; }
+      drive_dsc_cfg.preload_pct = (uint8_t)value;
+      break;
+    case ESC_CFG_SPEED_REV_FILTER:
+      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
+      drive_rev_enable = (uint8_t)value;
+      break;
+    case ESC_CFG_SPEED_EDGE_EST:
+      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
+      drive_edge_speed = (uint8_t)value;
+      break;
+    case ESC_CFG_DSC_PCAP_UPDATES:
+      if (value < 1 || value > 6) { ++drive_app.rejected; return; }
+      drive_dsc_cfg.pcap_updates = (uint8_t)value;
+      break;
     default: ++drive_app.rejected; break;
   }
 }
@@ -431,6 +633,10 @@ static void speed_command(uint32_t word, uint16_t state)
   drive_app.last_command_ms = drive_app.now_ms;
   drive_app.command_rpm = rpm;
   if (drive_app.fault_latched) return;
+  if (drive_app.start_failed) { /* no automatic retry: wait for a zero command */
+    if (rpm == 0) drive_app.start_failed = 0U;
+    return;
+  }
   if (!drive_app.aligned) { ++drive_app.rejected; return; }
   if (drive_app.active) {
     MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(rpm), ramp_ms);
@@ -443,6 +649,8 @@ static void speed_command(uint32_t word, uint16_t state)
   if (state != IDLE || rpm == 0) return;
   MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(rpm), ramp_ms);
   if (MC_StartMotor1()) {
+    dsc_reset(&drive_dsc); /* a FAILED attempt must not outlive the stop */
+    dsc_rev_rebase(&drive_rev, HALL_M1.EdgesPos, HALL_M1.EdgesNeg, HALL_M1.Captures);
     drive_app.active = 1U;
     drive_app.stop_reason = ESC_STOP_NONE;
   } else {
@@ -491,7 +699,7 @@ void drive_app_tick(void)
   uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
   const uint32_t speed_count = rx_speed_count, stop_count = rx_stop_count;
   const uint32_t align_count = rx_align_count, config_count = rx_config_count;
-  const uint32_t capture_count = rx_capture_count;
+  const uint32_t capture_count = rx_capture_count, record_count = rx_record_count;
   const int stop_received = stop_count != seen_stop;
   const int speed_received = speed_count != seen_speed;
   seen_stop = stop_count;
@@ -504,6 +712,7 @@ void drive_app_tick(void)
   }
   if (stop_received) {
     drive_app.fault_latched = 0U;
+    drive_app.start_failed = 0U;
     if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING) {
       align_finish(ESC_ALIGN_ABORTED);
     } else if (drive_app.capture_phase != CAPTURE_IDLE &&
@@ -531,12 +740,17 @@ void drive_app_tick(void)
   }
   if (capture_count != seen_capture) {
     seen_capture = capture_count;
-    if (idle && state == IDLE && !stop_received && drive_app.align_phase == ALIGN_IDLE) {
+    if (idle && state == IDLE && !stop_received && drive_app.align_phase == ALIGN_IDLE &&
+        rec_status != ESC_RECORD_ARMED && rec_status != ESC_RECORD_TRIGGERED) {
       capture_begin(rx_capture_word & 0xFFFFU);
     } else {
       drive_app.capture_status = ESC_CAPTURE_REJECTED;
       ++drive_app.rejected;
     }
+  }
+  if (record_count != seen_record) {
+    seen_record = record_count;
+    record_begin(rx_record_word);
   }
   if (config_count != seen_config) {
     seen_config = config_count;
@@ -547,12 +761,18 @@ void drive_app_tick(void)
       drive_app.capture_phase == CAPTURE_IDLE && !stop_received)
     speed_command(rx_speed_word, state);
 
+  if (drive_app.active && drive_dsc_cfg.enable && drive_dsc.state == DSC_FAILED) {
+    stop(ESC_STOP_START_FAILED);
+    drive_app.start_failed = 1U;
+  }
   if ((uint32_t)(now - drive_app.last_command_ms) >= ESC_COMMAND_TIMEOUT_MS) {
     drive_app.fault_latched = 0U;
+    drive_app.start_failed = 0U;
     if (drive_app.active) stop(ESC_STOP_TIMEOUT);
   }
   park_tick(state);
   i2t_tick(state);
+  record_sample();
 }
 
 int drive_app_idle(void)
@@ -570,10 +790,25 @@ static void put32(uint8_t *p, uint32_t v) { put16(p, v); put16(p + 2, v >> 16); 
 static void capture_frame(uint8_t data[8], uint32_t i)
 {
   put16(data, (read_bank << 12) | i);
+  if (read_bank == ESC_CAPTURE_INFO_BANK && i == ESC_RECORD_INFO_SAMPLE) {
+    const uint32_t first = record_first(), done = rec_status == ESC_RECORD_DONE;
+    put16(data + 2, rec_status);
+    put16(data + 4, rec_index - first);
+    put16(data + 6, done && rec_trigger_index >= first ? rec_trigger_index - first : 0U);
+    return;
+  }
   if (read_bank == ESC_CAPTURE_INFO_BANK) {
     put16(data + 2, drive_app.capture_status);
     put16(data + 4, capture_vbus_cv);
     put16(data + 6, capture_index);
+    return;
+  }
+  if (rec_owner) {
+    const int16_t *r = capture_mem.rec[(record_first() + i) % ESC_RECORD_SAMPLES];
+    const uint32_t c = read_ch67 ? 6U : read_bank * 3U;
+    put16(data + 2, (uint16_t)r[c]);
+    put16(data + 4, (uint16_t)r[c + 1U]);
+    put16(data + 6, c + 2U < 8U ? (uint16_t)r[c + 2U] : 0U);
     return;
   }
   const int16_t *s = &capture_buf[i][read_bank == 0U ? 0 : 3];
@@ -628,12 +863,19 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     seen_read = read_count;
     const uint32_t word = rx_read_word;
     read_bank = (word >> 16) & 0x3U;
-    read_next = read_bank == ESC_CAPTURE_INFO_BANK ? 0U : (word & 0x3FFU);
-    uint32_t count = read_bank == ESC_CAPTURE_INFO_BANK ? 1U : ((word >> 10) & 0x3FU);
-    if (count > CAPTURE_READ_MAX) count = CAPTURE_READ_MAX;
-    read_end = read_next + count;
-    if (read_end > ESC_CAPTURE_SAMPLES) read_end = ESC_CAPTURE_SAMPLES;
-    if (read_bank == 2U) read_end = read_next; /* no bank 2 */
+    read_ch67 = (word & ESC_RECORD_READ_CH67) != 0U && read_bank == 0U;
+    if (read_bank == ESC_CAPTURE_INFO_BANK) {
+      read_next = (word & 0x3FFU) == ESC_RECORD_INFO_SAMPLE ? ESC_RECORD_INFO_SAMPLE : 0U;
+      read_end = read_next + 1U;
+    } else {
+      const uint32_t samples = rec_owner ? ESC_RECORD_SAMPLES : ESC_CAPTURE_SAMPLES;
+      uint32_t count = (word >> 10) & 0x3FU;
+      if (count > CAPTURE_READ_MAX) count = CAPTURE_READ_MAX;
+      read_next = word & 0x3FFU;
+      read_end = read_next + count;
+      if (read_end > samples) read_end = samples;
+      if (read_bank == 2U) read_end = read_next; /* no bank 2 */
+    }
   }
   while (read_next < read_end) {
     capture_frame(data, read_next);

@@ -146,6 +146,12 @@ typedef struct
 
   uint8_t HallState;     /*!< Current HALL state configuration */
 
+  /* USER: cumulative valid Hall transitions per direction and valid period
+     captures, read by the startup speed loop (drive_speed_ctrl.h). */
+  volatile uint16_t EdgesPos;
+  volatile uint16_t EdgesNeg;
+  volatile uint16_t Captures;
+
   int16_t DeltaAngle;    /*!< Delta angle at the Hall sensor signal edge between
                                current electrical rotor angle of synchronism.
                                It is in s16degrees.*/

@@ -227,6 +227,15 @@ __weak void HALL_Clear(HALL_Handle_t *pHandle)
 
     pHandle->CompSpeed = 0;
 
+    /* USER: forget the speed measured before the stop. The average is only
+       recomputed while running, so a wheel pushed while IDLE left a stale value
+       that STC_ForceSpeedReferenceToCurrentSpeed() then used as the start
+       reference (2026-10-17: FR started at -92 RPM, kicked backwards, then
+       limit-cycled at +-6 A until the 200 RPM guard). */
+    pHandle->_Super.hAvrMecSpeedUnit = 0;
+    pHandle->_Super.hElSpeedDpp = 0;
+    pHandle->AvrElSpeedDpp = 0;
+
     pHandle->Direction = POSITIVE;
 
     /* Initialize speed buffer index */
@@ -582,6 +591,16 @@ __weak void *HALL_TIMx_CC_IRQHandler(void *pHandleVoid)
       }
     }
 
+    /* USER: count valid transitions (positive order 4-5-1-3-2-6). */
+    {
+      static const uint8_t pos_prev[8] = {0U, 5U, 3U, 1U, 6U, 4U, 2U, 0U};
+      static const uint8_t neg_prev[8] = {0U, 3U, 6U, 2U, 5U, 1U, 4U, 0U};
+      const uint8_t st = pHandle->HallState & 7U;
+      if ((pos_prev[st] != 0U) && (bPrevHallState == pos_prev[st])) { pHandle->EdgesPos++; }
+      else if ((neg_prev[st] != 0U) && (bPrevHallState == neg_prev[st])) { pHandle->EdgesNeg++; }
+      else { /* invalid or repeated state */ }
+    }
+
     /* We need to check that the direction has not changed.
        If it is the case, the sign of the current speed can be the opposite of the
        average speed, and the average time can be close to 0 which lead to a
@@ -717,6 +736,7 @@ __weak void *HALL_TIMx_CC_IRQHandler(void *pHandleVoid)
           pHandle->SensorPeriod[pHandle->SpeedFIFOIdx] *= pHandle->Direction;
         }
           pHandle->ElPeriodSum += pHandle->SensorPeriod[pHandle->SpeedFIFOIdx];
+          pHandle->Captures++; /* USER: fresh speed sample */
         /* Update pointers to speed buffer */
         pHandle->SpeedFIFOIdx++;
         if (pHandle->SpeedFIFOIdx == pHandle->SpeedBufferSize)

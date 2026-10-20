@@ -43,3 +43,4 @@ what someone does next; this is not a log.
   any motor constant.
 - CAN bus-off is permanent on STM32 FDCAN unless software clears CCCR.INIT; a jolted connector once took the whole drive offline until reset (2026-10-16). Both Nucleo and ESC main loops now recover.
 - Check that the planned path fits on the mat before any ground drive; a 0.6 m forward run started 0.14 m off-centre on the wrong side and left the mat (2026-10-17). `move_test.py` now refuses such paths.
+- MCSDK starts the speed ramp at the last measured average speed, which goes stale while IDLE: a wheel pushed by hand started at -92 RPM and limit-cycled. HALL_Clear now zeroes it; never treat stale idle telemetry as harmless (2026-10-17).

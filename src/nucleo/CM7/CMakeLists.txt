@@ -54,17 +54,17 @@ enable_language(C ASM)
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/inc
 )
 
 # Add sources to executable
 # Two images from one source tree:
-#   default                      streaming omni drive (scripts/keyboard_drive.py)
+#   default                      streaming omni drive (src/tools/keyboard_drive.py)
 #   -DFWU_IMAGE_FILE=<payload.c> ESC updater carrying one ESC application
-#                                (payload from scripts/fwu_image.py)
+#                                (payload from src/tools/fwu_image.py)
 set(FWU_IMAGE_FILE "" CACHE FILEPATH "ESC payload C file; selects the updater image")
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../HW/common/CAN)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/can)
 if(FWU_IMAGE_FILE)
     get_filename_component(FWU_PAYLOAD "${FWU_IMAGE_FILE}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
     if(NOT EXISTS "${FWU_PAYLOAD}")
@@ -76,7 +76,7 @@ if(FWU_IMAGE_FILE)
         Core/Src/fwu_updater.c
         Core/Src/can_fwu_host.c
         "${FWU_PAYLOAD}"
-        ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/can_fwu_protocol.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/can_fwu_protocol.c
     )
 else()
     message(STATUS "Nucleo image: streaming omni drive")
@@ -84,7 +84,7 @@ else()
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Src/ik_drive.c
         Core/Src/ik_telemetry.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Src/rover_kinematics.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/rover_kinematics.c
     )
 endif()
 

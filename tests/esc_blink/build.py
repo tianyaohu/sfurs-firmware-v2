@@ -19,7 +19,7 @@ binary = out / 'esc_blink.bin'
 subprocess.run([args.cc, '-mcpu=cortex-m4', '-mthumb', '-Os', '-std=c11',
                 '-ffreestanding', '-nostdlib', '-fno-unwind-tables',
                 '-fno-asynchronous-unwind-tables', '-Wall', '-Wextra', '-Werror',
-                '-I', str(here.parents[1] / 'Common/Inc'),
+                '-I', str(here.parents[1] / 'src/shared/inc'),
                 '-T', str(here / 'app.ld'), str(here / 'main.c'),
                 str(here / 'can_boot.c'),
                 '-o', str(elf)], check=True)

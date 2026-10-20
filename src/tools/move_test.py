@@ -5,7 +5,7 @@
 # ///
 """Straight-line drive test, measured by the overhead camera.
 
-  uv run scripts/move_test.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
+  uv run src/tools/move_test.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
       [--axis vy] [--distance 0.6] [--speed 0.2] [--reps 1] [--kp N --ki N] [--ff MA | --ff-static MA --ff-kinetic MA]
       [--dsc [--dsc-ff-run MA --dsc-cap MA --dsc-slope MA_PER_MS --dsc-pcap MA --dsc-hold-decay MA_PER_MS
               --dsc-watch MS --dsc-preload PCT]] [--record [--record-pre N --record-delay MS]]

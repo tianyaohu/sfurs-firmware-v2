@@ -9,7 +9,7 @@ import pathlib
 import re
 import unittest
 
-MC = pathlib.Path(__file__).resolve().parents[1] / "HW/B-G431B-ESC1/motor_config/Src"
+MC = pathlib.Path(__file__).resolve().parents[1] / "src/esc/motor_config/Src"
 
 
 def body(text, signature):

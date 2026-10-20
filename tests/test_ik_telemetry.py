@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src/tools"))
 import ik_link  # noqa: E402
 import keyboard_drive  # noqa: E402
 
@@ -66,8 +66,8 @@ class TelemetryTest(unittest.TestCase):
             tmp = pathlib.Path(tmp)
             (tmp / "t.c").write_text(HARNESS)
             subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                            "-I", str(ROOT / "CM7/Core/Inc"), "-I", str(ROOT / "HW/common/CAN"),
-                            str(tmp / "t.c"), str(ROOT / "CM7/Core/Src/ik_telemetry.c"),
+                            "-I", str(ROOT / "src/nucleo/CM7/Core/Inc"), "-I", str(ROOT / "src/shared/can"),
+                            str(tmp / "t.c"), str(ROOT / "src/nucleo/CM7/Core/Src/ik_telemetry.c"),
                             "-o", str(tmp / "t")], check=True)
             out = subprocess.run([str(tmp / "t")], check=True, capture_output=True, text=True).stdout
         words = [int(x) for x in out.split()]
@@ -120,7 +120,7 @@ class HostHelpersTest(unittest.TestCase):
         self.assertEqual(keys.vector(0.9, 0.5, 2.0), (0, 0, 0))
 
     def test_row_layout_matches_header(self):
-        header = (ROOT / "CM7/Core/Inc/ik_telemetry.h").read_text()
+        header = (ROOT / "src/nucleo/CM7/Core/Inc/ik_telemetry.h").read_text()
         self.assertIn(f"#define IK_TELEMETRY_WORDS {len(ik_link.ROW_FIELDS)}U", header)
         body = header[header.index("struct ik_telemetry_wheel {"):header.index("};")]
         body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)

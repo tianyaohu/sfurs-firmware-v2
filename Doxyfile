@@ -2,24 +2,24 @@
 # Run: doxygen Doxyfile   -> build/doxygen/html/index.html
 PROJECT_NAME           = "SFURS firmware"
 OUTPUT_DIRECTORY       = build/doxygen
-INPUT                  = CM7/Core/Src \
-                         CM7/Core/Inc \
-                         Common \
-                         HW/common/CAN \
-                         HW/B-G431B-ESC1/Inc \
-                         HW/B-G431B-ESC1/bootloader/boot_main.c \
-                         HW/B-G431B-ESC1/motor_config/Src/drive_app.c \
-                         HW/B-G431B-ESC1/motor_config/Inc/drive_app.h \
-                         docs
+INPUT                  = src/nucleo/CM7/Core/Src \
+                         src/nucleo/CM7/Core/Inc \
+                         src/shared \
+                         src/esc/Inc \
+                         src/esc/bootloader/boot_main.c \
+                         src/esc/motor_config/Src/drive_app.c \
+                         src/esc/motor_config/Inc/drive_app.h \
+                         src/tools/rig/README.md \
+                         docs prd architecture system-info open-questions \
+                         technical-development-plans design-chronological \
+                         hardware-test-results references
 FILE_PATTERNS          = *.c *.h *.md
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */stm32h7xx_* */syscalls.c */sysmem.c \
                          */system_stm32h7xx_* */startup_* \
-                         */fwu_test_image.* \
-                         docs/rig/* docs/test-results/* docs/design/* \
-                         docs/plans/* docs/reference/*
+                         */fwu_test_image.*
 EXCLUDE_SYMBOLS        = MX_* SystemClock_Config Error_Handler hfdcan1
-USE_MDFILE_AS_MAINPAGE = docs/ARCHITECTURE.md
+USE_MDFILE_AS_MAINPAGE = architecture/index.md
 OPTIMIZE_OUTPUT_FOR_C  = YES
 EXTRACT_ALL            = NO
 EXTRACT_STATIC         = NO

@@ -7,7 +7,7 @@
 
 Default: print the plan, no hardware access. --execute drives the robot!
 Battery ON, wheels raised for the first run after firmware changes; otherwise
-use a clear floor with an operator ready to stop. Read docs/HARDWARE.md first.
+use a clear floor with an operator ready to stop. Read system-info/hardware.md first.
 """
 import argparse
 import json

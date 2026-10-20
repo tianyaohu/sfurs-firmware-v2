@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MC = ROOT / "HW/B-G431B-ESC1/motor_config"
+MC = ROOT / "src/esc/motor_config"
 SDK = MC / "MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any"
 
 MC_TYPE_STUB = r'''

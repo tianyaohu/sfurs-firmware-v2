@@ -58,9 +58,9 @@ uv. Store images, logs and outputs outside git. These example paths use /tmp;
 use persistent storage for real measurements.
 
 ```sh
-uv run scripts/rig/rig_calibrate.py board --out /tmp/charuco
-uv run scripts/rig/rig_calibrate.py capture --out /tmp/rig-views --count 30 --preview
-uv run scripts/rig/rig_calibrate.py solve --images '/tmp/rig-views/*.png' --out /tmp/camera.yaml
+uv run src/tools/rig/rig_calibrate.py board --out /tmp/charuco
+uv run src/tools/rig/rig_calibrate.py capture --out /tmp/rig-views --count 30 --preview
+uv run src/tools/rig/rig_calibrate.py solve --images '/tmp/rig-views/*.png' --out /tmp/camera.yaml
 ```
 
 The default ChArUco board is 7×5 squares, 30 mm square side, 22 mm markers,
@@ -87,8 +87,8 @@ robot yaw zero, and z upward. Positive yaw rotates body +x toward floor +y
 The reported pose refers to the body origin; tag offset is in body x/y.
 
 ```sh
-uv run scripts/rig/rig_track.py --floor /tmp/floor.json --print-tags /tmp/rig-tags
-uv run scripts/rig/rig_track.py --calibration /tmp/camera.yaml --floor /tmp/floor.json \
+uv run src/tools/rig/rig_track.py --floor /tmp/floor.json --print-tags /tmp/rig-tags
+uv run src/tools/rig/rig_track.py --calibration /tmp/camera.yaml --floor /tmp/floor.json \
   --tag-mm 100 --tag-height-mm 150 --out /tmp/rig.jsonl --preview
 ```
 
@@ -130,9 +130,29 @@ mm. Tags below 16 px or with square-shape RMS above 10% of side are rejected.
 These are screening measures, not pose covariance estimates. Tracker rejects
 images with dimensions different from calibration.
 
+## Quick displacement check (no floor survey)
+
+`rig_measure.py` needs one AprilTag 36h11 ID 0 (100 mm black square) and the
+lens calibration. Tape the tag flat on the robot, start it with the robot
+still, press `r` to set the reference, run the drive, wait about 1 s, press `q`:
+
+```sh
+uv run src/tools/rig/rig_measure.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml \
+  --log /tmp/drive.jsonl --target-mm 500 --tolerance-mm 20
+```
+
+It prints distance moved in the tag plane, `max_sideways_mm` (drift off the
+start-end line), heading change, error against the target and pass/fail.
+Noise with the tag still is about 1.5 mm and ±0.2° near the image centre.
+An out-of-plane reading above ~10 mm means the tag tilted; do not trust it.
+Keep drives inside the reliable centre of the calibrated view (see
+open-questions for the current coverage limit). Webcam: Microdia 0c45:636b,
+MJPG 1280x720 at 30 fps needs manual exposure (at most 100) and 2 V4L2
+buffers; fixed focus keeps the calibration valid after remounting.
+
 ## Acquire control measurements
 
-Read [hardware rules](../HARDWARE.md) first. A human must confirm battery state
+Read [hardware rules](../../../system-info/hardware.md) first. A human must confirm battery state
 before each hardware step and after every cable/power change. Battery OFF for
 ESC flashing; wheels raised for alignment and the first motion after firmware
 changes. Ground motion needs a clear floor, explicit human authorization and
@@ -150,7 +170,7 @@ chosen settings externally with the measurement data.
 Existing `esc_tool pulse` gives an initial axial tracking/breakaway check:
 
 ```sh
-scripts/esc_tool.py pulse --axis vy --speed 0.1 --seconds 1.5 --reps 3 --log /tmp/pulse.jsonl
+src/tools/esc_tool.py pulse --axis vy --speed 0.1 --seconds 1.5 --reps 3 --log /tmp/pulse.jsonl
 ```
 
 It drives out and back and reports per-wheel breakaway times. Its current
@@ -167,9 +187,9 @@ monotonic time**. It changes no gains or feed-forward settings. It prints a
 plan by default without opening hardware:
 
 ```sh
-uv run scripts/rig/rig_sweep.py --angles-deg 11.25 --speeds 0.1
+uv run src/tools/rig/rig_sweep.py --angles-deg 11.25 --speeds 0.1
 # Human-authorized motion only, after battery confirmation and clearance:
-uv run scripts/rig/rig_sweep.py --angles-deg 11.25 --speeds 0.1 \
+uv run src/tools/rig/rig_sweep.py --angles-deg 11.25 --speeds 0.1 \
   --seconds 1.5 --out /tmp/sweep.jsonl --execute
 ```
 
@@ -186,7 +206,7 @@ state and robot afterward. Extend rest or collect shorter batches as needed.
 ## Align and analyze
 
 ```sh
-uv run scripts/rig/rig_analyze.py --rig /tmp/rig.jsonl --esc /tmp/sweep.jsonl \
+uv run src/tools/rig/rig_analyze.py --rig /tmp/rig.jsonl --esc /tmp/sweep.jsonl \
   --estimate-latency --out /tmp/rig-analysis
 ```
 
@@ -204,7 +224,7 @@ does not independently measure each device's latency.
 For elapsed-time pulse logs, add the original pulse-start monotonic time:
 
 ```sh
-uv run scripts/rig/rig_analyze.py --rig /tmp/rig.jsonl --esc /tmp/pulse.jsonl \
+uv run src/tools/rig/rig_analyze.py --rig /tmp/rig.jsonl --esc /tmp/pulse.jsonl \
   --telemetry-origin-t 12345.0 --estimate-latency --lag-search-s 2 --out /tmp/pulse-analysis
 ```
 
@@ -217,7 +237,7 @@ different hosts/reboots need an independently measured clock mapping.
 For recorded video, reconstruct the original timeline explicitly:
 
 ```sh
-uv run scripts/rig/rig_track.py --calibration /tmp/camera.yaml --floor /tmp/floor.json \
+uv run src/tools/rig/rig_track.py --calibration /tmp/camera.yaml --floor /tmp/floor.json \
   --video /tmp/run.avi --video-start-t 12345.0 --tag-height-mm 150 --out /tmp/replay.jsonl
 ```
 
@@ -233,7 +253,7 @@ Analysis unwraps yaw and differentiates local quadratic pose fits over 0.3 s
 using actual sample times. It does not bridge missing detections; telemetry
 interpolation also rejects gaps >150 ms. Velocities rotate into body x/y.
 `ik_link.py` supplies wheel order and current scale; the IK matrix is read
-directly from `Common/Src/rover_kinematics.c` to preserve radii, motor signs
+directly from `src/shared/src/rover_kinematics.c` to preserve radii, motor signs
 and the provisional contact geometry. Pseudoinversion supplies wheel odometry.
 Wheel slip is **measured motor RPM minus motor RPM predicted from vision
 body twist**. Geometry error also contributes to this residual; it is not a
@@ -293,7 +313,7 @@ translations and yaw before using data for tuning. More smoothing reduces
 noise but blurs short transients; retain the raw pose log.
 
 ```sh
-uv run scripts/rig/test_rig.py -v
+uv run src/tools/rig/test_rig.py -v
 ```
 
 Tests generate distorted AprilTags with a known raised, offset top tag,

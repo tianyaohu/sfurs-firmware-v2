@@ -5,8 +5,8 @@
 # ///
 """Single AprilTag robot tracker, with calibrated floor and top-tag parallax.
 
-  uv run scripts/rig/rig_track.py --calibration /tmp/camera.yaml --floor floor.json --out /tmp/rig.jsonl
-  uv run scripts/rig/rig_track.py --floor floor.json --print-tags /tmp/tags
+  uv run src/tools/rig/rig_track.py --calibration /tmp/camera.yaml --floor floor.json --out /tmp/rig.jsonl
+  uv run src/tools/rig/rig_track.py --floor floor.json --print-tags /tmp/tags
 """
 import argparse
 import io

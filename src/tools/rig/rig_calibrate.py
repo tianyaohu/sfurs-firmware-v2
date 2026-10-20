@@ -5,9 +5,9 @@
 # ///
 """Print a ChArUco board, collect diverse views, then solve camera intrinsics.
 
-  uv run scripts/rig/rig_calibrate.py board --out /tmp/board
-  uv run scripts/rig/rig_calibrate.py capture --out /tmp/views --count 30
-  uv run scripts/rig/rig_calibrate.py solve --images '/tmp/views/*.png' --out /tmp/camera.yaml
+  uv run src/tools/rig/rig_calibrate.py board --out /tmp/board
+  uv run src/tools/rig/rig_calibrate.py capture --out /tmp/views --count 30
+  uv run src/tools/rig/rig_calibrate.py solve --images '/tmp/views/*.png' --out /tmp/camera.yaml
 """
 import argparse
 import glob

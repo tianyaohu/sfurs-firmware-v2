@@ -6,7 +6,7 @@ import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src/tools"))
 import tune_ground as tg  # noqa: E402
 
 LIMITS = dict(breakaway_s=0.08, spread_s=0.03, overshoot=1.3, direction_deg=3.0, heading_deg=2.0,

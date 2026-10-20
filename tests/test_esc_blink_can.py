@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix='blink-can-mmio-') as tmp:
     (folder / 'test.c').write_text(code)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-DESC_BLINK_CAN_TEST', '-I', str(root / 'tests/esc_blink'),
-                    '-I', str(root / 'Common/Inc'), str(folder / 'test.c'),
+                    '-I', str(root / 'src/shared/inc'), str(folder / 'test.c'),
                     str(root / 'tests/esc_blink/can_boot.c'),
                     '-o', str(folder / 'test')], check=True)
     subprocess.run([str(folder / 'test')], check=True)

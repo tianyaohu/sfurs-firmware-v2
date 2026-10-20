@@ -5,8 +5,8 @@
 # ///
 """Friction feed-forward tuning on the current surface, checked by the overhead camera.
 
-  uv run scripts/tune_ground.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
-  uv run scripts/tune_ground.py --no-camera --out DIR        ESC telemetry only
+  uv run src/tools/tune_ground.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml --out DIR
+  uv run src/tools/tune_ground.py --no-camera --out DIR        ESC telemetry only
 
 MOTION: the robot drives short out-and-back moves (--axes) and ends near where it
 started. Robot on the floor, centred under the camera with tag 0 flat on top, battery on,

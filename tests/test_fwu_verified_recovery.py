@@ -46,9 +46,9 @@ with tempfile.TemporaryDirectory(prefix='verified-recovery-') as tmp:
     folder = pathlib.Path(tmp)
     (folder / 'test.c').write_text(code)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                    '-I', str(root / 'Common/Inc'), str(folder / 'test.c'),
-                    str(root / 'Common/Src/can_fwu_boot.c'),
-                    str(root / 'Common/Src/can_fwu_protocol.c'),
+                    '-I', str(root / 'src/shared/inc'), str(folder / 'test.c'),
+                    str(root / 'src/shared/src/can_fwu_boot.c'),
+                    str(root / 'src/shared/src/can_fwu_protocol.c'),
                     '-o', str(folder / 'test')], check=True)
     subprocess.run([str(folder / 'test')], check=True)
 print('PASS: lost VERIFY ACK times out and permits a fresh recovery session')

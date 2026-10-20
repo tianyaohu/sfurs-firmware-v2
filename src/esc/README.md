@@ -17,19 +17,19 @@ python3 motor_config/build_cli.py --motor NE --app-offset --output /tmp/esc-NE [
 ```
 
 Exactly one wheel macro per build. `--app-offset` links at `0x08004000`
-under the CAN bootloader (the only layout in use). `scripts/build_all.py`
+under the CAN bootloader (the only layout in use). `src/tools/build_all.py`
 builds all four plus the Nucleo images.
 
 ## What is ours vs generated
 
 Ours: `Src/drive_app.c`, `Inc/drive_app.h` (all application behaviour, see
-`docs/DRIVE.md`), the `USER CODE` sections of `Src/main.c`, the angle hook in
+`architecture/drive.md`), the `USER CODE` sections of `Src/main.c`, the angle hook in
 `FOC_CurrControllerM1` (`Src/mc_tasks_foc.c`), and parameter edits in
 `Inc/drive_parameters.h`, `Inc/pmsm_motor_parameters.h` and
 `SPEED_UNIT` in `Inc/mc_stm_types.h`. Everything else is MCSDK/CubeMX output.
 
 Regenerating from Workbench overwrites the parameter headers: re-apply the
-values listed in `docs/DRIVE.md` (speed PI, 6 A, `U_RPM`, Hall FIFO depth 6,
+values listed in `architecture/drive.md` (speed PI, 6 A, `U_RPM`, Hall FIFO depth 6,
 OV 18 V, default speed 0) and keep the `drive_app.c` link in
 `STM32CubeIDE/.project`.
 

@@ -102,10 +102,10 @@ class IkDriveTest(unittest.TestCase):
         (tmp / "test.c").write_text(HARNESS)
         cls.exe = tmp / "test"
         subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                        "-I", str(ROOT / "CM7/Core/Inc"), "-I", str(ROOT / "Common/Inc"),
-                        "-I", str(ROOT / "HW/common/CAN"),
-                        str(tmp / "test.c"), str(ROOT / "CM7/Core/Src/ik_drive.c"),
-                        str(ROOT / "Common/Src/rover_kinematics.c"),
+                        "-I", str(ROOT / "src/nucleo/CM7/Core/Inc"), "-I", str(ROOT / "src/shared/inc"),
+                        "-I", str(ROOT / "src/shared/can"),
+                        str(tmp / "test.c"), str(ROOT / "src/nucleo/CM7/Core/Src/ik_drive.c"),
+                        str(ROOT / "src/shared/src/rover_kinematics.c"),
                         "-lm", "-o", str(cls.exe)], check=True)
 
     @classmethod

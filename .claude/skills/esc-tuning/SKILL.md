@@ -8,9 +8,9 @@ description: Tune, install and diagnose the B-G431B-ESC1 wheel motor controllers
 Four B-G431B-ESC1 (MCSDK FOC, Hall sensors, 8 pole pairs) on one CAN bus,
 driven through the Nucleo drive image. Everything here goes over CAN from
 the Nucleo's USB; no ESC USB is needed once an ESC runs the current app.
-Read `docs/HARDWARE.md` and the Hardware section of `AGENTS.md` first.
+Read `system-info/hardware.md` and the Hardware section of `AGENTS.md` first.
 
-Tools (all in `scripts/`, Nucleo must run the drive image, one tool at a time):
+Tools (all in `src/tools/`, Nucleo must run the drive image, one tool at a time):
 
 | Command | What it does | Moves? |
 |---|---|---|
@@ -47,7 +47,7 @@ Wheels: FR=NE (sel 1), BR=SE (2), BL=SW (4), FL=NW (8).
 
 Tune the inner loop before the one wrapped around it. A speed loop tuned
 over a bad current loop or a wrong commutation angle hides the real fault
-(flipping gain signs once masked a 180° Hall error — see `docs/LESSONS.md`).
+(flipping gain signs once masked a 180° Hall error — see `docs/lessons.md`).
 
 ### 0. Firmware and state
 
@@ -64,7 +64,7 @@ that can't take the boot request: `--battery-off` with that ESC's USB.
 `esc_tool.py align all` (battery on, wheels raised). Expect `ok` and
 similar shifts on all four (this robot: −59…−64°). `REVERSED` = Hall order
 vs phase order wrong (wiring), `NO_EDGES` = rotor stuck or Halls dead.
-Shifts are RAM-only until baked: record them in `docs/HARDWARE.md` and
+Shifts are RAM-only until baked: record them in `system-info/hardware.md` and
 build with `--shift`.
 
 ### 2. Current loop
@@ -80,7 +80,7 @@ Read it like this:
   repeated captures, not one number.
 - **Disturbed samples later**: isolated false readings the loop reacts to.
   ~4 per capture is the known baseline here (phase U only; open lead in
-  `docs/DRIVE.md`). To attribute a spike to a phase, use the capture's fixed
+  `architecture/drive.md`). To attribute a spike to a phase, use the capture's fixed
   angle 0: Iα = Id, Iβ = Iq, and MCSDK's Clarke gives ΔIq = −ΔId/√3 when
   only Ia is wrong. Judge a fix by counting spikes over several captures per
   wheel before and after (one capture proves nothing; counts vary 1–10).
@@ -90,7 +90,7 @@ Read it like this:
 
 Try gains live: `esc_tool.py set all current_kp N`, `... current_ki N`,
 capture again, compare. Bake good values in `PID_TORQUE_*`/`PID_FLUX_*`
-(`HW/B-G431B-ESC1/motor_config/Inc/drive_parameters.h`). RAM values are
+(`src/esc/motor_config/Inc/drive_parameters.h`). RAM values are
 lost on ESC reset, which is also how you undo an experiment.
 
 ### 3. Speed loop — in the air, then on the ground
@@ -98,7 +98,7 @@ lost on ESC reset, which is also how you undo an experiment.
 `esc_tool.py spin <W> --rpm 60 --seconds 3 [--kp N --ki N] --log s.jsonl`,
 then 30, 120 and −60 RPM. Gains are in counts (544/A) per RPM:
 Kp/256 counts per RPM of error, Ki/16384 counts per RPM per ms.
-Always translate to amps before judging (`docs/LESSONS.md`).
+Always translate to amps before judging (`docs/lessons.md`).
 
 Signatures:
 - **Limit cycle**: rpm swinging ±300 at a 60 RPM command, Iq ref pinned
@@ -131,10 +131,10 @@ Bake into `PID_SPEED_*_DEFAULT` and `FRICTION_FF_*_DEFAULT`.
 ### 4. Bake and record
 
 1. Update the parameter headers (with a comment saying what was measured).
-2. `python3 tests/run_all.py`, `scripts/build_all.py --shift ...` (no warnings).
+2. `python3 tests/run_all.py`, `src/tools/build_all.py --shift ...` (no warnings).
 3. `esc_update.py <W> --can` for each wheel; check `status` shows the new
    CRCs and `(known)` shifts.
 4. Capture/spin once more to confirm the baked build behaves like RAM did.
 5. Evidence goes in the commit message (numbers, wheels, battery voltage);
-   docs describe the current state only; one line in `docs/LESSONS.md` for
+   docs describe the current state only; one line in `docs/lessons.md` for
    anything that should change what the next person does.

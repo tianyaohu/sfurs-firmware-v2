@@ -34,13 +34,13 @@ includes = ['Inc', 'Drivers/STM32G4xx_HAL_Driver/Inc',
             'Drivers/CMSIS/DSP/Include',
             'MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Inc',
             'MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/G4xx/Inc',
-            '../Inc', '../../common/CAN']
+            '../Inc', '../../shared/can']
 compile_flags = flags + ['-Ofast', '-g3', '-std=gnu11', '-ffunction-sections',
                          '-fdata-sections', '-Wall', '-DDEBUG', '-DARM_MATH_CM4',
                          '-DUSE_HAL_DRIVER', '-DSTM32G431xx', '-DMOTOR_' + args.motor]
 compile_flags += ['-I' + str(root / folder) for folder in includes]
 if args.app_offset:
-    compile_flags += ['-DESC_BOOT_OFFSET_APP', '-I' + str(root.parent / 'bootloader')]
+    compile_flags += ['-DESC_BOOT_OFFSET_APP', '-I' + str(root.parents[1] / 'shared/inc')]
 if args.hall_shift is not None:
     compile_flags += [f'-DHALL_PHASE_SHIFT_OVERRIDE={args.hall_shift}']
 sources = []

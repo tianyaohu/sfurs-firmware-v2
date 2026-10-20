@@ -121,8 +121,8 @@ def capture(link, name, selector, args):
 
 def firmware_defaults():
     """RAM-tunable values the ESC boots with, from drive_parameters.h."""
-    text = (pathlib.Path(__file__).resolve().parents[1] /
-            "HW/B-G431B-ESC1/motor_config/Inc/drive_parameters.h").read_text()
+    text = (pathlib.Path(__file__).resolve().parents[2] /
+            "src/esc/motor_config/Inc/drive_parameters.h").read_text()
     get = lambda name: int(re.search(rf"#define {name}\s+(\d+)", text)[1])
     return dict(kp=get("PID_SPEED_KP_DEFAULT"), ki=get("PID_SPEED_KI_DEFAULT"),
                 ff_static_ma=get("FRICTION_FF_STATIC_MA_DEFAULT"),

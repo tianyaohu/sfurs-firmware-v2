@@ -4,7 +4,7 @@
 # dependencies = ["opencv-contrib-python>=4.10,<5", "numpy>=1.26", "PyYAML>=6"]
 # ///
 """tag_stream still-window selection and per-move metrics on synthetic poses.
-Run: uv run scripts/rig/test_tag_stream.py -v"""
+Run: uv run src/tools/rig/test_tag_stream.py -v"""
 import math
 import unittest
 

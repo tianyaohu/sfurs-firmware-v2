@@ -5,7 +5,7 @@
 # ///
 """Align vision/ESC logs, measure tracking and slip, fit per-wheel Twente friction.
 
-  uv run scripts/rig/rig_analyze.py --rig rig.jsonl --esc pulse.jsonl \
+  uv run src/tools/rig/rig_analyze.py --rig rig.jsonl --esc pulse.jsonl \
       --telemetry-origin-t 12345.0 --estimate-latency --out /tmp/analysis
 
 Positive latency means vision arrives late: compare vision(t) to ESC(t-latency).
@@ -22,13 +22,13 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ik_link import COUNTS_PER_AMP, WHEELS
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 NAMES = [w[0] for w in WHEELS]
 
 
 def geometry_matrix():
     # ik_link defines wire order; the actual geometry lives in the firmware.
-    source = (ROOT / "Common/Src/rover_kinematics.c").read_text()
+    source = (ROOT / "src/shared/src/rover_kinematics.c").read_text()
     table = source.split("rover_ik_provisional", 1)[1].split("};", 1)[0]
     rows = re.findall(r"\{\s*([-+\d.].*?)\}", table)
     geometry = [[float(v.strip().removesuffix("f")) for v in row.split(",")[:7]] for row in rows]
@@ -305,7 +305,7 @@ def analyze(rig, esc, args):
                    for r in rig) / len(rig), latency_s=latency, telemetry_origin_t=args.telemetry_origin_t,
                    alignment=alignment, effort_field=args.effort,
                    model="u_A = a_A*sin(theta) + b_A*sign(sin(theta)) + d_A_per_RPM*w_ref_RPM",
-                   geometry_source="Common/Src/rover_kinematics.c: rover_ik_provisional",
+                   geometry_source="src/shared/src/rover_kinematics.c: rover_ik_provisional",
                    tracking_rmse=dict(zip(("vx_mmps", "vy_mmps", "omega_radps"),
                                       np.sqrt(np.mean(error ** 2, axis=0)).tolist())),
                    wheel_slip_rms_rpm=dict(zip(NAMES, np.sqrt(np.mean(data["slip"] ** 2, axis=0)).tolist())),

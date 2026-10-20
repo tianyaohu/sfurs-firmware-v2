@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["opencv-contrib-python>=4.10,<5", "numpy>=1.26", "matplotlib>=3.8", "PyYAML>=6", "reportlab>=4"]
 # ///
-"""Offline integration/regression tests. Run: uv run scripts/rig/test_rig.py -v"""
+"""Offline integration/regression tests. Run: uv run src/tools/rig/test_rig.py -v"""
 import json
 import contextlib
 import io

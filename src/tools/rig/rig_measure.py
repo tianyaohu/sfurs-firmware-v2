@@ -11,8 +11,8 @@ r is recorded and a drive summary is printed on quit: distance, sideways drift f
 line, heading change, and pass/fail against --target-mm. With --known-mm, press m after each
 move to record an accuracy trial; quitting prints errors per direction.
 
-  uv run scripts/rig/rig_measure.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml
-  uv run scripts/rig/rig_measure.py --calibration ... --log /tmp/drive.jsonl --target-mm 500
+  uv run src/tools/rig/rig_measure.py --calibration ~/sfurs_firmware/rig-calib/camera.yaml
+  uv run src/tools/rig/rig_measure.py --calibration ... --log /tmp/drive.jsonl --target-mm 500
 """
 import argparse
 import json

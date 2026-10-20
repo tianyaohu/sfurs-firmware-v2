@@ -104,11 +104,11 @@ class FwuUpdaterTest(unittest.TestCase):
         (tmp / "t.c").write_text(HARNESS)
         cls.exe = tmp / "t"
         subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                        "-I", str(ROOT / "Common/Inc"), "-I", str(ROOT / "CM7/Core/Inc"),
-                        str(tmp / "t.c"), str(ROOT / "CM7/Core/Src/fwu_updater.c"),
-                        str(ROOT / "CM7/Core/Src/can_fwu_host.c"),
-                        str(ROOT / "Common/Src/can_fwu_boot.c"),
-                        str(ROOT / "Common/Src/can_fwu_protocol.c"), "-o", str(cls.exe)], check=True)
+                        "-I", str(ROOT / "src/shared/inc"), "-I", str(ROOT / "src/nucleo/CM7/Core/Inc"),
+                        str(tmp / "t.c"), str(ROOT / "src/nucleo/CM7/Core/Src/fwu_updater.c"),
+                        str(ROOT / "src/nucleo/CM7/Core/Src/can_fwu_host.c"),
+                        str(ROOT / "src/shared/src/can_fwu_boot.c"),
+                        str(ROOT / "src/shared/src/can_fwu_protocol.c"), "-o", str(cls.exe)], check=True)
 
     @classmethod
     def tearDownClass(cls):

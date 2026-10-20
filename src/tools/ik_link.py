@@ -9,8 +9,8 @@ import re
 import shutil
 import subprocess
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT_ELF = ROOT / "build/drive/sfurs_firmware_v2_CM7.elf"  # scripts/build_all.py
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+DEFAULT_ELF = ROOT / "build/drive/sfurs_firmware_v2_CM7.elf"  # src/tools/build_all.py
 DEFAULT_SN = "002200364142500620353451"
 TARGET = "stm32h755zitx"
 ABI = 0x494B0004

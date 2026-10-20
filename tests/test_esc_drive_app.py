@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-ESC = ROOT / "HW/B-G431B-ESC1"
+ESC = ROOT / "src/esc"
 
 STUBS = {
 "mc_api.h": r'''
@@ -623,7 +623,7 @@ class EscDriveAppTest(unittest.TestCase):
         subprocess.run(["gcc", "-std=gnu11", "-Wall", "-Werror", "-O1", "-DMOTOR_NE",
                         "-include", str(tmp / "test_hooks.h"), "-DDRIVE_APP_VALIDITY=fake_validity",
                         "-I", str(tmp), "-I", str(ESC / "motor_config/Inc"),
-                        "-I", str(ESC / "Inc"), "-I", str(ROOT / "HW/common/CAN"),
+                        "-I", str(ESC / "Inc"), "-I", str(ROOT / "src/shared/can"),
                         str(tmp / "harness.c"), str(ESC / "motor_config/Src/drive_app.c"),
                         "-lm", "-o", str(cls.exe)], check=True)
 

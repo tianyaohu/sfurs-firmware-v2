@@ -1,9 +1,9 @@
 # B-G431B-ESC1 CAN bootloader
 
 Installed once over SWD at `0x08000000`; every application update then
-arrives over CAN from the Nucleo (`docs/CAN_FWU.md`, `scripts/esc_update.py`).
-Protocol sources are vendored from `Common/` (`can_fwu_protocol.*`,
-`can_fwu_boot.*`); re-vendor after protocol changes.
+arrives over CAN from the Nucleo (`architecture/can-fwu.md`, `src/tools/esc_update.py`).
+The protocol sources are shared with the Nucleo: `src/shared/src/can_fwu_*.c` and
+`src/shared/inc/` are compiled in directly, so there are no copies to re-sync.
 
 ## Layout
 
@@ -31,8 +31,8 @@ The app never touches `VTOR`, so the
 ## Build (no hardware needed)
 
 ```sh
-python3 HW/B-G431B-ESC1/bootloader/build_boot.py --motor NE --output /tmp/boot
-cd HW/B-G431B-ESC1/motor_config
+python3 src/esc/bootloader/build_boot.py --motor NE --output /tmp/boot
+cd src/esc/motor_config
 python3 build_cli.py --motor NE --app-offset --output /tmp/app
 ```
 
@@ -75,10 +75,10 @@ of firmware-update wire/ACK versions. No change to `system_stm32g4xx.c` needed.
 ## Host regression tests
 
 ```sh
-python3 HW/B-G431B-ESC1/bootloader/tests/run_tests.py
+python3 src/esc/bootloader/tests/run_tests.py
 ```
 
-Runs C helpers and the real vendored session with ASan/UBSan. Covers oversized
+Runs C helpers and the real shared session with ASan/UBSan. Covers oversized
 HAL-copy buffers/session rejection, strict header checks, duplicate metadata
 zero-erase/zero-program behaviour, changed-image rejection, interrupted commit
 recovery, erase failure, exact device command selection and one-shot mailbox
@@ -102,7 +102,7 @@ $CLI -c port=SWD sn=<esc-probe> -w /tmp/app/motor_NE_drive_offset.elf -v -rst
 ```
 
 Expect: red LED blinks 2 Hz for 3 s, then stays in boot (no validity
-metadata yet); run `scripts/esc_update.py` to commit the app. If the LED blinks forever, the app image
+metadata yet); run `src/tools/esc_update.py` to commit the app. If the LED blinks forever, the app image
 is missing/invalid — perform a verified CAN update; SWD programming the app
 alone does not create validity metadata. The bootloader is intact.
 

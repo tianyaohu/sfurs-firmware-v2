@@ -6,7 +6,7 @@
   build/updater/<W>/sfurs_firmware_v2_CM7.elf      Nucleo ESC-updater image
   build/drive/sfurs_firmware_v2_CM7.elf            Nucleo drive image
 
-Usage: scripts/build_all.py [--wheels NE SE SW NW] [--shift NE=-60 ...] [--drive-only]
+Usage: src/tools/build_all.py [--wheels NE SE SW NW] [--shift NE=-60 ...] [--drive-only]
 --shift bakes a Hall phase shift measured with `esc_tool.py align`.
 """
 import argparse
@@ -18,7 +18,7 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "build"
 WHEELS = ("NE", "SE", "SW", "NW")
 FALLBACK_TOOLCHAIN = "/tmp/opencode/cm7-toolchain/root/usr/bin"
@@ -30,8 +30,8 @@ def run(*cmd):
 
 
 def cmake(build_dir, *defines):
-    run("cmake", "-S", ROOT / "CM7", "-B", build_dir, "-G", "Ninja",
-        f"-DCMAKE_TOOLCHAIN_FILE={ROOT / 'gcc-arm-none-eabi.cmake'}",
+    run("cmake", "-S", ROOT / "src/nucleo/CM7", "-B", build_dir, "-G", "Ninja",
+        f"-DCMAKE_TOOLCHAIN_FILE={ROOT / 'src/nucleo/gcc-arm-none-eabi.cmake'}",
         "-DCMAKE_BUILD_TYPE=Debug", *defines)
     run("cmake", "--build", build_dir)
 
@@ -52,10 +52,10 @@ def main():
         for w in args.wheels:
             esc = OUT / "esc" / w
             extra = ["--hall-shift", shifts[w]] if w in shifts else []
-            run(sys.executable, ROOT / "HW/B-G431B-ESC1/motor_config/build_cli.py",
+            run(sys.executable, ROOT / "src/esc/motor_config/build_cli.py",
                 "--motor", w, "--app-offset", "--output", esc, *extra)
             binary = esc / f"motor_{w}_drive_offset.bin"
-            run(sys.executable, ROOT / "scripts/fwu_image.py", "--bin", binary,
+            run(sys.executable, ROOT / "src/tools/fwu_image.py", "--bin", binary,
                 "--output", esc / "fwu_payload.c")
             cmake(OUT / "updater" / w, f"-DFWU_IMAGE_FILE={esc / 'fwu_payload.c'}")
             artifacts += [binary, OUT / "updater" / w / "sfurs_firmware_v2_CM7.elf"]

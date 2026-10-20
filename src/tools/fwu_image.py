@@ -4,11 +4,11 @@
 Reads a motor application linked at 0x08004000 either as an offset ELF
 (``--elf``, converted with ``arm-none-eabi-objcopy``) or as a raw binary
 (``--bin``), validates it against the same contract the bootloader enforces,
-and writes ``CM7/Core/Src/fwu_test_image.c`` with matching size/CRC values
-per ``CM7/Core/Inc/fwu_test_image.h``.
+and writes ``src/nucleo/CM7/Core/Src/fwu_test_image.c`` with matching size/CRC values
+per ``src/nucleo/CM7/Core/Inc/fwu_test_image.h``.
 
-Validation mirrors ``can_fwu_vectors_valid`` (``Common/Inc/can_fwu_validity.h``)
-and the ENTER size gate (``Common/Src/can_fwu_boot.c``):
+Validation mirrors ``can_fwu_vectors_valid`` (``src/shared/inc/can_fwu_validity.h``)
+and the ENTER size gate (``src/shared/src/can_fwu_boot.c``):
 
 * 8 bytes <= image size <= CAN_FWU_APP_MAX (110 KiB app slot)
 * entry stack pointer in SRAM: 0x20000000 < SP <= ESC_BOOT_MAILBOX_ADDR,
@@ -18,8 +18,8 @@ and the ENTER size gate (``Common/Src/can_fwu_boot.c``):
   ``can_fwu_crc32("123456789") == 0xCBF43926`` is the shared test vector.
 
 Usage:
-  scripts/fwu_image.py --elf motor_app.elf [--output CM7/Core/Src/fwu_test_image.c]
-  scripts/fwu_image.py --bin motor_app.bin --output /tmp/fwu_test_image.c
+  src/tools/fwu_image.py --elf motor_app.elf [--output src/nucleo/CM7/Core/Src/fwu_test_image.c]
+  src/tools/fwu_image.py --bin motor_app.bin --output /tmp/fwu_test_image.c
 """
 import argparse
 import pathlib
@@ -32,7 +32,7 @@ import zlib
 
 
 def _repo_root():
-    return pathlib.Path(__file__).resolve().parents[1]
+    return pathlib.Path(__file__).resolve().parents[2]
 
 
 def _define_int(path, name, default):
@@ -53,7 +53,7 @@ def _define_int(path, name, default):
 
 def load_layout(root):
     """Read slot limits from the canonical headers (fall back to docs)."""
-    common = root / 'Common' / 'Inc'
+    common = root / 'src' / 'shared' / 'inc'
     return {
         'app_max': _define_int(common / 'can_fwu_protocol.h',
                                'CAN_FWU_APP_MAX', 110 * 1024),
@@ -115,7 +115,7 @@ def elf_to_bin(elf, objcopy, objdump, layout):
 
 
 def render_c(data, crc, source_name):
-    lines = [f'/* Generated from {source_name} by scripts/fwu_image.py. Do not edit. */',
+    lines = [f'/* Generated from {source_name} by src/tools/fwu_image.py. Do not edit. */',
              '#include "fwu_test_image.h"',
              f'const uint32_t fwu_test_image_size = {len(data)}U;',
              f'const uint32_t fwu_test_image_crc = 0x{crc:08X}U;',
@@ -135,7 +135,7 @@ def main(argv=None):
     group.add_argument('--bin', type=pathlib.Path,
                        help='raw app binary starting at the vector table')
     parser.add_argument('--output', type=pathlib.Path,
-                        help='generated C file (default: CM7/Core/Src/fwu_test_image.c)')
+                        help='generated C file (default: src/nucleo/CM7/Core/Src/fwu_test_image.c)')
     parser.add_argument('--objcopy', default='arm-none-eabi-objcopy')
     parser.add_argument('--objdump', default='arm-none-eabi-objdump')
     args = parser.parse_args(argv)
@@ -151,7 +151,7 @@ def main(argv=None):
     validate_vectors(data, layout)
     crc = zlib.crc32(data) & 0xFFFFFFFF
     output = args.output.resolve() if args.output else \
-        root / 'CM7' / 'Core' / 'Src' / 'fwu_test_image.c'
+        root / 'src' / 'nucleo' / 'CM7' / 'Core' / 'Src' / 'fwu_test_image.c'
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(render_c(data, crc, source_name))
     print(f'FWU image: {len(data)} bytes, CRC32={crc:08X} -> {output}')

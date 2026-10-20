@@ -576,12 +576,12 @@ with tempfile.TemporaryDirectory(prefix='can-fwu-tests-') as tmp:
     tmp = pathlib.Path(tmp)
     (tmp / 'test.c').write_text(harness)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                    '-I', str(root / 'Common/Inc'),
-                    '-I', str(root / 'CM7/Core/Inc'),
+                    '-I', str(root / 'src/shared/inc'),
+                    '-I', str(root / 'src/nucleo/CM7/Core/Inc'),
                     str(tmp / 'test.c'),
-                    str(root / 'Common/Src/can_fwu_protocol.c'),
-                    str(root / 'Common/Src/can_fwu_boot.c'),
-                    str(root / 'CM7/Core/Src/can_fwu_host.c'),
+                    str(root / 'src/shared/src/can_fwu_protocol.c'),
+                    str(root / 'src/shared/src/can_fwu_boot.c'),
+                    str(root / 'src/nucleo/CM7/Core/Src/can_fwu_host.c'),
                     '-o', str(tmp / 'test')], check=True)
     for case in range(12):
         subprocess.run([str(tmp / 'test'), str(case)], check=True)

@@ -16,10 +16,9 @@ TOOLCHAIN = "/tmp/opencode/cm7-toolchain/root/usr/bin"
 if not shutil.which("arm-none-eabi-gcc") and os.path.isdir(TOOLCHAIN):
     os.environ["PATH"] = TOOLCHAIN + os.pathsep + os.environ["PATH"]
 GTEST_SUITES = [
-    "HW/STM32H7/CM7/optical_flow/tests",
-    "HW/STM32H7/CM7/IMU/tests",
-    "HW/STM32H7/CM7/wheel_encoder/tests",
-    "rs_platform/rs_i2t/tests",
+    "src/sensors/stm32h7/CM7/optical_flow/tests",
+    "src/sensors/stm32h7/CM7/IMU/tests",
+    "src/sensors/stm32h7/CM7/wheel_encoder/tests",
 ]
 
 
@@ -37,8 +36,8 @@ def gtest_suite(rel):
 
 suites = [(test.relative_to(ROOT), python_suite(test))
           for test in sorted((ROOT / "tests").glob("test_*.py"))]
-suites.append((pathlib.Path("HW/B-G431B-ESC1/bootloader/tests/run_tests.py"),
-               python_suite(ROOT / "HW/B-G431B-ESC1/bootloader/tests/run_tests.py")))
+suites.append((pathlib.Path("src/esc/bootloader/tests/run_tests.py"),
+               python_suite(ROOT / "src/esc/bootloader/tests/run_tests.py")))
 suites += [(pathlib.Path(rel), gtest_suite(rel)) for rel in GTEST_SUITES]
 failed = []
 for name, commands in suites:

@@ -5,7 +5,7 @@ import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src/tools"))
 import esc_tool  # noqa: E402
 
 WHEELS = [name for name, _esc, _sel in esc_tool.ik_link.WHEELS]

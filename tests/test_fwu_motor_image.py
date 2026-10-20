@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Host-test the motor app image generator (scripts/fwu_image.py).
+"""Host-test the motor app image generator (src/tools/fwu_image.py).
 
 No hardware, no ARM toolchain required (the --elf path self-skips without
 objcopy). Covers: oversized image rejected, bad entry SP rejected, CRC
-round-trip against Common/Src/can_fwu_protocol.c, generated C parses back
+round-trip against src/shared/src/can_fwu_protocol.c, generated C parses back
 to identical bytes/size/CRC, and vector agreement with can_fwu_vectors_valid.
 """
 import pathlib
@@ -15,7 +15,7 @@ import tempfile
 import zlib
 
 root = pathlib.Path(__file__).resolve().parents[1]
-gen = root / 'scripts' / 'fwu_image.py'
+gen = root / 'src' / 'tools' / 'fwu_image.py'
 
 APP_MAX = 110 * 1024
 APP_BASE = 0x08004000
@@ -35,7 +35,7 @@ def run_gen(args):
 
 def parse_c(text):
     """Extract (size, crc, bytes) from generated C; must mirror the header."""
-    header = (root / 'CM7' / 'Core' / 'Inc' / 'fwu_test_image.h').read_text()
+    header = (root / 'src' / 'nucleo' / 'CM7' / 'Core' / 'Inc' / 'fwu_test_image.h').read_text()
     for sym in ('fwu_test_image_size', 'fwu_test_image_crc', 'fwu_test_image'):
         assert sym in header, f'header missing {sym}'
     assert '#include "fwu_test_image.h"' in text
@@ -120,9 +120,9 @@ int main(int argc, char **argv) {
     (tmp / 'crc.c').write_text(harness)
     exe = tmp / 'crc'
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                    '-I', str(root / 'Common/Inc'),
+                    '-I', str(root / 'src/shared/inc'),
                     str(tmp / 'crc.c'),
-                    str(root / 'Common/Src/can_fwu_protocol.c'),
+                    str(root / 'src/shared/src/can_fwu_protocol.c'),
                     '-o', str(exe)], check=True)
     out = subprocess.run([str(exe)], input=blobs['vector'],
                          capture_output=True, check=True).stdout.decode()

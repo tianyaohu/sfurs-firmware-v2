@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix='fwu-validity-') as tmp:
     folder = pathlib.Path(tmp)
     (folder / 'test.c').write_text(source)
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                    '-I', str(root / 'Common/Inc'), str(folder / 'test.c'),
+                    '-I', str(root / 'src/shared/inc'), str(folder / 'test.c'),
                     '-o', str(folder / 'test')], check=True)
     subprocess.run([str(folder / 'test')], check=True)
 print('PASS: validity magic/CRC/vector bounds and interrupted-commit rejection')

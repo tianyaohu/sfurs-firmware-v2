@@ -7,12 +7,12 @@ import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src/tools"))
 import esc_tool  # noqa: E402
 import move_test  # noqa: E402
 import ik_link  # noqa: E402
 
-HEADER = (ROOT / "HW/common/CAN/can_datatypes.h").read_text()
+HEADER = (ROOT / "src/shared/can/can_datatypes.h").read_text()
 
 
 def c_value(name):

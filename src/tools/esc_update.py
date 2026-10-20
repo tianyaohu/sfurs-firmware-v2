@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install the built ESC application on ONE wheel over CAN (bootloader kept).
 
-  scripts/esc_update.py NE --can              no ESC USB; battery ON allowed
-  scripts/esc_update.py NE --battery-off      ESC ST-LINK attached, battery OFF
+  src/tools/esc_update.py NE --can              no ESC USB; battery ON allowed
+  src/tools/esc_update.py NE --battery-off      ESC ST-LINK attached, battery OFF
 
 --can needs only the Nucleo USB. Through the drive image it checks that all
 four ESCs answer, are IDLE (no fault) and report Vbus; then the updater image
@@ -40,7 +40,7 @@ import sys
 import time
 import zlib
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
 BACKUPS = pathlib.Path("/home/fh/sfurs_firmware/esc-backups")
 CLI = pathlib.Path.home() / "STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI"
@@ -189,7 +189,7 @@ def check_bus(rows, names, skip=None):
 
 
 def can_install(args, w, selector, app, crc, app_elf, updater, drive, out, session, save):
-    sys.path.insert(0, str(ROOT / "scripts"))
+    sys.path.insert(0, str(ROOT / "src/tools"))
     import ik_link
     index = [sel for _n, _e, sel in ik_link.WHEELS].index(selector)
     names = [name for name, _e, _s in ik_link.WHEELS]

@@ -10,9 +10,9 @@ with tempfile.TemporaryDirectory(prefix='esc-boot-helpers-') as tmp:
     exe = pathlib.Path(tmp) / 'test'
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g',
                     '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
-                    '-I', str(root / 'Common/Inc'),
+                    '-I', str(root / 'src/shared/inc'),
                     str(root / 'tests/esc_boot_helpers.c'),
-                    str(root / 'Common/Src/can_fwu_protocol.c'),
-                    str(root / 'Common/Src/can_fwu_boot.c'), '-o', str(exe)], check=True)
+                    str(root / 'src/shared/src/can_fwu_protocol.c'),
+                    str(root / 'src/shared/src/can_fwu_boot.c'), '-o', str(exe)], check=True)
     env = dict(os.environ, ASAN_OPTIONS='detect_leaks=0')
     subprocess.run([str(exe)], check=True, env=env)

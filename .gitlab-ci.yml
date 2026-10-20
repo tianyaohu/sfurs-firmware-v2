@@ -33,7 +33,7 @@ dev-image:
     - docker build -f docker/Dockerfile -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
     # Validate inside the image before publishing: host tests + all images.
     - docker run --rm -v "$CI_PROJECT_DIR:/work/sfurs_firmware_v2" -w /work/sfurs_firmware_v2 "$IMAGE:$CI_COMMIT_SHORT_SHA" bash -c "
-        python3 tests/run_all.py && python3 scripts/build_all.py && doxygen Doxyfile"
+        python3 tests/run_all.py && python3 src/tools/build_all.py && doxygen Doxyfile"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
     - |
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then

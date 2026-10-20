@@ -19,7 +19,7 @@ build.ninja
 *.hex
 *.axf
 
-# Per-wheel generated FWU payload; regenerate with scripts/fwu_image.py.
+# Per-wheel generated FWU payload; regenerate with src/tools/fwu_image.py.
 /CM7/Core/Src/fwu_test_image.c
 
 # CubeMX cache (source of truth is *.ioc)

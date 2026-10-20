@@ -1,6 +1,6 @@
 # Keep the build context tiny (the repo itself is mounted, not copied).
-CM7/build/
-CM4/build/
+src/nucleo/CM7/build/
+src/nucleo/CM4/build/
 build/
 __pycache__/
 .pytest_cache/

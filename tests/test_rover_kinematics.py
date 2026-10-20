@@ -151,8 +151,8 @@ if __name__ == '__main__':
     with tempfile.TemporaryDirectory(prefix='omni-ik-math-') as tmp:
         library = pathlib.Path(tmp) / 'ik.so'
         subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
-                        '-shared', '-fPIC', '-I', str(ROOT / 'Common/Inc'),
-                        str(ROOT / 'Common/Src/rover_kinematics.c'), '-lm',
+                        '-shared', '-fPIC', '-I', str(ROOT / 'src/shared/inc'),
+                        str(ROOT / 'src/shared/src/rover_kinematics.c'), '-lm',
                         '-o', str(library)], check=True)
         IKTests.lib = ct.CDLL(str(library))
         IKTests.defaults = (Wheel * 4).in_dll(IKTests.lib, 'rover_ik_provisional')

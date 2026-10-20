@@ -2,7 +2,7 @@
 """Build the CAN bootloader for B-G431B-ESC1 without CubeIDE.
 
 Usage: python3 build_boot.py --motor NE --output /path/to/build
-Compiles boot_main.c + vendored can_fwu stack + G4 HAL subset + stock
+Compiles boot_main.c + the shared can_fwu stack (src/shared) + G4 HAL subset + stock
 startup file, linked at 0x08000000 (16K). Asserts the image fits.
 Does not flash hardware.
 """
@@ -20,6 +20,7 @@ parser.add_argument('--diagnostic', action='store_true',
 args = parser.parse_args()
 
 here = pathlib.Path(__file__).resolve().parent
+shared = here.parents[1] / 'shared'
 mc = here.parent / 'motor_config'
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -30,6 +31,7 @@ compile_flags = flags + ['-Os', '-g3', '-std=gnu11', '-ffunction-sections',
                          '-DUSE_HAL_DRIVER', '-DSTM32G431xx',
                          '-DMOTOR_' + args.motor,
                          '-I' + str(here),
+                         '-I' + str(shared / 'inc'),
                          '-I' + str(mc / 'Inc'),
                          '-I' + str(mc / 'Drivers/STM32G4xx_HAL_Driver/Inc'),
                          '-I' + str(mc / 'Drivers/STM32G4xx_HAL_Driver/Inc/Legacy'),
@@ -42,8 +44,8 @@ if args.diagnostic:
 hal = mc / 'Drivers/STM32G4xx_HAL_Driver/Src'
 sources = [here / 'boot_main.c',
            here / 'boot_it.c',
-           here / 'can_fwu_protocol.c',
-           here / 'can_fwu_boot.c',
+           shared / 'src/can_fwu_protocol.c',
+           shared / 'src/can_fwu_boot.c',
            mc / 'Src/system_stm32g4xx.c',
            mc / 'STM32CubeIDE/Application/Startup/startup_stm32g431cbux.s']
 for mod in ['stm32g4xx_hal.c', 'stm32g4xx_hal_cortex.c', 'stm32g4xx_hal_rcc.c',

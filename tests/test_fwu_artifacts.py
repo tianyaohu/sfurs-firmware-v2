@@ -1,19 +1,11 @@
 #!/usr/bin/env python3
-"""Build/validate the actual blink artifact; optionally audit the ESC vendor copy.
-
-Requires the ARM toolchain on PATH. Run --esc-root /path/to/firmware-v2-boot
-to make mismatched protocol copies a test failure instead of a bench surprise.
-"""
-import argparse
+"""Build and validate the actual blink artifact. Requires the ARM toolchain on PATH."""
 import pathlib
 import struct
 import subprocess
 import tempfile
 import zlib
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--esc-root', type=pathlib.Path)
-args = parser.parse_args()
 root = pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='fwu-artifact-') as tmp:
     out = pathlib.Path(tmp)
@@ -37,15 +29,4 @@ with tempfile.TemporaryDirectory(prefix='fwu-artifact-') as tmp:
                                          str(out / 'esc_blink.elf')], text=True)
     vector_row = next(line for line in sections.splitlines() if '.isr_vector' in line)
     assert vector_row.split()[3] == '08004000'
-if args.esc_root:
-    target = args.esc_root.resolve() / 'HW/B-G431B-ESC1/bootloader'
-    for subpath in ('Inc/can_fwu_protocol.h', 'Src/can_fwu_protocol.c',
-                    'Inc/can_fwu_boot.h', 'Src/can_fwu_boot.c',
-                    'Inc/can_fwu_validity.h', 'Inc/boot_entry.h',
-                    'Inc/boot_metadata.h', 'Inc/boot_rx.h'):
-        canonical = root / 'Common' / subpath
-        vendored = target / canonical.name
-        assert vendored.read_bytes() == canonical.read_bytes(), \
-            f'Protocol/layout drift: {canonical} != {vendored}'
-    print('PASS: ESC vendored protocol and validity files match canonical sources')
 print('PASS: real blink ELF vectors, image size/CRC, and generated embedding')

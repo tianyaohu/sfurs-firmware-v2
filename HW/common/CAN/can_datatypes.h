@@ -92,11 +92,15 @@ enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
 
 #define ESC_COUNTS_PER_AMP 544
 
-/* CURRENT_KP/KI set both the Iq and Id PI gains (dividers TF_KPDIV/TF_KIDIV). */
+/* CURRENT_KP/KI set both the Iq and Id PI gains (dividers TF_KPDIV/TF_KIDIV).
+ * FF_STATIC/KINETIC_MA: friction feed-forward added to the speed loop's Iq
+ * reference (0..IQMAX mA; see drive_app.h). */
 enum { ESC_CFG_SPEED_KP = 1, ESC_CFG_SPEED_KI = 2, ESC_CFG_HALL_SHIFT_DEG = 3,
-       ESC_CFG_IQ_MAX_MA = 4, ESC_CFG_CURRENT_KP = 5, ESC_CFG_CURRENT_KI = 6 };
+       ESC_CFG_IQ_MAX_MA = 4, ESC_CFG_CURRENT_KP = 5, ESC_CFG_CURRENT_KI = 6,
+       ESC_CFG_FF_STATIC_MA = 7, ESC_CFG_FF_KINETIC_MA = 8 };
 enum { ESC_STOP_NONE = 0, ESC_STOP_COMMAND = 1, ESC_STOP_TIMEOUT = 2,
-       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5 };
+       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5,
+       ESC_STOP_PARKED = 6 /* zero command at standstill; next non-zero restarts */ };
 #define ESC_FLAG_ACTIVE  0x10U /* streaming speed commands accepted */
 #define ESC_FLAG_DERATED 0x20U /* I2T limit reached, current derated */
 #define ESC_FLAG_ALIGN   0x40U /* forced-angle test running: Hall alignment or capture */

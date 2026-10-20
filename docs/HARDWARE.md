@@ -28,9 +28,10 @@ few characters; check the full serial before any write.
 
 ## Tools on the lab PC
 
-- ARM GCC 10.3: `/tmp/opencode/cm7-toolchain/root/usr/bin` (temporary
-  extraction; `scripts/build_all.py` adds it to PATH if present). Otherwise
-  install `gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build`.
+- ARM GCC 10.3 (Debian packages extracted without root) in
+  `~/.local/opt/arm-gcc`, with wrappers in `~/.local/bin` that add the newlib
+  headers; ninja from `pip install --user ninja`. On a fresh PC just install
+  `gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build`.
 - `~/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
 - pyOCD (`~/.local/bin`) and pyelftools for the Python tools.
 - ESC flash backups: `/home/fh/sfurs_firmware/esc-backups/` (outside git).
@@ -39,7 +40,13 @@ few characters; check the full serial before any write.
 
 ## Safety rules
 
-- **Battery OFF to flash an ESC**, ON only for alignment and motion.
+- **Flashing an ESC over SWD: battery OFF.** Over CAN (`esc_update.py --can`,
+  no ESC USB): battery ON is allowed when every ESC reports IDLE with no
+  fault, Vbus is measured, and the bootloader verifies the image CRC.
+- Battery state is measured: ESC Vbus over CAN (`esc_tool.py status`) or SWD;
+  < 8 V is off (USB alone ~4.6 V, the 3S pack ~12 V).
+- Power an ESC from the battery before USB: USB-first latches undervolt
+  (FAULT_OVER). `esc_tool.py stop` clears it.
 - Wheels off the ground for alignment and first runs after any firmware change.
 - One program per probe: close `keyboard_drive.py` / `esc_tool.py` before
   flashing or attaching another tool.

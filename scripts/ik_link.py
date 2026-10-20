@@ -18,7 +18,7 @@ WHEELS = (("FR", "NE", 1), ("BR", "SE", 2), ("BL", "SW", 4), ("FL", "NW", 8))
 STATES = {0: "STOPPED", 1: "DRIVING", 2: "STOPPING"}
 MC_STATES = {0: "IDLE", 4: "START", 6: "RUN", 8: "STOP", 10: "FAULT_NOW", 11: "FAULT_OVER",
              12: "WAIT_STOP", 16: "CHARGE_BOOT_CAP", 17: "OFFSET_CALIB"}
-STOP_REASONS = {0: "-", 1: "stop", 2: "timeout", 3: "fault", 4: "align", 5: "capture"}
+STOP_REASONS = {0: "-", 1: "stop", 2: "timeout", 3: "fault", 4: "align", 5: "capture", 6: "parked"}
 ALIGN_RESULTS = {0: "-", 1: "ok", 2: "REVERSED", 3: "NO_EDGES", 4: "aborted", 5: "running"}
 FAULT_BITS = {0x01: "duration", 0x02: "overvolt", 0x04: "undervolt", 0x08: "overtemp",
               0x10: "startup", 0x20: "speed_fdbk", 0x40: "overcurrent", 0x80: "sw_error"}
@@ -33,7 +33,8 @@ CAPTURE_STATUS = {0: "none", 1: "running", 2: "done", 3: "aborted", 4: "rejected
 CAPTURE_HEADER = ("frames", "source", "status", "vbus_centivolts", "samples")
 CAPTURE_CHANNELS = ("id", "iq", "vd", "vq", "id_ref", "angle")
 HALL_ALIGN_MAGIC = 0x4E4C4148
-CONFIG_KEYS = {"kp": 1, "ki": 2, "shift": 3, "iqmax_ma": 4, "current_kp": 5, "current_ki": 6}
+CONFIG_KEYS = {"kp": 1, "ki": 2, "shift": 3, "iqmax_ma": 4, "current_kp": 5, "current_ki": 6,
+               "ff_static_ma": 7, "ff_kinetic_ma": 8}
 
 SCALARS = ("abi", "vx_mmps", "vy_mmps", "omega_mradps", "enable", "heartbeat",
            "accel_rpmps", "raw_id", "raw_data", "raw_seq", "state", "raw_done",

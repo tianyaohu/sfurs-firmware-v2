@@ -239,6 +239,11 @@ int main(void)
     BootEntryPoll();
 #endif
     drive_app_poll(CanSend8);
+    /* Bus-off leaves CCCR.INIT set until software clears it; the controller
+     * then rejoins after 128 x 11 recessive bits (same as the Nucleo). The
+     * command watchdog has already stopped the motor by then. */
+    if ((hfdcan1.Instance->PSR & FDCAN_PSR_BO) && (hfdcan1.Instance->CCCR & FDCAN_CCCR_INIT))
+      CLEAR_BIT(hfdcan1.Instance->CCCR, FDCAN_CCCR_INIT);
   }
   /* USER CODE END 3 */
 }

@@ -20,6 +20,7 @@ Tools (all in `scripts/`, Nucleo must run the drive image, one tool at a time):
 | `esc_tool.py capture <W>` | 1 A → 3 A d-axis current step, 16 kHz, R/L/step metrics | clicks, no torque |
 | `esc_tool.py set <W\|all> KEY N` | RAM gain: `kp ki` (speed), `current_kp current_ki` | no |
 | `esc_tool.py spin <W> --rpm N` | one-wheel speed step, logged; optional `--kp --ki` | yes |
+| `esc_tool.py pulse [--kp --ki --ff-static --ff-kinetic]` | whole robot out and back on the ground, per-wheel breakaway time and spread | yes |
 | `esc_update.py <W> --can` | install `build/esc/<W>` over CAN, verify by IDENT CRC | no |
 | `build_all.py --shift NE=.. SE=.. SW=.. NW=..` | build ESC apps with baked shifts | — |
 
@@ -111,9 +112,21 @@ Signatures:
   the plant. Current defaults 1024/553 (4 counts/RPM, ~1.9 A/s at 30 RPM
   error) are a free-air choice and must be checked on the ground.
 
-Retune on the ground with the user driving slowly (`keyboard_drive.py
---speed 0.3`) and `esc_tool.py set all kp/ki` between runs; log with
-`--log`. Bake into `PID_SPEED_*_DEFAULT`.
+On the ground use `esc_tool.py pulse` (0.2 m/s, 1.5 s out and back, 3 reps,
+needs ~0.5 m clear and the user nearby): it sets the RAM values on all four
+wheels, restores the defaults after, and prints per-wheel time to 20 RPM and
+the spread. Judge with the log as well: `iq_ref_a` at breakaway (static
+friction, 2.2–3.2 A here), peak RPM / target (overshoot), cruise error.
+- **Static friction**: Iq ref ramps for hundreds of ms before any rotation,
+  then the wheel overshoots → friction, not gain. Raise `--ff-static` toward
+  the breakaway current instead of Ki; `--ff-kinetic` is what it takes to keep
+  rolling.
+- **Ground limit cycle**: all wheels at the 6 A limit, loud buzz, no motion
+  (Kp 4096 / Ki 2200 here). Back off Ki; a higher current limit only makes it
+  louder.
+- An obstacle at the mat edge looks like a stall — check the floor before
+  believing a slow rung.
+Bake into `PID_SPEED_*_DEFAULT` and `FRICTION_FF_*_DEFAULT`.
 
 ### 4. Bake and record
 

@@ -1,6 +1,6 @@
 # Master design log
 
-Append only; format in [README](README.md).
+Append only; format in design/README.md.
 
 ## 2026-10-16  Motion accuracy is the MVP goal  (who: Frank H + claude)
 - Decision: target 1 m command landing within ±10 cm in every direction;

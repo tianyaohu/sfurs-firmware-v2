@@ -1,6 +1,6 @@
-/*
- * motor_controller_can.h
- * Header for the CAN functionality of the motor controllers.
+/**
+ * @file motor_controller_can.h
+ * @brief Maps the MOTOR_NE/SE/SW/NW build macro to the CAN select bit MOTOR_CAN_ID.
  */
 
 #ifndef MOTOR_CONTROLLER_CAN_H
@@ -28,6 +28,8 @@
 #else
   #define MOTOR_CAN_ID 0U
 #endif
+/** @def MOTOR_CAN_ID
+ *  @brief This ESC's CAN select bit; 0 if no wheel macro is defined. */
 
 
 #endif

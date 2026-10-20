@@ -3,15 +3,23 @@
 #include "can_fwu_validity.h"
 #include <string.h>
 
+/** @file boot_metadata.h
+ *  @brief Commit of the validity record after a verified install. */
+
+/** @brief Metadata flash callbacks the port supplies. */
 struct esc_metadata_ops {
-  int (*erase)(void *ctx);
-  int (*program)(unsigned word, uint64_t value, void *ctx);
-  void *ctx;
+  int (*erase)(void *ctx); /**< erase the metadata page; 0 on success */
+  int (*program)(unsigned word, uint64_t value, void *ctx); /**< program a doubleword; 0 on success */
+  void *ctx;               /**< passed to every callback */
 };
 
-/* CRC and vectors are checked against live flash before any operation. A valid
+/**
+ * @brief Write the validity record for an installed image.
+ *
+ * CRC and vectors are checked against live flash before any operation. A valid
  * but different committed identity is NOT permission to erase it. Invalid or
- * interrupted metadata is erased before any doubleword can be programmed. */
+ * interrupted metadata is erased before any doubleword can be programmed.
+ * @return 1 if the record is (now) committed, 0 if refused or a callback failed */
 static inline int esc_metadata_commit(const struct can_fwu_validity *current,
     uint32_t size, uint32_t crc, uint32_t sp, uint32_t pc, uint32_t actual_crc,
     const struct esc_metadata_ops *ops)

@@ -37,7 +37,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* NUCLEO_DRIVE (CMake): 1 = streaming omni drive image, 0 = ESC updater
+/** NUCLEO_DRIVE (CMake): 1 = streaming omni drive image, 0 = ESC updater
  * image carrying one embedded ESC application (FWU_IMAGE_FILE). */
 #ifndef NUCLEO_DRIVE
 #define NUCLEO_DRIVE 0
@@ -71,10 +71,12 @@
 FDCAN_HandleTypeDef hfdcan1;
 
 /* USER CODE BEGIN PV */
-/* Debugger-visible image identity: 1 = drive, 2 = ESC updater. */
+/** Debugger-visible image identity: 1 = drive, 2 = ESC updater. */
 volatile const uint32_t nucleo_image_kind = NUCLEO_DRIVE ? 1U : 2U;
+/** CAN frames received, read over SWD. */
 volatile uint32_t can_rx_frame_count;
-volatile uint32_t can_bus_off_count; /* recoveries, read over SWD */
+/** CAN bus-off recoveries, read over SWD. */
+volatile uint32_t can_bus_off_count;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/

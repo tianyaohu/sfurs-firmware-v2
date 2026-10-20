@@ -7,19 +7,22 @@ INPUT                  = CM7/Core/Src \
                          Common \
                          HW/common/CAN \
                          HW/B-G431B-ESC1/Inc \
-                         HW/B-G431B-ESC1/bootloader \
+                         HW/B-G431B-ESC1/bootloader/boot_main.c \
                          HW/B-G431B-ESC1/motor_config/Src/drive_app.c \
                          HW/B-G431B-ESC1/motor_config/Inc/drive_app.h \
-                         docs/ARCHITECTURE.md
+                         docs
 FILE_PATTERNS          = *.c *.h *.md
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */stm32h7xx_* */syscalls.c */sysmem.c \
                          */system_stm32h7xx_* */startup_* \
-                         */fwu_test_image.*
+                         */fwu_test_image.* \
+                         docs/rig/* docs/test-results/* docs/design/* \
+                         docs/plans/* docs/reference/*
+EXCLUDE_SYMBOLS        = MX_* SystemClock_Config Error_Handler hfdcan1
 USE_MDFILE_AS_MAINPAGE = docs/ARCHITECTURE.md
 OPTIMIZE_OUTPUT_FOR_C  = YES
-EXTRACT_ALL            = YES
-EXTRACT_STATIC         = YES
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = NO
 JAVADOC_AUTOBRIEF      = YES
 SOURCE_BROWSER         = YES
 GENERATE_HTML          = YES
@@ -30,5 +33,5 @@ QUIET                  = YES
 WARNINGS               = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_IF_DOC_ERROR      = YES
-# Flip to YES once existing undocumented symbols are written up.
-WARN_AS_ERROR          = NO
+# Every public symbol in INPUT must be documented; CI fails otherwise.
+WARN_AS_ERROR          = YES

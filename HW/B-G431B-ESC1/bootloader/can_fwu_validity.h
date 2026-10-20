@@ -3,20 +3,31 @@
 #include "can_fwu_protocol.h"
 #include "boot_entry.h"
 
-#define FWU_APP_BASE 0x08004000U
-#define FWU_METADATA_BASE 0x0801F800U
-#define FWU_VALID_MAGIC 0x56414C49U
+/** @file can_fwu_validity.h
+ *  @brief Application validity record kept in the last flash page. */
 
-/* All fields are LE on STM32. Magic + complement is the LAST double-word
- * committed, after flash CRC and vectors validate. Erase metadata BEFORE
- * app erase; no magic means remain in boot even if vectors look plausible. */
+#define FWU_APP_BASE 0x08004000U      /**< application flash address */
+#define FWU_METADATA_BASE 0x0801F800U /**< validity record flash address */
+#define FWU_VALID_MAGIC 0x56414C49U   /**< "VALI" */
+
+/**
+ * @brief Validity record.
+ *
+ * All fields are LE on STM32. Magic + complement is the LAST double-word
+ * committed, after flash CRC and vectors validate. Erase metadata BEFORE app
+ * erase; no magic means remain in boot even if vectors look plausible.
+ */
 struct can_fwu_validity {
-  uint32_t magic, inverse_magic;
-  uint32_t size, crc;
-  uint32_t base, version;
-  uint32_t reserved[2];
+  uint32_t magic;         /**< ::FWU_VALID_MAGIC */
+  uint32_t inverse_magic; /**< complement of magic */
+  uint32_t size;          /**< application size, bytes */
+  uint32_t crc;           /**< application CRC-32 */
+  uint32_t base;          /**< load address */
+  uint32_t version;       /**< ::CAN_FWU_PROTO_VERSION */
+  uint32_t reserved[2];   /**< zero */
 };
 
+/** @brief Check the application's initial stack pointer, reset vector and size. @return nonzero if plausible */
 static inline int can_fwu_vectors_valid(uint32_t sp, uint32_t reset,
                                         uint32_t size)
 {
@@ -27,6 +38,7 @@ static inline int can_fwu_vectors_valid(uint32_t sp, uint32_t reset,
          pc - FWU_APP_BASE < size;
 }
 
+/** @brief Check a stored record against the live vectors and the CRC of flash. @return nonzero if the application may run */
 static inline int can_fwu_validity_valid(const struct can_fwu_validity *m,
                                          uint32_t sp, uint32_t reset,
                                          uint32_t actual_crc)

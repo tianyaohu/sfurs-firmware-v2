@@ -81,8 +81,8 @@ static uint32_t seen_speed, seen_stop, seen_align, seen_config, seen_capture, se
 /* FOC ISR <-> tick: the tick arms, the ISR records and disarms when full. */
 /* Shared by the current-loop capture and the speed-loop recorder. */
 static union {
-  int16_t cur[ESC_CAPTURE_SAMPLES][6];
-  int16_t rec[ESC_RECORD_SAMPLES][8];
+  int16_t cur[ESC_CAPTURE_SAMPLES][6]; /**< current-loop capture */
+  int16_t rec[ESC_RECORD_SAMPLES][8];  /**< speed-loop recording */
 } capture_mem;
 _Static_assert(sizeof(capture_mem.rec) == sizeof(capture_mem.cur), "recorder reuses capture RAM");
 #define capture_buf capture_mem.cur

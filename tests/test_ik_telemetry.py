@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real C telemetry decoder -> RAM row words -> real Python decode_row."""
 import pathlib
+import re
 import struct
 import subprocess
 import sys
@@ -122,8 +123,9 @@ class HostHelpersTest(unittest.TestCase):
         header = (ROOT / "CM7/Core/Inc/ik_telemetry.h").read_text()
         self.assertIn(f"#define IK_TELEMETRY_WORDS {len(ik_link.ROW_FIELDS)}U", header)
         body = header[header.index("struct ik_telemetry_wheel {"):header.index("};")]
-        order = [name.strip(" ;\n") for line in body.splitlines()[1:]
-                 for name in line.split(None, 1)[1].split(",")] if body else []
+        body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+        order = [name.strip(" ;\n") for line in body.splitlines()[1:] if line.strip()
+                 for name in line.split(None, 1)[1].split(",")]
         self.assertEqual(tuple(order), ik_link.ROW_FIELDS)
 
 

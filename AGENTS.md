@@ -19,9 +19,10 @@ are in `docs/DRIVE.md`, `docs/HARDWARE.md`, `docs/CAN_FWU.md`.
 
 - Docs describe the system **as it is now**. Edit the relevant doc in the
   same commit as the behaviour change; delete text that is no longer true.
-- Do not add session logs, handoff notes, run records, per-experiment docs,
-  RCA write-ups or "status" sections. Put test and hardware evidence briefly
-  in the commit message or PR description.
+- Do not add session logs, handoff notes, per-experiment docs, RCA write-ups
+  or "status" sections. Hardware test evidence goes in one short file per
+  session in `docs/test-results/` (template in its README), and briefly in
+  the commit message or PR description.
 - A hard-won fact that should change future behaviour gets one line in
   `docs/LESSONS.md`. Nothing else.
 - Code comments explain *why*, not what the next line does.

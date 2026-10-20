@@ -18,7 +18,7 @@ it from the keyboard over the Nucleo's ST-LINK.
 | `rs_platform/rs_i2t/` | I2T current-limit module with gtests; not used by any firmware yet |
 | `scripts/` | Build, ESC update, drive and setup tools (below) |
 | `tests/` | Host tests; `tests/run_all.py` runs them plus the module gtests |
-| `docs/` | [DRIVE](docs/DRIVE.md), [HARDWARE](docs/HARDWARE.md), [CAN_FWU](docs/CAN_FWU.md), [LESSONS](docs/LESSONS.md) |
+| `docs/` | [CONTEXT](docs/CONTEXT.md), [PRD](docs/PRD.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [DRIVE](docs/DRIVE.md), [HARDWARE](docs/HARDWARE.md), [CAN_FWU](docs/CAN_FWU.md), [OPEN_QUESTIONS](docs/OPEN_QUESTIONS.md), [LESSONS](docs/LESSONS.md), [test-results/](docs/test-results/) |
 | `sfurs_firmware_v2.ioc` | CubeMX source of truth for the Nucleo |
 
 ## Quick start

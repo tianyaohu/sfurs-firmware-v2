@@ -396,6 +396,11 @@ int main(int argc, char **argv) {
     r = 300; drive_speed_plausible(&r, 0); assert(r == 300);   /* stop command: untouched */
     HALL_M1.BufferFilled = 6;                                  /* FIFO full: average is trusted */
     r = 212; drive_speed_plausible(&r, 44); assert(r == 212);
+    HALL_M1.BufferFilled = 1;                                  /* edge timing is capped too */
+    drive_edge_speed = 1; drive_rev_enable = 0; fake_edge = 90;
+    assert(drive_speed_pi(&PIDSpeedHandle_M1, 44, 0) == 44 - 76); /* 90 -> 76 */
+    HALL_M1.BufferFilled = 6;
+    assert(drive_speed_pi(&PIDSpeedHandle_M1, 44, 0) == 44 - 90);          /* FIFO full: as measured */
   } else if (scenario == 14) { /* parking at zero command */
     drive_app.aligned = 1;
     speed_cmd(100, 100); tick(3); assert(state == RUN); speed = 100;

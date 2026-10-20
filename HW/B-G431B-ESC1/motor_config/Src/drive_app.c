@@ -232,6 +232,7 @@ int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
     const int16_t edge = dsc_edge_rpm(&drive_rev);
     if (rpm == 0 || (edge < DSC_EDGE_SPEED_MAX_RPM && edge > -DSC_EDGE_SPEED_MAX_RPM)) rpm = edge;
   }
+  drive_speed_plausible(&rpm, ref_rpm); /* the edge estimate has no FIFO guard of its own */
   if (!drive_dsc_cfg.enable) return PI_Controller(pid, (int32_t)ref_rpm - rpm);
   const dsc_in_t in = { .ref_rpm = ref_rpm, .meas_rpm = rpm,
                         .edges_pos = on ? drive_rev.qpos : pos,

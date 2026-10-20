@@ -40,8 +40,11 @@ are in `docs/DRIVE.md`, `docs/HARDWARE.md`, `docs/CAN_FWU.md`.
 ## Git
 
 - Branching follows `CONTRIBUTING.md`: topic branches `type/topic`
-  (`feature/`, `fix/`, `hw/`, `docs/`, `chore/`, `release/`) off `develop`,
+  (`feature/`, `fix/`, `hw/`, `docs/`, `chore/`, `release/`) off `develop`
+  (agents: `develop_ai`, below),
   MR into `develop`; `main` only from `develop`/`release/*`.
+- Agents branch off `develop_ai` and merge back into it (no MR). Promotion
+  `develop_ai` -> `develop` is one MR the user approves.
 - Each agent works on its own topic branch and worktree; never edit another
   agent's worktree or switch its branch.
 - Pushing your own topic branch is fine. Never push to `develop` or `main`;

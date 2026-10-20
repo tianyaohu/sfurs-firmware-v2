@@ -6,8 +6,15 @@
 |---|---|---|
 | `main` | robot-verified states only, each tagged | MR from `develop` or `release/*` (maintainer merges) |
 | `develop` | integration; the GitLab default branch | MR from a topic branch (maintainer merges) |
+| `develop_ai` | integration for AI-agent work; replaces ad-hoc merge branches | agents' topic branches merge here directly; no MR needed |
 
 Nobody pushes to `main` or `develop` directly; force-push is off on both.
+
+`develop_ai` is the agents' own integration branch: AI topic branches branch
+off it and merge back into it, so agent work never needs a throwaway merge
+branch. Humans promote it to `develop` with a single MR (tests, build and
+robot evidence in the description) when a state is worth keeping. Merge
+`develop` into `develop_ai` when `develop` moves.
 
 ## Topic branches: `type/topic`
 

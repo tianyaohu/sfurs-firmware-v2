@@ -21,6 +21,15 @@
 #define FRICTION_MIN_REF_RPM 2 /* below this the command means "stop" */
 #define FRICTION_STALL_MS 100U
 
+/* Start-up speed plausibility (drive_speed_plausible). Ground logs 2026-10-16/17:
+ * the first reading after standstill was > 2.5x the target on 20 of 107 FR
+ * starts (6-11 of ~100 on the others), e.g. -212 RPM 8 ms after breaking free
+ * at 4.6 A, where the loaded wheel can reach ~20 RPM. The PI then reversed
+ * the current and the pulse guard aborted. Real overshoot still shows once
+ * the FIFO holds a full electrical turn. */
+#define STARTUP_MAX_RATIO_PCT 150
+#define STARTUP_MARGIN_RPM 10
+
 /* Parking (drive_app.h). The Nucleo slews to 0, so by the time the command is
  * 0 the wheel is nearly stopped. Holding zero, a wheel rocks across one Hall
  * edge and the estimate reads +-25-32 RPM (its smallest non-zero value), so
@@ -163,6 +172,16 @@ int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm)
   if (out > limit) out = limit;
   if (out < -limit) out = -limit;
   return (int16_t)out;
+}
+
+void drive_speed_plausible(int16_t *rpm, int16_t ref_rpm)
+{
+  if (!drive_app.active || HALL_M1.BufferFilled >= HALL_M1.SpeedBufferSize) return;
+  if (ref_rpm < FRICTION_MIN_REF_RPM && ref_rpm > -FRICTION_MIN_REF_RPM) return;
+  const int32_t ref = ref_rpm > 0 ? ref_rpm : -ref_rpm;
+  const int32_t cap = ref * STARTUP_MAX_RATIO_PCT / 100 + STARTUP_MARGIN_RPM;
+  if (*rpm > cap) *rpm = (int16_t)cap;
+  else if (*rpm < -cap) *rpm = (int16_t)-cap;
 }
 
 static uint32_t vbus_centivolts(void)

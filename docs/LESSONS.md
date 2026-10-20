@@ -42,3 +42,4 @@ what someone does next; this is not a log.
   0.30–0.32 Ω (not 0.22), L 135–150 µH (not 110); capture before trusting
   any motor constant.
 - CAN bus-off is permanent on STM32 FDCAN unless software clears CCCR.INIT; a jolted connector once took the whole drive offline until reset (2026-10-16). Both Nucleo and ESC main loops now recover.
+- Check that the planned path fits on the mat before any ground drive; a 0.6 m forward run started 0.14 m off-centre on the wrong side and left the mat (2026-10-17). `move_test.py` now refuses such paths.

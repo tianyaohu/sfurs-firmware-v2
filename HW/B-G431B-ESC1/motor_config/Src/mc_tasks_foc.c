@@ -430,6 +430,11 @@ __weak void FOC_CalcCurrRef(uint8_t bMotor)
   __enable_irq();
 
   /* USER CODE BEGIN FOC_CalcCurrRef 0 */
+  if (INTERNAL == FOCVars[bMotor].bDriveInput)
+  {
+    drive_speed_plausible(&HALL_M1._Super.hAvrMecSpeedUnit,
+                          (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()));
+  }
 
   /* USER CODE END FOC_CalcCurrRef 0 */
   if (INTERNAL == FOCVars[bMotor].bDriveInput)

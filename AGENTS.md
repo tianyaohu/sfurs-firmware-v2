@@ -19,6 +19,8 @@ are in `docs/DRIVE.md`, `docs/HARDWARE.md`, `docs/CAN_FWU.md`.
 
 - Docs describe the system **as it is now**. Edit the relevant doc in the
   same commit as the behaviour change; delete text that is no longer true.
+- The one allowed chronological record is the design log in `docs/design/`
+  (dated decisions and reasons, append only).
 - Do not add session logs, handoff notes, per-experiment docs, RCA write-ups
   or "status" sections. Hardware test evidence goes in one short file per
   session in `docs/test-results/` (template in its README), and briefly in

@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libnewlib-arm-none-eabi \
         libusb-1.0-0 \
         usbutils \
+        doxygen \
+        graphviz \
         ca-certificates \
         sudo \
     && rm -rf /var/lib/apt/lists/* \

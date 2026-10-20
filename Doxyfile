@@ -1,0 +1,34 @@
+# Doxygen for our code only (generated HAL/CMSIS/MCSDK is excluded).
+# Run: doxygen Doxyfile   -> build/doxygen/html/index.html
+PROJECT_NAME           = "SFURS firmware"
+OUTPUT_DIRECTORY       = build/doxygen
+INPUT                  = CM7/Core/Src \
+                         CM7/Core/Inc \
+                         Common \
+                         HW/common/CAN \
+                         HW/B-G431B-ESC1/Inc \
+                         HW/B-G431B-ESC1/bootloader \
+                         HW/B-G431B-ESC1/motor_config/Src/drive_app.c \
+                         HW/B-G431B-ESC1/motor_config/Inc/drive_app.h \
+                         docs/ARCHITECTURE.md
+FILE_PATTERNS          = *.c *.h *.md
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */stm32h7xx_* */syscalls.c */sysmem.c \
+                         */system_stm32h7xx_* */startup_* \
+                         */fwu_test_image.*
+USE_MDFILE_AS_MAINPAGE = docs/ARCHITECTURE.md
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+JAVADOC_AUTOBRIEF      = YES
+SOURCE_BROWSER         = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HAVE_DOT               = YES
+CALL_GRAPH             = NO
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+# Flip to YES once existing undocumented symbols are written up.
+WARN_AS_ERROR          = NO

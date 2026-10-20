@@ -11,7 +11,12 @@ on CAN. Current goal: 1 m command lands within ±10 cm in every direction.
   build, by phase) → `docs/ARCHITECTURE.md` (what each file does) →
   `docs/DRIVE.md`, `docs/HARDWARE.md`, `docs/CAN_FWU.md`.
 - `docs/OPEN_QUESTIONS.md`: unanswered questions; `docs/LESSONS.md`: hard-won
-  one-liners; `docs/test-results/`: one file per hardware test session.
+  one-liners; `docs/test-results/`: one file per hardware test session;
+  `docs/plans/`: phased plans, saved before work starts, deleted when done;
+  `docs/reference/`: datasheet and manual PDFs.
+- `docs/design/`: dated design log (`MASTER.md` plus one file per person).
+  Append an entry whenever you make a non-obvious design choice; read it
+  before reversing one. Never rewrite old entries.
 - Source layout and per-file roles: `docs/ARCHITECTURE.md`. When you add a
   file or folder, add its line there in the same commit.
 
@@ -21,7 +26,8 @@ on CAN. Current goal: 1 m command lands within ±10 cm in every direction.
   sections; our ESC code is `HW/B-G431B-ESC1/motor_config/Src/drive_app.c`.
   Everything else under `Drivers/` and MCSDK is generated: do not hand-edit.
 - Comments explain why. Public functions get a Doxygen comment (`@brief`,
-  parameters, units).
+  parameters, units). `doxygen Doxyfile` builds the API docs into
+  `build/doxygen/` and CI runs it.
 - Physical units in names and comments (mA, RPM, mm/s, mrad/s).
 
 ## Hard rules

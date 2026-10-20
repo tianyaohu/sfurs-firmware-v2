@@ -19,4 +19,6 @@ out of scope until motion control meets that number.
 [ARCHITECTURE.md](ARCHITECTURE.md) what each file does ·
 [DRIVE.md](DRIVE.md) drive data flow, CAN protocol, tuning ·
 [HARDWARE.md](HARDWARE.md) boards, wheel map, safety ·
-[OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) · [test-results/](test-results/)
+[OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) · [design/](design/README.md) ·
+[plans/](plans/README.md) · [test-results/](test-results/) ·
+[reference/](reference/README.md)

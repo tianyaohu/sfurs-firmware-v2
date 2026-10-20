@@ -8,10 +8,23 @@ Append only; format in design/README.md.
   to the data.
 - Why: the team lead asked for it; hand-measured wheel geometry is provisional.
 - Rejected: hand-tuning geometry by eye (no measurement, not repeatable).
-- Touches: `docs/PRD.md`, `scripts/rig/`, `Common/Src/rover_kinematics.c`.
+- Touches: `prd/index.md`, `src/tools/rig/`, `src/shared/src/rover_kinematics.c`.
 
 ## 2026-10-16  Hall-sensor FOC, not sensorless  (who: Frank H + claude)
 - Decision: ESCs run Hall-sensor FOC.
 - Why: the as-received sensorless image needs ≥1743 RPM, so at robot speeds it
   buzzes in rev-up at up to 6 A (see LESSONS).
-- Touches: `HW/B-G431B-ESC1/motor_config/Src/drive_app.c`.
+- Touches: `src/esc/motor_config/Src/drive_app.c`.
+
+## 2026-10-20  Restructure: code under src/, one folder per doc concern  (who: Frank H + claude)
+- Decision: all code lives in `src/{nucleo,esc,shared,sensors,tools}`; documentation
+  folders mirror the team's outline (docs, prd, technical-development-plans,
+  design-chronological, architecture, system-info, open-questions,
+  hardware-test-results, references); unused trees go to `archive/`.
+- Why: the repo mixed the CubeMX default layout with a catch-all `HW/`, shared code
+  lived in two places, and the ESC bootloader kept 8 byte-identical copies of shared
+  files that had to be synced by hand.
+- Rejected: leaving the Nucleo project at the repo root (inconsistent with the ESC and
+  sensor projects); keeping the bootloader copies behind a drift test.
+- Touches: every path; ESC and bootloader images are byte-identical before and after
+  (sha256 checked), host tests 22/22.

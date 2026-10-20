@@ -20,6 +20,6 @@ Entry format:
 
 Rules: never rewrite an old entry; if a decision is reversed, add a new entry
 that says so. The log holds reasoning, not state: current behaviour still
-belongs in [ARCHITECTURE](../ARCHITECTURE.md) and [DRIVE](../DRIVE.md), and a
-one-line takeaway in [LESSONS](../LESSONS.md). Hardware numbers go in
-[test-results](../test-results/).
+belongs in [ARCHITECTURE](../architecture/index.md) and [DRIVE](../architecture/drive.md), and a
+one-line takeaway in [LESSONS](../docs/lessons.md). Hardware numbers go in
+[test-results](../hardware-test-results/).

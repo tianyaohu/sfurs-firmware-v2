@@ -1,14 +1,14 @@
 # ESC firmware update over CAN
 
-Each ESC keeps a CAN bootloader (`HW/B-G431B-ESC1/bootloader/`, installed
+Each ESC keeps a CAN bootloader (`src/esc/bootloader/`, installed
 once over SWD). Applications are installed over CAN from the Nucleo, which
 runs a separate **updater image** carrying one ESC application.
 
 ## Procedure
 
 ```sh
-scripts/build_all.py                       # ESC apps, payloads, updaters, drive image
-scripts/esc_update.py NE --can             # one wheel; repeat for SE SW NW
+src/tools/build_all.py                       # ESC apps, payloads, updaters, drive image
+src/tools/esc_update.py NE --can             # one wheel; repeat for SE SW NW
 ```
 
 `--can` needs only the Nucleo USB; the battery may be ON. Through the drive
@@ -54,7 +54,7 @@ the bootloader on `0x650|dev` with payload `BOOT 01 dev ~dev 00` when idle.
 
 ## Updater image (Nucleo)
 
-Built with `-DFWU_IMAGE_FILE=<payload.c>` (from `scripts/fwu_image.py`).
+Built with `-DFWU_IMAGE_FILE=<payload.c>` (from `src/tools/fwu_image.py`).
 Debugger words: `can_fwu_dev`, `can_fwu_request` (write 1),
 `can_fwu_result` (1 active, 2 rejected, 3 done, 4 failed). Holding B1 for 3 s
 from power-up also starts one update. ENTER repeats every 300 ms until the
@@ -62,9 +62,9 @@ bootloader answers; after that any failure latches until a new request.
 
 ## Code
 
-- `Common/{Inc,Src}/can_fwu_protocol.*`: wire format, CRC (shared).
-- `Common/{Inc,Src}/can_fwu_boot.*`: target session; vendored copy in
-  `HW/B-G431B-ESC1/bootloader/` (keep in sync manually).
-- `CM7/Core/Src/can_fwu_host.c`: host session; `fwu_updater.c`: request logic.
+- `src/shared/{inc,src}/can_fwu_protocol.*`: wire format, CRC (shared).
+- `src/shared/{inc,src}/can_fwu_boot.*`: target session; the bootloader
+  (`src/esc/bootloader/build_boot.py`) compiles it from `src/shared`.
+- `src/nucleo/CM7/Core/Src/can_fwu_host.c`: host session; `fwu_updater.c`: request logic.
 - Tests: `tests/test_can_fwu.py`, `test_fwu_updater.py`, `test_fwu_*`,
-  `HW/B-G431B-ESC1/bootloader/tests/run_tests.py`.
+  `src/esc/bootloader/tests/run_tests.py`.

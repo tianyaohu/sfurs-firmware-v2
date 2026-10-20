@@ -10,15 +10,17 @@ Command a velocity or a 1 m move and have the robot do it accurately in every
 direction on a flat floor: **1 m command lands within ±10 cm** (along-track,
 cross-track and heading; exact spec still to agree with the team lead).
 
-Everything else (kicker, vision, strategy, the sensor boards under `HW/`) is
-out of scope until motion control meets that number.
+Everything else (kicker, vision, strategy, the sensor app in
+`src/sensors/`) is out of scope until motion control meets that number.
 
 ## Where to read next
 
-[PRD.md](PRD.md) what must be built, in phases ·
-[ARCHITECTURE.md](ARCHITECTURE.md) what each file does ·
-[DRIVE.md](DRIVE.md) drive data flow, CAN protocol, tuning ·
-[HARDWARE.md](HARDWARE.md) boards, wheel map, safety ·
-[OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) · [design/](design/README.md) ·
-[plans/](plans/README.md) · [test-results/](test-results/) ·
-[reference/](reference/README.md)
+- [prd/](../prd/index.md): what must be built, in phases
+- [technical-development-plans/](../technical-development-plans/README.md): phased plans
+- [design-chronological/](../design-chronological/README.md): why things were done
+- [architecture/](../architecture/index.md): system, what each file does, drive and CAN protocol
+- [system-info/](../system-info/hardware.md): boards, part numbers, wheel map, safety
+- [open-questions/](../open-questions/index.md): unanswered questions
+- [hardware-test-results/](../hardware-test-results/README.md): one file per session
+- [references/](../references/README.md): datasheets and manuals
+- [lessons](lessons.md): hard-won one-liners

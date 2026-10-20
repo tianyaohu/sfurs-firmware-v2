@@ -44,3 +44,8 @@ what someone does next; this is not a log.
 - CAN bus-off is permanent on STM32 FDCAN unless software clears CCCR.INIT; a jolted connector once took the whole drive offline until reset (2026-10-16). Both Nucleo and ESC main loops now recover.
 - Check that the planned path fits on the mat before any ground drive; a 0.6 m forward run started 0.14 m off-centre on the wrong side and left the mat (2026-10-17). `move_test.py` now refuses such paths.
 - MCSDK starts the speed ramp at the last measured average speed, which goes stale while IDLE: a wheel pushed by hand started at -92 RPM and limit-cycled. HALL_Clear now zeroes it; never treat stale idle telemetry as harmless (2026-10-17).
+- **A low calibration RMS can hide an invalid model.** One run had RMS 0.52 px
+  with fx/fy = 1.15 and k3 = 72; hold the board ~40 cm from the lens (at ~1.5 m
+  the fit is degenerate). `rig_calibrate.py solve` warns about both.
+- **Single-frame tag orientation is noisy by several degrees.** Average it; that
+  removed a -1% distance bias in `rig_measure.py`.

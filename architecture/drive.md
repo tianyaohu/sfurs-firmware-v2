@@ -1,22 +1,22 @@
 # Omni drive
 
-Keyboard → PC (`scripts/keyboard_drive.py`) → SWD mailbox → Nucleo
-(`CM7/Core/Src/ik_drive.c`) → CAN → four ESCs
-(`HW/B-G431B-ESC1/motor_config/Src/drive_app.c`, on top of ST MCSDK 6.4.1).
+Keyboard → PC (`src/tools/keyboard_drive.py`) → SWD mailbox → Nucleo
+(`src/nucleo/CM7/Core/Src/ik_drive.c`) → CAN → four ESCs
+(`src/esc/motor_config/Src/drive_app.c`, on top of ST MCSDK 6.4.1).
 
 ## Data flow
 
 1. The PC writes a body twist (vx, vy in mm/s, ω in mrad/s) and bumps a
    heartbeat at 50 Hz over the Nucleo's ST-LINK (pyOCD attach, no halt).
 2. Every 20 ms the Nucleo runs the inverse kinematics
-   (`Common/Src/rover_kinematics.c`), slews all wheels toward their targets
+   (`src/shared/src/rover_kinematics.c`), slews all wheels toward their targets
    with one acceleration limit (default 900 RPM/s, keeps the twist
    direction), and sends `SPEED_WRITE` to each ESC.
 3. Each ESC runs MCSDK FOC with Hall sensors: 16 kHz current loop, 1 kHz
    speed PI. `drive_app.c` starts the motor on the first command, updates
    the target while running, and replies to status/diag polls.
 
-## CAN protocol (`HW/common/CAN/can_datatypes.h`)
+## CAN protocol (`src/shared/can/can_datatypes.h`)
 
 CAN FD frames without BRS. ID = command | select bits (NE 1, SE 2, SW 4, NW 8).
 
@@ -28,7 +28,7 @@ CAN FD frames without BRS. ID = command | select bits (NE 1, SE 2, SW 4, NW 8).
 | `0x480` HALL_ALIGN | → ESC | `"HALN"` |
 | `0x500` CONFIG_SET | → ESC | u16 key (1 Kp, 2 Ki, 3 Hall shift °, 4 Iq max mA, 5/6 current Kp/Ki, 7/8 friction feed-forward static/kinetic mA), i16 value |
 | `0x780` STOP | → ESC | any |
-| `0x600–0x6FF` | | firmware update ([CAN_FWU.md](CAN_FWU.md)) |
+| `0x600–0x6FF` | | firmware update ([CAN_FWU.md](can-fwu.md)) |
 
 Flags: low nibble = last stop reason (1 STOP, 2 timeout, 3 fault, 4 align,
 5 capture, 6 parked),
@@ -61,15 +61,15 @@ directions cancels rotor lag. Results: `ok`, `REVERSED` (Hall order does not
 match phase order: fix wiring), `NO_EDGES` (rotor stuck or Halls dead).
 
 The result lives in RAM. Bake it in with
-`scripts/build_all.py --shift NE=<deg> SE=<deg> ...` and reinstall.
+`src/tools/build_all.py --shift NE=<deg> SE=<deg> ...` and reinstall.
 
 ## Bring-up
 
-1. `scripts/build_all.py`; `scripts/esc_update.py <W> --can` for each wheel
-   (`--battery-off` with the ESC's USB for a first install; [CAN_FWU.md](CAN_FWU.md)).
-2. Battery ON, wheels off the ground: `scripts/esc_tool.py status`, then
-   `scripts/esc_tool.py align all`. Expect `ok`, 12 edges each way.
-3. Off the ground: `scripts/keyboard_drive.py --speed 0.3`; check each key
+1. `src/tools/build_all.py`; `src/tools/esc_update.py <W> --can` for each wheel
+   (`--battery-off` with the ESC's USB for a first install; [CAN_FWU.md](can-fwu.md)).
+2. Battery ON, wheels off the ground: `src/tools/esc_tool.py status`, then
+   `src/tools/esc_tool.py align all`. Expect `ok`, 12 edges each way.
+3. Off the ground: `src/tools/keyboard_drive.py --speed 0.3`; check each key
    turns the wheels the right way.
 4. On the ground: `--speed 0.3`, then 0.5, 1.0.
 5. Bake the measured shifts (above) so alignment survives power cycles.
@@ -78,7 +78,7 @@ The result lives in RAM. Bake it in with
 
 Tune from the inside out: current loop, then speed loop.
 
-Current loop: `scripts/esc_tool.py capture <W> --step-ma 3000` (battery ON,
+Current loop: `src/tools/esc_tool.py capture <W> --step-ma 3000` (battery ON,
 IDLE). The ESC holds the rotor on the d axis at 1 A, steps Id to 3 A and
 records Id, Iq, Vd, Vq every FOC period (16 kHz, 512 samples); the Nucleo
 relays the readout. `capture_analysis.py` fits R (from the two steady states,
@@ -96,7 +96,7 @@ four wheels raised: Kp 4096 / Ki 4424 limit-cycled at ±6 A (loud buzz, no
 rotation); 1024/553 holds ±60 and 120 RPM with Iq ≈ 0.1 A. At 30–60 RPM the
 Hall speed estimate itself scatters by about ±25 RPM whatever the gains. On
 the ground the robot's inertia is part of the plant, so retune there. Tune
-live without reflashing: `scripts/esc_tool.py set all kp 2048` (IDLE only,
+live without reflashing: `src/tools/esc_tool.py set all kp 2048` (IDLE only,
 RAM only), then copy good values into `drive_parameters.h`.
 
 Friction feed-forward (`drive_speed_iq_ref` in `drive_app.c`, called from
@@ -124,7 +124,7 @@ since MCSDK expects its interrupts to preempt) left the count unchanged.
 
 ## Kinematics
 
-`rover_ik_provisional` in `Common/Src/rover_kinematics.c`: x right, y forward,
+`rover_ik_provisional` in `src/shared/src/rover_kinematics.c`: x right, y forward,
 yaw CCW positive. Per wheel: contact position, rolling direction, radius
 32.75 mm (65.5 mm wheels, direct drive), motor sign (left side mirrored).
 Contact positions come from hand measurements (track ~141–144 mm, wheelbase

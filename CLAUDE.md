@@ -7,23 +7,27 @@ on CAN. Current goal: 1 m command lands within ±10 cm in every direction.
 
 ## File structure
 
-- Read in this order: `docs/CONTEXT.md` (goal) → `docs/PRD.md` (what to
-  build, by phase) → `docs/ARCHITECTURE.md` (what each file does) →
-  `docs/DRIVE.md`, `docs/HARDWARE.md`, `docs/CAN_FWU.md`.
-- `docs/OPEN_QUESTIONS.md`: unanswered questions; `docs/LESSONS.md`: hard-won
-  one-liners; `docs/test-results/`: one file per hardware test session;
-  `docs/plans/`: phased plans, saved before work starts, deleted when done;
-  `docs/reference/`: datasheet and manual PDFs.
-- `docs/design/`: dated design log (`MASTER.md` plus one file per person).
+- Read in this order: `docs/index.md` (goal) → `prd/index.md` (what to
+  build, by phase) → `architecture/index.md` (what each file does) →
+  `architecture/drive.md`, `system-info/hardware.md`, `architecture/can-fwu.md`.
+- `open-questions/index.md`: unanswered questions; `docs/lessons.md`: hard-won
+  one-liners; `hardware-test-results/`: one file per hardware test session;
+  `technical-development-plans/`: phased plans, saved before work starts, deleted when done;
+  `references/`: datasheet and manual PDFs.
+- `design-chronological/`: dated design log (`MASTER.md` plus one file per person).
   Append an entry whenever you make a non-obvious design choice; read it
   before reversing one. Never rewrite old entries.
-- Source layout and per-file roles: `docs/ARCHITECTURE.md`. When you add a
-  file or folder, add its line there in the same commit.
+- All code is under `src/`: `nucleo/` (CubeMX project), `esc/` (wheel
+  controller + bootloader), `shared/` (code both use, incl. the CAN protocol),
+  `sensors/` (separate sensor app), `tools/` (PC scripts). Host tests are in
+  `tests/`; unused trees in `archive/`.
+- Per-file roles: `architecture/index.md`. When you add a file or folder, add
+  its line there in the same commit.
 
 ## Coding conventions
 
-- Our Nucleo code is `CM7/Core/Src/*.c` modules and CubeMX `USER CODE`
-  sections; our ESC code is `HW/B-G431B-ESC1/motor_config/Src/drive_app.c`.
+- Our Nucleo code is `src/nucleo/CM7/Core/Src/*.c` modules and CubeMX `USER CODE`
+  sections; our ESC code is `src/esc/motor_config/Src/drive_app.c`.
   Everything else under `Drivers/` and MCSDK is generated: do not hand-edit.
 - Comments explain why. Public functions get a Doxygen comment (`@brief`,
   parameters, units). `doxygen Doxyfile` builds the API docs into
@@ -36,6 +40,6 @@ on CAN. Current goal: 1 m command lands within ±10 cm in every direction.
   behaviour is documented (HAL call, CAN frame), never a made-up plant model.
 - New C logic gets a host unit test; run `python3 tests/run_all.py` (all
   existing tests, so other firmware is regression-checked) before committing.
-- Ask before touching hardware; rules in `docs/HARDWARE.md`.
-- A hardware test is recorded in `docs/test-results/` before the task is
+- Ask before touching hardware; rules in `system-info/hardware.md`.
+- A hardware test is recorded in `hardware-test-results/` before the task is
   called done.

@@ -12,4 +12,4 @@ One file per test session: `YYYY-MM-DD-topic.md`. Facts only; keep each short.
 ```
 
 Conclusions that change future behaviour also go as one line in
-[../LESSONS.md](../LESSONS.md).
+[../LESSONS.md](../docs/lessons.md).

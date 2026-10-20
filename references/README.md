@@ -14,4 +14,4 @@ Add a row here when you add a PDF, and note which pages matter.
 | ST MCSDK 6.4.1 | user manual, FOC/PI tuning notes | to add |
 | Motor (8 pole pairs, Hall) | datasheet | to add |
 | Omni wheel 65.5 mm | spec / drawing | to add |
-| IMU, optical-flow sensor, wheel encoder (`HW/STM32H7`) | datasheets | to add |
+| IMU, optical-flow sensor, wheel encoder (`src/sensors/stm32h7`) | datasheets | to add |

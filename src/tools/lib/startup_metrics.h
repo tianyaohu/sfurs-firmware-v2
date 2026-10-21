@@ -61,6 +61,14 @@ startup_result_t startup_evaluate(const ik_record_unpacked_t *rows, size_t n,
  * must be supplied as NAN (never omitted). Zero active wheels is not measurable.
  */
 startup_sync_t startup_synchronization(const double *apply_s, size_t n);
+/** @brief Synchronize recorded active wheels using first-start reply times in wrapping uint32 microseconds.
+ * A wheel whose row is torn or lacks first_start_valid makes the result NOT_MEASURABLE; INACTIVE wheels are excluded.
+ * @param results Startup verdicts for the four recorded wheels.
+ * @param links Seqlocked mailbox rows read after the run.
+ * @return Skew in milliseconds and the <=2 ms verdict.
+ */
+startup_sync_t startup_link_synchronization(const startup_result_t results[IK_WHEELS],
+                                           const ik_link_row_t links[IK_WHEELS]);
 /** @brief Stable verdict and failed-rule names for human and machine reports. */
 const char *startup_verdict_name(startup_verdict_t verdict);
 const char *startup_rule_name(startup_rule_t rule);

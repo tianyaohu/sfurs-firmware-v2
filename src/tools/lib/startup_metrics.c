@@ -199,3 +199,29 @@ startup_sync_t startup_synchronization(const double *apply_s, size_t n)
   out.verdict = hi <= lo + 0.002 ? STARTUP_PASS : STARTUP_FAIL;
   return out;
 }
+
+startup_sync_t startup_link_synchronization(const startup_result_t results[IK_WHEELS],
+                                           const ik_link_row_t links[IK_WHEELS])
+{
+  double times[IK_WHEELS], lo = 0;
+  uint32_t base = 0;
+  size_t n = 0;
+  bool have_base = false;
+  for (int w = 0; w < IK_WHEELS; w++) {
+    if (results[w].verdict == STARTUP_INACTIVE) continue;
+    if (!links[w].valid || !links[w].first_start_valid) {
+      times[n++] = NAN;
+      continue;
+    }
+    if (!have_base) { base = links[w].first_start_reply_us; have_base = true; }
+    /* Starts share one drive cycle, much shorter than half the 32-bit clock.
+     * Wheel order is unrelated to receipt order, including across clock wrap. */
+    int64_t delta = (uint32_t)(links[w].first_start_reply_us - base);
+    if (delta > INT32_MAX) delta -= INT64_C(1) << 32;
+    times[n] = (double)delta / 1e6;
+    if (times[n] < lo) lo = times[n];
+    n++;
+  }
+  for (size_t i = 0; i < n; i++) times[i] -= lo;
+  return startup_synchronization(times, n);
+}

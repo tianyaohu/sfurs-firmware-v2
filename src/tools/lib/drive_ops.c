@@ -67,8 +67,8 @@ int drive_preflight_rows(const ik_row_t before[4], const ik_row_t rows[4], doubl
     if (!r->valid || !before[w].valid || r->status_count == before[w].status_count)
       snprintf(reason, sizeof reason, "no live reply");
     else if (strcmp(r->mc_state, "IDLE") || r->fault_names[0])
-      snprintf(reason, sizeof reason, "%s faults %s (esc_tool stop)", r->mc_state,
-               r->fault_names[0] ? r->fault_names : "-");
+      snprintf(reason, sizeof reason, "%s faults %s (esc_tool %s)", r->mc_state,
+               r->fault_names[0] ? r->fault_names : "-", r->fault_names[0] ? "clear" : "stop");
     else if (!isfinite(r->vbus_v) || r->vbus_v < min_vbus_v)
       snprintf(reason, sizeof reason, "Vbus %.2f V < %g V", r->vbus_v, min_vbus_v);
     if (reason[0]) {
@@ -86,6 +86,8 @@ int drive_preflight(ik_link_t *l, double min_vbus_v)
   if (ik_rows(l, before)) return -1;
   pulse_sleep_s(0.3);
   if (ik_rows(l, rows)) return -1;
+  uint32_t fault;
+  if (ik_read(l, IK_FAULT, &fault) || ik_check_fault(l, fault)) return -1;
   char problems[1024];
   if (!drive_preflight_rows(before, rows, min_vbus_v, problems, sizeof problems)) return 0;
   fprintf(stderr, "preflight failed:\n  %s\n", problems);

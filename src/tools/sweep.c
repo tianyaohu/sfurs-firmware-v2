@@ -72,6 +72,10 @@ static int execute(const char *sn, const char *elf, const char *out, const step_
   ik_row_t rows[IK_WHEELS];
   if (!f) { fprintf(stderr, "cannot write %s\n", out); rc = 1; goto stop; }
   if (ik_read(&l, IK_STATE, &state) || state != 0) { fprintf(stderr, "drive must be stopped before the sweep\n"); rc = 1; goto stop; }
+  uint32_t fault;
+  if (ik_read(&l, IK_FAULT, &fault) || ik_check_fault(&l, fault)) {
+    fprintf(stderr, "%s\n", l.err); rc = 1; goto stop;
+  }
   if (ik_rows(&l, rows)) { fprintf(stderr, "%s\n", l.err); rc = 1; goto stop; }
   for (int i = 0; i < IK_WHEELS; i++)
     if (!rows[i].valid || strcmp(rows[i].mc_state, "IDLE") || rows[i].faults || !rows[i].aligned) {
@@ -89,6 +93,7 @@ static int execute(const char *sn, const char *elf, const char *out, const step_
       ik_status_t st;
       if (ik_drive(&l, plan[s].twist[0], plan[s].twist[1], plan[s].twist[2], true) || ik_status(&l, &st) ||
           ik_rows(&l, rows)) { fprintf(stderr, "%s\n", l.err); rc = 1; break; }
+      if (st.fault && ik_check_fault(&l, st.fault)) { fprintf(stderr, "%s\n", l.err); rc = 1; break; }
       for (int i = 0; i < IK_WHEELS && !rc; i++) {
         if (!rows[i].valid) { fprintf(stderr, "incomplete telemetry; sweep stopped\n"); rc = 1; break; }
         if (rows[i].faults || rows[i].derated) { fprintf(stderr, "wheel fault/derating; sweep stopped\n"); rc = 1; break; }

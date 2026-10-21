@@ -42,7 +42,7 @@ static void test_c_decoder_row(void) {
     CHECK(ik_telemetry_rx(DIAG_REPLY | selector, diag, 78));
     CHECK(ik_telemetry_rx(IDENT_REPLY | selector, ident, 79));
     CHECK(!ik_telemetry_rx(STATUS_REPLY | 3U, status, 79));
-    CHECK(!ik_telemetry_rx(SPEED_WRITE | selector, status, 79));
+    CHECK(!ik_telemetry_rx((1U << 7) | selector, status, 79)); /* retired SPEED_WRITE */
 
     /* Check the firmware row directly; host formatting belongs to the tool tests. */
     const volatile struct ik_telemetry_wheel *row = &ik_drive_telem[wheel];

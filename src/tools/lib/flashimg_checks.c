@@ -253,7 +253,7 @@ int flashimg_check_bus(const ik_row_t rows[4], int skip, double vbus_v[4], char 
                r->active ? " active" : "");
     } else vbus_v[i] = round(r->vbus_v * 100) / 100;
   }
-  if (*problems) return error(err, cap, "bus not ready: %s (esc_tool stop clears a cleared fault)", problems);
+  if (*problems) return error(err, cap, "bus not ready: %s (esc_tool clear clears a fault whose cause is gone)", problems);
   return 0;
 }
 

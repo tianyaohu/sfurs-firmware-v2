@@ -3,8 +3,9 @@
  * @brief CAN protocol shared by the motor controllers (B-G431B-ESC1) and the Nucleo.
  *
  * 11-bit ID = command (top 4 bits) | device select bits (bottom 7 bits).
- * Example: 0b000 1000 1000 is SPEED_WRITE to MOTOR_NW; 0x08F addresses all.
+ * Example: 0b001 0000 1000 is STATUS_READ to MOTOR_NW; 0x10F addresses all.
  * Frames are CAN FD format without BRS. Commands carry 4 bytes; replies 8.
+ * Motion and arming use the 8-byte CONTROL frame of motor_protocol.h.
  * All multi-byte fields are little endian.
  */
 #ifndef CAN_DATATYPES_H
@@ -37,13 +38,7 @@
 #define MOTOR_SW_CAN_ID (1U << 2) /**< select bit of the SW wheel (BL) */
 #define MOTOR_NW_CAN_ID (1U << 3) /**< select bit of the NW wheel (FL) */
 
-/** SPEED_WRITE: int16 target motor RPM, uint16 ramp ms. Starts the motor from
- * IDLE and updates it while running. The motor stops itself if no
- * SPEED_WRITE arrives for ESC_COMMAND_TIMEOUT_MS, so senders stream it.
- * Ignored until the Hall phase shift is known (ESC_FLAG_ALIGNED): a wrong
- * shift reverses torque and the speed loop would run away. */
-#define SPEED_WRITE (1U << 7)
-#define ESC_COMMAND_TIMEOUT_MS 250U /**< motor stops after this long without SPEED_WRITE, ms */
+/* 0x080 (SPEED_WRITE) and 0x780 (MOTOR_STOP) are retired and never reused. */
 
 /** STATUS_READ (any payload) -> STATUS_REPLY:
  * int16 RPM, int16 Iq, int16 Iq reference (SDK counts, ESC_COUNTS_PER_AMP),
@@ -113,7 +108,6 @@ enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
 #define ESC_RECORD_READ_CH67 (1U << 18) /**< in the ESC_CAPTURE_READ word */
 enum { ESC_RECORD_NONE = 0, ESC_RECORD_ARMED = 1, ESC_RECORD_TRIGGERED = 2,
        ESC_RECORD_DONE = 3, ESC_RECORD_REJECTED = 4 };
-#define MOTOR_STOP   (15U << 7) /**< stop the motor; any payload */
 
 #define ESC_COUNTS_PER_AMP 544 /**< MCSDK current counts per ampere */
 

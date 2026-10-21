@@ -14,8 +14,8 @@ generate_esc_defaults(${CMAKE_BINARY_DIR}/gen/gen_esc_defaults.h)
 
 set(LIB ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 file(GLOB LIB_SOURCES CONFIGURE_DEPENDS ${LIB}/*.c)  # every lib/*.c is part of the library
-add_library(tools STATIC ${LIB_SOURCES})
-target_include_directories(tools PUBLIC ${LIB} ${CMAKE_CURRENT_SOURCE_DIR}/../shared/can ${CMAKE_BINARY_DIR}/gen)
+add_library(tools STATIC ${LIB_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/../shared/src/motor_protocol.c)
+target_include_directories(tools PUBLIC ${LIB} ${CMAKE_CURRENT_SOURCE_DIR}/../shared/can ${CMAKE_CURRENT_SOURCE_DIR}/../shared/inc ${CMAKE_BINARY_DIR}/gen)
 target_link_libraries(tools PUBLIC m)
 
 # One targets/<tool>.cmake per tool (add_executable + target_link_libraries(... tools)),

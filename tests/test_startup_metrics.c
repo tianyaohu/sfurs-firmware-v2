@@ -327,7 +327,7 @@ static void report_file(const char *path, const char *verdict, const char *rule,
   CHECK(f != NULL);
   const char *wheel[] = {"FR", "BR", "BL", "FL"};
   for (int i = 0; i < wheel_count; ++i)
-    fprintf(f, "test-run\tvx\t+\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n", wheel[i], verdict,
+    fprintf(f, "test-run\tvx\t+\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t1800\n", wheel[i], verdict,
             k, !strcmp(verdict, "INACTIVE") ? 0 : 8, !strcmp(verdict, "INACTIVE") ? 0 : 5,
             ratio, !strcmp(verdict, "INACTIVE") || !strcmp(rule, "no_plateau") ? "na" : "120", rule);
   CHECK_EQ(fclose(f), 0);
@@ -424,7 +424,7 @@ static void move_integration(void)
   CHECK(tsv != NULL);
   char line[1024];
   CHECK(fgets(line, sizeof line, tsv) != NULL);
-  CHECK(strstr(line, "\tsteady_rpm\tfailed_rule\n") != NULL);
+  CHECK(strstr(line, "\tsteady_rpm\tfailed_rule\tapply_skew_us\n") != NULL);
   for (int run = 0; run < 2; ++run) for (int w = 0; w < 4; ++w) {
     CHECK(fgets(line, sizeof line, tsv) != NULL);
     char *field = strtok(line, "\t");
@@ -474,5 +474,13 @@ int main(void)
   tracking(); interpolation_and_incomplete(); multi_edge_and_wrap();
   overshoot(); plateaus(); calibrated(); synchronization(); report(); move_integration();
   puts("startup metrics: all cases passed");
+  return 0;
+}
+
+int __wrap_ik_link_rows(ik_link_t *link, ik_link_row_t links[4])
+{
+  (void)link;
+  for (int w = 0; w < 4; w++) links[w] = (ik_link_row_t){.valid = true,
+    .first_start_valid = true, .first_start_reply_us = UINT32_MAX - 500U + (uint32_t)w * 600U};
   return 0;
 }

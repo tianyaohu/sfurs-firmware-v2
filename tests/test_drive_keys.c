@@ -80,7 +80,7 @@ static void test_speed_limits_and_rounding(void)
 static void test_keyboard_log_all_wheels_and_missing(void)
 {
   FILE *f = tmpfile(); CHECK(f);
-  ik_status_t status = {.state = 2, .telem_now = 9, .target_rpm = {50, 51, 52, 53}};
+  ik_status_t status = {.state = 2, .telem_now = 9, .fault = 0xa5, .armed = 15, .target_rpm = {50, 51, 52, 53}};
   ik_row_t rows[4];
   for (int w = 0; w < 4; w++) rows[w] = (ik_row_t){.valid = true, .rpm = 61 + w, .state = 6,
     .status_count = 10, .mc_state = "RUN", .stop_reason = "none", .align = "ok", .iq_a = 0.5, .vbus_v = 12};
@@ -91,6 +91,7 @@ static void test_keyboard_log_all_wheels_and_missing(void)
   CHECK(strstr(text, "\"t0_monotonic_s\":90.250000000"));
   CHECK(strstr(text, "\"t_monotonic_s\":100.125000000"));
   CHECK(strstr(text, "\"state_name\":\"STOPPING\""));
+  CHECK(strstr(text, "\"fault\":165,\"armed\":15"));
   CHECK(strstr(text, "\"vector\":[0,500,0]"));
   for (int w = 0; w < 4; w++) { char want[32]; snprintf(want, sizeof want, "\"rpm\":%d", 61 + w); CHECK(strstr(text, want)); }
   CHECK(strstr(text, "\"fault_names\":[\"overcurrent\"]"));

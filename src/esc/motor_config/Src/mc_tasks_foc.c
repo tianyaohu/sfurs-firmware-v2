@@ -131,8 +131,8 @@ __weak void FOC_Init(void)
     FOCVars[M1].Iqdref = STC_GetDefaultIqdref(pSTC[M1]);
     FOCVars[M1].UserIdref = STC_GetDefaultIqdref(pSTC[M1]).d;
 
-    /* No implicit speed command at boot: drive_app.c starts the motor only on
-     * a CAN SPEED_WRITE, and a queued command would block safe boot entry. */
+    /* No implicit speed command at boot: the motor starts only on an armed CAN
+     * CONTROL frame (motor_cmd.c), and a queued command would block safe boot entry. */
 
     /* USER CODE BEGIN MCboot 2 */
 

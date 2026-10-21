@@ -31,7 +31,7 @@ int main(int argc, char **argv)
     if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.6 --accel 0 --log F]\n"
                          "W/S forward/back, A/D left/right, Q/E CCW/CW, SPACE zero, +/- speed, X/ESC quit.\n"
                          "Axes combine and expire without repeat. Streams at 50 Hz; Nucleo stops after 0.3 s\n"
-                         "without heartbeat, ESCs after 0.25 s without the Nucleo. Log files must be new.");
+                         "without heartbeat, ESCs after 0.1 s without the Nucleo. Log files must be new.");
     return parsed < 0;
   }
   if (fabs(controls.speed_mps) > INT32_MAX / 1000.0 || fabs(controls.max_speed_mps) > INT32_MAX / 1000.0 ||
@@ -51,6 +51,8 @@ int main(int argc, char **argv)
   int rc = ik_link_open(&link, sn, elf);
   bool opened = !rc, raw_enabled = false;
   if (rc) goto done;
+  uint32_t fault;
+  if (ik_read(&link, IK_FAULT, &fault) || ik_check_fault(&link, fault)) { rc = -1; goto done; }
   if (ik_write(&link, IK_ACCEL_RPMPS, (uint32_t)accel_rpmps)) { rc = -1; goto done; }
   struct termios raw = saved;
   raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
@@ -78,6 +80,7 @@ int main(int argc, char **argv)
     }
     int32_t vector[3];
     bool enable = drive_keyboard_vector(&controls, now_s, vector);
+    if (ik_read(&link, IK_FAULT, &fault) || (fault && ik_check_fault(&link, fault))) { rc = -1; break; }
     if (ik_drive(&link, vector[0], vector[1], vector[2], enable)) { rc = -1; break; }
     if (now_s - last_ui_s >= 0.1) {
       last_ui_s = now_s;

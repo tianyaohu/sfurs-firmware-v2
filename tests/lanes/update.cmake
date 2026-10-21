@@ -4,7 +4,7 @@ host_test(test_esc_update
   SOURCES src/tools/lib/flashimg_checks.c src/tools/lib/flashimg_install.c
           src/tools/lib/sha256.c src/tools/lib/crc32.c src/tools/lib/elfsym.c
           src/tools/lib/ocd.c src/tools/lib/ik_link.c
-  INCLUDES src/tools/lib src/shared/can
+  INCLUDES src/tools/lib src/shared/can src/shared/inc
   DEFS FAKE_OCD="$<TARGET_FILE:fake_openocd>"
        SCRIPTED_OCD="$<TARGET_FILE:esc_update_fake_openocd>"
   LIBS m DEPENDS fake_openocd esc_update_fake_openocd)

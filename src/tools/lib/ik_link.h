@@ -16,11 +16,13 @@
 
 #include "ocd.h"
 
-#define IK_ABI 0x494B0004U
+#define IK_ABI 0x494B0006U
 #define IK_WHEELS 4
 #define IK_RECORD_CHANNELS 8
 #define IK_CAPTURE_READ_MAX 32U
 #define IK_ROW_WORDS 19
+#define IK_LINK_WORDS 19
+#define IK_LINK_NONE 0xFFU
 #define IK_DEFAULT_SN "002200364142500620353451"
 #define IK_DEFAULT_ELF "build/drive/sfurs_firmware_v2_CM7.elf"
 
@@ -34,7 +36,10 @@ typedef enum {
   IK_ABI_SYM, IK_VX_MMPS, IK_VY_MMPS, IK_OMEGA_MRADPS, IK_ENABLE, IK_HEARTBEAT,
   IK_ACCEL_RPMPS, IK_RAW_ID, IK_RAW_DATA, IK_RAW_SEQ, IK_STATE, IK_RAW_DONE,
   IK_TX_COUNT, IK_TX_FAIL, IK_BAD_INPUT, IK_TELEM_NOW, IK_TARGET_RPM, IK_RPM,
-  IK_TELEM, IK_CAPTURE, IK_SYM_COUNT
+  IK_TELEM, IK_CAPTURE, IK_RAW_DATA_HI, IK_RAW_LEN, IK_CLEAR_SEQ, IK_CLEAR_DONE,
+  IK_FAULT, IK_ARMED, IK_LINK, IK_FF_ENABLE, IK_FF_COULOMB_XY_MN,
+  IK_FF_VISCOUS_XY_MN_PER_MPS, IK_FF_COULOMB_W_MNM, IK_FF_VISCOUS_W_MNM_PER_RADPS,
+  IK_FF_A_PER_NM_MILLI, IK_FF_SCALE_PCT, IK_FF_MA, IK_SYM_COUNT
 } ik_sym_t;
 
 typedef struct {
@@ -57,9 +62,20 @@ typedef struct {
   char fault_names[96]; /**< space-separated, empty if none */
 } ik_row_t;
 
+/** Protocol reply snapshot; valid is false after three torn reads. */
+typedef struct {
+  bool valid;
+  uint32_t generation, lifecycle, outcome, reason, session, request_seq, applied_seq, first_edge;
+  int32_t rpm, iq_ma; /**< Measured RPM and q-current in mA. */
+  uint32_t reply_count, reply_us, misses, rejects, start_count, start_reply_us, first_start_reply_us;
+  bool first_start_valid; /**< first_start_reply_us belongs to this drive session */
+  uint32_t fault_reason;  /**< reason latched with the wheel's fault bit (0 for LOST) */
+  const char *lifecycle_name, *outcome_name, *reason_name, *fault_reason_name;
+} ik_link_row_t;
+
 /** Drive state snapshot. */
 typedef struct {
-  uint32_t state, tx_count, tx_fail, bad_input, raw_done, telem_now;
+  uint32_t state, tx_count, tx_fail, bad_input, raw_done, telem_now, fault, armed;
   int32_t target_rpm[IK_WHEELS], rpm[IK_WHEELS];
 } ik_status_t;
 
@@ -99,10 +115,39 @@ int ik_status(ik_link_t *l, ik_status_t *s);
 int ik_rows(ik_link_t *l, ik_row_t rows[IK_WHEELS]);
 /** @brief Decode IK_ROW_WORDS raw words. */
 void ik_decode_row(const uint32_t words[IK_ROW_WORDS], ik_row_t *row);
+/** @brief Read four seqlocked protocol rows; invalid rows must not be used.
+ * @param l Open mailbox link.
+ * @param rows Four snapshots; valid is false after three torn reads.
+ * @return 0, or -1 with l->err on a transport error.
+ */
+int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS]);
+/** @brief Decode IK_LINK_WORDS mailbox words, including stable protocol names.
+ * @param words Stable mailbox words, in ABI 6 order; clocks are wrapping microseconds.
+ * @param row Decoded row; rpm is mechanical RPM and iq_ma is q-current in mA.
+ */
+void ik_decode_link_row(const uint32_t words[IK_LINK_WORDS], ik_link_row_t *row);
+/** @brief Protocol reason name, or UNKNOWN for an unrecognized code.
+ * @param reason Protocol reason code.
+ */
+const char *ik_reason_name(uint32_t reason);
+/** @brief Refuse latched drive faults or FAULTED links; set l->err with wheel/reason and recovery hint.
+ * @param l Open mailbox link.
+ * @param fault Snapshot of ik_drive_fault (bits w FAULTED, bits 4+w LOST).
+ * @return 0 if healthy, -1 on fault or transport error.
+ */
+int ik_check_fault(ik_link_t *l, uint32_t fault);
 int ik_capture_header(ik_link_t *l, ik_capture_header_t *h);
 
 /** @brief One 4-byte CAN frame through the Nucleo; only accepted while STOPPED. */
 int ik_send_raw(ik_link_t *l, uint32_t can_id, uint32_t word, double timeout_s);
+/** @brief Send 8 CAN payload bytes while STOPPED.
+ * @param l Open mailbox link.
+ * @param can_id 11-bit CAN ID.
+ * @param data Eight payload bytes from the shared codec for CONTROL frames.
+ * @param timeout_s Maximum wait for raw_done, seconds.
+ * @return 0 on transmission, -1 with l->err on failure.
+ */
+int ik_send_raw8(ik_link_t *l, uint32_t can_id, const uint8_t data[8], double timeout_s);
 
 /* Command words (can_datatypes.h). Each returns 0 or -1 on an out-of-range argument. */
 int ik_capture_start_word(int step_ma, uint32_t *word);

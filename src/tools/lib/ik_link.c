@@ -8,6 +8,7 @@
 
 #include "can_datatypes.h"
 #include "elfsym.h"
+#include "motor_protocol.h"
 
 const char *const IK_WHEEL_POS[IK_WHEELS] = {"FR", "BR", "BL", "FL"};
 const char *const IK_WHEEL_CORNER[IK_WHEELS] = {"NE", "SE", "SW", "NW"};
@@ -16,7 +17,9 @@ const uint32_t IK_WHEEL_SELECT[IK_WHEELS] = {MOTOR_NE_CAN_ID, MOTOR_SE_CAN_ID, M
 static const char *const SYM_NAMES[IK_SYM_COUNT] = {
     "abi", "vx_mmps", "vy_mmps", "omega_mradps", "enable", "heartbeat", "accel_rpmps", "raw_id",
     "raw_data", "raw_seq", "state", "raw_done", "tx_count", "tx_fail", "bad_input", "telem_now",
-    "target_rpm", "rpm", "telem", "capture"};
+    "target_rpm", "rpm", "telem", "capture", "raw_data_hi", "raw_len", "clear_seq", "clear_done",
+    "fault", "armed", "link", "ff_enable", "ff_coulomb_xy_mn", "ff_viscous_xy_mn_per_mps",
+    "ff_coulomb_w_mnm", "ff_viscous_w_mnm_per_radps", "ff_a_per_nm_milli", "ff_scale_pct", "ff_ma"};
 
 static const struct { const char *name; int number; } CONFIG_KEYS[] = {
     {"kp", ESC_CFG_SPEED_KP}, {"ki", ESC_CFG_SPEED_KI}, {"shift", ESC_CFG_HALL_SHIFT_DEG},
@@ -137,7 +140,8 @@ int ik_status(ik_link_t *l, ik_status_t *s)
   uint32_t w[IK_WHEELS];
   if (ik_read(l, IK_STATE, &s->state) || ik_read(l, IK_TX_COUNT, &s->tx_count) ||
       ik_read(l, IK_TX_FAIL, &s->tx_fail) || ik_read(l, IK_BAD_INPUT, &s->bad_input) ||
-      ik_read(l, IK_RAW_DONE, &s->raw_done) || ik_read(l, IK_TELEM_NOW, &s->telem_now))
+      ik_read(l, IK_RAW_DONE, &s->raw_done) || ik_read(l, IK_TELEM_NOW, &s->telem_now) ||
+      ik_read(l, IK_FAULT, &s->fault) || ik_read(l, IK_ARMED, &s->armed))
     return -1;
   if (ocd_read(l->ocd, l->addr[IK_TARGET_RPM], 32, IK_WHEELS, w)) return fail(l, "%s", ocd_error(l->ocd));
   for (int i = 0; i < IK_WHEELS; i++) s->target_rpm[i] = (int32_t)w[i];
@@ -209,6 +213,79 @@ int ik_rows(ik_link_t *l, ik_row_t rows[IK_WHEELS])
   return 0;
 }
 
+const char *ik_reason_name(uint32_t reason)
+{
+  static const char *const names[] = {
+    "NONE", "BAD_VERSION", "BAD_MODE", "BAD_FLAGS", "RESERVED_NONZERO", "BAD_SELECT",
+    "OUT_OF_RANGE", "NOT_ARMED", "BAD_SESSION", "STALE", "SEQ_AMBIGUOUS", "SEQ_JUMP",
+    "NOT_ALIGNED", "BUSY", "MODE_CHANGE", "NOT_IDLE", "LIMITED", "STARTING", "FF_UNUSED",
+    "CONFLICT", "BAD_LENGTH", "UNSUPPORTED", [MOTOR_R_FAULT_MCSDK] = "FAULT_MCSDK",
+    [MOTOR_R_FAULT_STALL] = "FAULT_STALL", [MOTOR_R_FAULT_HALL_LOST] = "FAULT_HALL_LOST",
+    [MOTOR_R_TIMEOUT] = "TIMEOUT", [MOTOR_R_LIFECYCLE_OVERFLOW] = "LIFECYCLE_OVERFLOW"
+  };
+  return reason < ARRAY_LEN(names) && names[reason] ? names[reason] : "UNKNOWN";
+}
+
+void ik_decode_link_row(const uint32_t w[IK_LINK_WORDS], ik_link_row_t *r)
+{
+  static const char *const lifecycle[] = {"DISARMED", "READY", "STARTING", "RUNNING", "HOLD", "FAULTED"};
+  static const char *const outcome[] = {"APPLIED", "INHIBITED", "SUPERSEDED", "REJECTED", "DUPLICATE"};
+  *r = (ik_link_row_t){.valid = true, .generation = w[0], .lifecycle = w[1], .outcome = w[2],
+    .reason = w[3], .session = w[4], .request_seq = w[5], .applied_seq = w[6], .first_edge = w[7],
+    .rpm = (int32_t)w[8], .iq_ma = (int32_t)w[9], .reply_count = w[10], .reply_us = w[11],
+    .misses = w[12], .rejects = w[13], .start_count = w[14], .start_reply_us = w[15],
+    .first_start_reply_us = w[16], .first_start_valid = w[17] != 0, .fault_reason = w[18]};
+  r->lifecycle_name = r->lifecycle < ARRAY_LEN(lifecycle) ? lifecycle[r->lifecycle] :
+                      r->lifecycle == IK_LINK_NONE ? "NO_REPLY" : "UNKNOWN";
+  r->outcome_name = r->outcome < ARRAY_LEN(outcome) ? outcome[r->outcome] : "UNKNOWN";
+  r->reason_name = ik_reason_name(r->reason);
+  r->fault_reason_name = ik_reason_name(r->fault_reason);
+}
+
+int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS])
+{
+  memset(rows, 0, IK_WHEELS * sizeof *rows);
+  for (int i = 0; i < IK_WHEELS; i++) {
+    uint32_t base = l->addr[IK_LINK] + (uint32_t)i * 4 * IK_LINK_WORDS;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      uint32_t before, words[IK_LINK_WORDS], after;
+      if (ocd_read32(l->ocd, base, &before)) return fail(l, "%s", ocd_error(l->ocd));
+      if (before & 1) continue;
+      if (ocd_read(l->ocd, base, 32, IK_LINK_WORDS, words) || ocd_read32(l->ocd, base, &after))
+        return fail(l, "%s", ocd_error(l->ocd));
+      if (before == words[0] && before == after && !(after & 1)) {
+        ik_decode_link_row(words, &rows[i]);
+        break;
+      }
+    }
+  }
+  return 0;
+}
+
+int ik_check_fault(ik_link_t *l, uint32_t fault)
+{
+  ik_link_row_t rows[IK_WHEELS];
+  if (ik_link_rows(l, rows)) return -1;
+  char reasons[220] = "";
+  for (int w = 0; w < IK_WHEELS; w++) {
+    const ik_link_row_t *r = &rows[w];
+    bool latched = fault & ((1U << w) | (1U << (w + 4)));
+    bool faulted = (fault & (1U << w)) || (r->valid && r->lifecycle == MOTOR_LC_FAULTED);
+    bool lost = fault & (1U << (w + 4));
+    if (!faulted && !lost) continue;
+    /* Later replies overwrite reason; fault_reason keeps the cause latched with the bit (0 = LOST). */
+    const char *cause = !r->valid ? "unreadable link" :
+                        !latched ? r->reason_name :
+                        r->fault_reason ? r->fault_reason_name : lost ? "no replies" : r->reason_name;
+    size_t used = strlen(reasons);
+    snprintf(reasons + used, sizeof reasons - used, "%s%s %s%s%s (%s)", used ? "; " : "",
+             IK_WHEEL_POS[w], faulted ? "FAULTED" : "", faulted && lost ? "/" : "",
+             lost ? "LOST" : "", cause);
+  }
+  if (reasons[0] || fault) return fail(l, "drive stopped: %s; esc_tool clear", reasons[0] ? reasons : "unknown fault");
+  return 0;
+}
+
 int ik_capture_header(ik_link_t *l, ik_capture_header_t *h)
 {
   uint32_t w[5];
@@ -217,14 +294,15 @@ int ik_capture_header(ik_link_t *l, ik_capture_header_t *h)
   return 0;
 }
 
-int ik_send_raw(ik_link_t *l, uint32_t can_id, uint32_t word, double timeout_s)
+static int send_raw(ik_link_t *l, uint32_t can_id, uint32_t lo, uint32_t hi, uint32_t len, double timeout_s)
 {
   uint32_t state, seq, done;
   if (ik_read(l, IK_STATE, &state)) return -1;
   if (state != 0) return fail(l, "drive not stopped; raw frames are refused");
   if (ik_read(l, IK_RAW_SEQ, &seq)) return -1;
   seq++;
-  if (ik_write(l, IK_RAW_ID, can_id) || ik_write(l, IK_RAW_DATA, word) || ik_write(l, IK_RAW_SEQ, seq)) return -1;
+  if (ik_write(l, IK_RAW_ID, can_id) || ik_write(l, IK_RAW_DATA, lo) ||
+      ik_write(l, IK_RAW_DATA_HI, hi) || ik_write(l, IK_RAW_LEN, len) || ik_write(l, IK_RAW_SEQ, seq)) return -1;
   double deadline = now_s() + timeout_s;
   for (;;) {
     if (ik_read(l, IK_RAW_DONE, &done)) return -1;
@@ -232,6 +310,18 @@ int ik_send_raw(ik_link_t *l, uint32_t can_id, uint32_t word, double timeout_s)
     if (now_s() > deadline) return fail(l, "raw frame 0x%03x not sent", can_id);
     sleep_s(0.005);
   }
+}
+
+int ik_send_raw(ik_link_t *l, uint32_t can_id, uint32_t word, double timeout_s)
+{
+  return send_raw(l, can_id, word, 0, 4, timeout_s);
+}
+
+int ik_send_raw8(ik_link_t *l, uint32_t can_id, const uint8_t data[8], double timeout_s)
+{
+  uint32_t words[2] = {0};
+  for (int i = 0; i < 8; i++) words[i / 4] |= (uint32_t)data[i] << (8 * (i % 4));
+  return send_raw(l, can_id, words[0], words[1], 8, timeout_s);
 }
 
 int ik_capture_start_word(int step_ma, uint32_t *word)

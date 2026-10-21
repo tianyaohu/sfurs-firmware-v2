@@ -96,6 +96,7 @@ int main(int argc, char **argv)
   drive_stage_t stage = {0};
   drive_records_t records = {0};
   startup_result_t startup[4];
+  startup_sync_t sync = {STARTUP_NOT_MEASURABLE, NAN};
   char startup_run_id[96] = "";
   startup_calibration_t startup_cal = startup_nominal(sector_spread_deg);
   for (int w = 0; w < 4; ++w) startup[w] = startup_evaluate(NULL, 0, &startup_cal);
@@ -127,6 +128,11 @@ int main(int argc, char **argv)
       startup[w] = startup_evaluate(rows, (size_t)n, &startup_cal);
     }
   }
+  if (startup_metrics) {
+    ik_link_row_t links[IK_WHEELS];
+    if (ik_link_rows(&link, links)) { fprintf(stderr, "%s\n", link.err); rc = -1; }
+    else sync = startup_link_synchronization(startup, links);
+  }
   (void)ik_write(&link, IK_ENABLE, 0);
   ik_link_close(&link);
   if (startup_metrics) {
@@ -138,7 +144,7 @@ int main(int argc, char **argv)
       else {
         if (fseek(tsv, 0, SEEK_END)) rc = -1;
         if (ftell(tsv) == 0)
-          fputs("# run_id\taxis\tsign\twheel\tverdict\tfirst_failed_k\tdeadlines_met\tmeasurable_count\tovershoot_ratio\tsteady_rpm\tfailed_rule\n", tsv);
+          fputs("# run_id\taxis\tsign\twheel\tverdict\tfirst_failed_k\tdeadlines_met\tmeasurable_count\tovershoot_ratio\tsteady_rpm\tfailed_rule\tapply_skew_us\n", tsv);
         for (int w = 0; w < 4; ++w) {
           const startup_result_t *s = &startup[w];
           fprintf(tsv, "%s\t%s\t%s\t%s\t%s\t%d\t%u\t%u\t",
@@ -150,7 +156,10 @@ int main(int argc, char **argv)
           fputc('\t', tsv);
           if (isfinite(s->steady_rpm)) fprintf(tsv, "%.17g", s->steady_rpm);
           else fputs("na", tsv);
-          fprintf(tsv, "\t%s\n", startup_rule_name(s->rule));
+          fprintf(tsv, "\t%s\t", startup_rule_name(s->rule));
+          if (isfinite(sync.skew_ms)) fprintf(tsv, "%.9g", sync.skew_ms * 1000);
+          else fputs("na", tsv);
+          fputc('\n', tsv);
         }
         if (ferror(tsv)) rc = -1;
         if (fclose(tsv)) rc = -1;
@@ -164,6 +173,9 @@ int main(int argc, char **argv)
       if (isfinite(s->overshoot_ratio)) printf("%.4f", s->overshoot_ratio); else printf("na");
       putchar('\n');
     }
+    printf("startup synchronization %s skew_us=", startup_verdict_name(sync.verdict));
+    if (isfinite(sync.skew_ms)) printf("%.9g", sync.skew_ms * 1000); else printf("na");
+    putchar('\n');
   }
   if (stage.analysis) {
     if (drive_path(path, sizeof path, out, "result.json")) rc = -1;
@@ -178,8 +190,10 @@ int main(int argc, char **argv)
         if (startup_metrics) {
           fprintf(f, ",\"startup\":{\"run_id\":\"%s\",\"axis\":\"%s\",\"sign\":\"%s\","
                      "\"sector_spread_deg\":%.17g,"
-                     "\"synchronization\":\"NOT_MEASURABLE\",\"wheels\":{",
-                  startup_run_id, axis, first_back ? "-" : "+", sector_spread_deg);
+                     "\"synchronization\":\"%s\",\"apply_skew_us\":",
+                  startup_run_id, axis, first_back ? "-" : "+", sector_spread_deg, startup_verdict_name(sync.verdict));
+          drive_json_number(f, sync.skew_ms * 1000);
+          fputs(",\"wheels\":{", f);
           for (int w = 0; w < 4; ++w) {
             const startup_result_t *s = &startup[w];
             fprintf(f, "%s\"%s\":{\"verdict\":\"%s\",\"tracking\":\"%s\",\"overshoot\":\"%s\","

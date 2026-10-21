@@ -43,8 +43,8 @@ int drive_keyboard_log(FILE *f, double now_s, double t0_s, const int32_t vector[
   fprintf(f, "{\"t\":%.3f,\"t_monotonic_s\":%.9f,\"t0_monotonic_s\":%.9f,\"vector\":", now_s, now_s, t0_s);
   vector_json(f, vector, 3);
   fprintf(f, ",\"status\":{\"state\":%u,\"state_name\":\"%s\",\"tx_count\":%u,\"tx_fail\":%u,"
-             "\"bad_input\":%u,\"raw_done\":%u,\"telem_now\":%u,\"target_rpm\":", s->state,
-          state_name(s->state, value), s->tx_count, s->tx_fail, s->bad_input, s->raw_done, s->telem_now);
+             "\"bad_input\":%u,\"raw_done\":%u,\"telem_now\":%u,\"fault\":%u,\"armed\":%u,\"target_rpm\":", s->state,
+          state_name(s->state, value), s->tx_count, s->tx_fail, s->bad_input, s->raw_done, s->telem_now, s->fault, s->armed);
   vector_json(f, s->target_rpm, 4);
   fputs(",\"rpm\":", f); vector_json(f, s->rpm, 4);
   fputs("},\"rows\":[", f);

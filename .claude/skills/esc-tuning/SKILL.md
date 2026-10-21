@@ -15,7 +15,8 @@ Tools (all in `src/tools/`, Nucleo must run the drive image, one tool at a time)
 | Command | What it does | Moves? |
 |---|---|---|
 | `esc_tool status` | live state, Vbus, faults, Hall shift, app CRC per wheel | no |
-| `esc_tool stop` | broadcast STOP; clears a FAULT_OVER whose cause is gone | no |
+| `esc_tool stop` | broadcast DISABLE | no |
+| `esc_tool clear` | clear latched ESC and Nucleo faults whose cause is gone (drive stopped) | no |
 | `esc_tool align <W\|all>` | measure Hall phase shift (RAM) | ~¼ turn each way |
 | `esc_tool capture <W>` | 1 A → 3 A d-axis current step, 16 kHz, R/L/step metrics | clicks, no torque |
 | `esc_tool set <W\|all> KEY N` | RAM gain: `kp ki` (speed), `current_kp current_ki` | no |
@@ -37,7 +38,7 @@ Wheels: FR=NE (sel 1), BR=SE (2), BL=SW (4), FL=NW (8).
 - **Motion only when the user asks** (align, spin, keyboard_drive). capture
   makes no torque but the rotor can click into place.
 - **USB before battery latches undervolt** (FAULT_OVER on every wheel).
-  `esc_tool stop` clears it; a cold start (USB out, battery off, on) avoids it.
+  `esc_tool clear` clears it; a cold start (USB out, battery off, on) avoids it.
 - Flashing over SWD (`esc_update --battery-off`) needs the battery OFF;
   over CAN (`--can`) the battery may be ON — the script refuses unless all
   four ESCs answer IDLE with Vbus, and the bootloader checks the CRC.

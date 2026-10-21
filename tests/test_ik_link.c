@@ -8,6 +8,7 @@
 #include "check.h"
 #include "elfsym.h"
 #include "ik_link.h"
+#include "motor_protocol.h"
 
 static void test_record_words(void)
 {
@@ -129,7 +130,21 @@ static void test_mailbox_over_fake_openocd(void)
   CHECK_EQ(ik_send_raw(&l, CAPTURE | MOTOR_NE_CAN_ID, 0x12345678U, 0.5), 0);
   CHECK_EQ(ik_read(&l, IK_RAW_ID, &v), 0);
   CHECK_EQ(v, CAPTURE | MOTOR_NE_CAN_ID);
-  /* a second frame never completes: raw_done stays 6, expected 7 */
+  CHECK_EQ(ik_read(&l, IK_RAW_LEN, &v), 0); CHECK_EQ(v, 4);
+  CHECK_EQ(ik_read(&l, IK_RAW_DATA_HI, &v), 0); CHECK_EQ(v, 0);
+  uint32_t id;
+  uint8_t data[8];
+  const struct motor_control disable = {.mode = MOTOR_MODE_DISABLE};
+  CHECK_EQ(motor_control_encode(&disable, 15, &id, data), MOTOR_R_NONE);
+  CHECK_EQ(ik_write(&l, IK_RAW_DONE, 7), 0);
+  CHECK_EQ(ik_send_raw8(&l, id, data, 0.5), 0);
+  CHECK_EQ(ik_read(&l, IK_RAW_LEN, &v), 0); CHECK_EQ(v, 8);
+  CHECK_EQ(ik_read(&l, IK_RAW_DATA, &v), 0); CHECK_EQ(v, 0x10);
+  CHECK_EQ(ik_read(&l, IK_RAW_DATA_HI, &v), 0); CHECK_EQ(v, 0);
+  CHECK_EQ(ik_write(&l, IK_FAULT, 0xa5), 0); CHECK_EQ(ik_write(&l, IK_ARMED, 0xf), 0);
+  ik_status_t status;
+  CHECK_EQ(ik_status(&l, &status), 0); CHECK_EQ(status.fault, 0xa5); CHECK_EQ(status.armed, 15);
+  /* A frame never completes: raw_done stays 7, expected 8. */
   CHECK(ik_send_raw(&l, CAPTURE, 1, 0.05) != 0);
   CHECK(strstr(l.err, "not sent"));
   ik_link_close(&l);

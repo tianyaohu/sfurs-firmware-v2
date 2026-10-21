@@ -4,11 +4,11 @@
  * run_id, axis (vx/vy/wz), sign (+/- body command), wheel (FR/BR/BL/FL),
  * verdict, first_failed_k (0 if not applicable), deadlines_met, measurable_count,
  * overshoot_ratio (or na), steady_rpm (validated plateau magnitude, or na),
- * failed_rule. Fields are separated by tabs.
+ * failed_rule, apply_skew_us (or na). Fields are separated by tabs.
  * SPEC-QUESTION: failed_rule is an additional final column because k alone
  * cannot distinguish a missed deadline from a reversed edge in the histogram.
- * This gate covers tracking and overshoot. APPLIED timestamps are not in this
- * recorder/TSV, so synchronization is explicitly reported as NOT_MEASURABLE.
+ * Tracking, overshoot and <=2000 us synchronization are required for PASS.
+ * Older rows without the skew column remain readable but cannot pass.
  */
 #include "startup_metrics.h"
 #include <errno.h>
@@ -21,6 +21,7 @@ typedef struct {
   char id[128];
   int axis, sign;
   unsigned wheels;
+  double skew_us;
 } report_run_t;
 
 static int name_index(const char *name, const char *const *names, int n)
@@ -46,6 +47,7 @@ int main(int argc, char **argv)
   size_t n_runs = 0;
   unsigned active = 0;
   bool invalid = false, failed = false, missing = false;
+  bool sync_failed = false, sync_missing = false;
   if (argc < 2) { fprintf(stderr, "usage: startup_report DIR...\n"); return 1; }
   for (int arg = 1; arg < argc; ++arg) {
     char path[4096];
@@ -64,16 +66,16 @@ int main(int argc, char **argv)
         invalid = true; break;
       }
       *newline = 0;
-      char *fields[11];
+      char *fields[12];
       size_t n_fields = 1;
       fields[0] = line;
       for (char *p = line; *p; ++p) if (*p == '\t') {
         *p = 0;
-        if (n_fields == 11) { n_fields = 12; break; }
+        if (n_fields == 12) { n_fields = 13; break; }
         fields[n_fields++] = p + 1;
       }
-      if (n_fields != 11) goto bad_row;
-      for (size_t i = 0; i < 11; ++i) if (!*fields[i]) goto bad_row;
+      if (n_fields != 11 && n_fields != 12) goto bad_row;
+      for (size_t i = 0; i < n_fields; ++i) if (!*fields[i]) goto bad_row;
       int a = name_index(fields[1], axes, 3);
       int s = !strcmp(fields[2], "+") ? 1 : !strcmp(fields[2], "-") ? 0 : -1;
       int w = name_index(fields[3], wheels, 4);
@@ -99,6 +101,13 @@ int main(int argc, char **argv)
         if (errno || end == fields[9] || *end || !isfinite(steady_rpm) || steady_rpm < 2) goto bad_row;
       }
       if (isfinite(ratio) && !isfinite(steady_rpm)) goto bad_row;
+      double skew_us = NAN;
+      if (n_fields == 12 && strcmp(fields[11], "na")) {
+        char *end;
+        errno = 0;
+        skew_us = strtod(fields[11], &end);
+        if (errno || end == fields[11] || *end || !isfinite(skew_us) || skew_us < 0) goto bad_row;
+      }
       if (rule == STARTUP_RULE_NO_PLATEAU && (isfinite(steady_rpm) || isfinite(ratio))) goto bad_row;
       if (a < 0 || s < 0 || w < 0 || v < 0 || rule < 0 || k < 0 || met < 0 || measurable < 0 ||
           strlen(fields[0]) >= sizeof runs[0].id) goto bad_row;
@@ -114,16 +123,20 @@ int main(int argc, char **argv)
         report_run_t *more = realloc(runs, (n_runs + 1) * sizeof *runs);
         if (!more) { fclose(f); free(runs); return 1; }
         runs = more;
-        runs[n_runs] = (report_run_t){.axis = a, .sign = s};
+        runs[n_runs] = (report_run_t){.axis = a, .sign = s, .skew_us = skew_us};
         strcpy(runs[n_runs++].id, fields[0]);
       }
       if (runs[run].axis != a || runs[run].sign != s || (runs[run].wheels & (1U << w))) goto bad_row;
+      if (isfinite(runs[run].skew_us) != isfinite(skew_us) ||
+          (isfinite(skew_us) && runs[run].skew_us != skew_us)) goto bad_row;
       runs[run].wheels |= 1U << w;
       ++file_rows;
       ++counts[a][s][w][v];
       if (v != STARTUP_INACTIVE) ++active;
       if (v == STARTUP_FAIL) { failed = true; ++histogram[rule][k]; }
       if (v == STARTUP_NOT_MEASURABLE) missing = true;
+      if (!isfinite(skew_us)) { sync_missing = true; missing = true; }
+      else if (skew_us > 2000) { sync_failed = true; failed = true; }
       continue;
     bad_row:
       fprintf(stderr, "%s:%u: invalid or duplicate startup row\n", path, line_no);
@@ -148,7 +161,8 @@ int main(int argc, char **argv)
   for (int r = 0; r < STARTUP_RULE_COUNT; ++r) for (int k = 0; k <= 8; ++k)
     if (histogram[r][k]) printf("%s\t%d\t%u\n", startup_rule_name(r), k, histogram[r][k]);
   bool pass = active && !failed && !missing && !invalid;
-  puts("scope: startup tracking + overshoot; synchronization: NOT_MEASURABLE (no APPLIED timestamps)");
+  printf("scope: startup tracking + overshoot + synchronization; synchronization: %s\n",
+         sync_failed ? "FAIL" : sync_missing || !active ? "NOT_MEASURABLE" : "PASS");
   printf("overall: %s%s\n", pass ? "PASS" : failed || invalid ? "FAIL" : "NOT_MEASURABLE",
          invalid ? " (invalid or missing evidence)" : "");
   return pass ? 0 : 1;

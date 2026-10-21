@@ -134,7 +134,7 @@ static void test_wrong_abi_and_dead_preflight(void)
   }
   uint32_t addresses[IK_SYM_COUNT]; char err[256];
   CHECK_EQ(ik_resolve(FAKE_ELF, addresses, err, sizeof err), 0);
-  char mem[128]; snprintf(mem, sizeof mem, "%x=%x", addresses[IK_ABI_SYM], IK_ABI);
+  char mem[128]; snprintf(mem, sizeof mem, "%x=%x,%x=0", addresses[IK_ABI_SYM], IK_ABI, addresses[IK_FAULT]);
   setenv("FAKE_OCD_MEM", mem, 1);
   for (int i = 0; i < 2; i++) {
     CHECK_EQ(run(i ? TUNE_TOOL : MOVE_TOOL, (const char *const[]){"--out", directory, "--elf", FAKE_ELF, NULL}), 1);
@@ -149,7 +149,7 @@ static void terminal_case(int mode)
   uint32_t addresses[IK_SYM_COUNT]; char err[256];
   CHECK_EQ(ik_resolve(FAKE_ELF, addresses, err, sizeof err), 0);
   char mem[8192]; size_t used = 0;
-  used += (size_t)snprintf(mem, sizeof mem, "%x=%x,%x=%x", addresses[IK_ABI_SYM], IK_ABI, addresses[IK_STATE], mode == 2 ? 1 : 0);
+  used += (size_t)snprintf(mem, sizeof mem, "%x=%x,%x=%x,%x=0", addresses[IK_ABI_SYM], IK_ABI, addresses[IK_STATE], mode == 2 ? 1 : 0, addresses[IK_FAULT]);
   /* Static mailbox words exercise the documented RPC boundary; no target dynamics are simulated. */
   for (int w = 0; w < 4; w++) for (int k = 0; k < IK_ROW_WORDS; k++)
     used += (size_t)snprintf(mem + used, sizeof mem - used, ",%x=0", addresses[IK_TELEM] + (w * IK_ROW_WORDS + k) * 4);

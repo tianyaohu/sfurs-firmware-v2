@@ -6,24 +6,26 @@
  *   esc_tool set WHEEL KEY VALUE                 CONFIG_SET key (RAM), see ik_link.c for keys
  *   esc_tool capture WHEEL [--step-ma 3000] [--out f.json]
  *                                                current-loop step test: R, L, step response, PI gains
- *   esc_tool spin WHEEL --rpm 60 [--seconds 3] [--ramp-ms 300] [--kp N --ki N] [--log f.jsonl]
+ *   esc_tool spin WHEEL --rpm 60 [--seconds 3] [--kp N --ki N] [--log f.jsonl]
  *                                                one wheel at a speed setpoint (motion!)
  *   esc_tool pulse [--axis vy|vx] [--speed 0.2] [--accel RPMPS] [--seconds 1.5] [--reps 3]
  *                  [--kp N --ki N] [--ff-static MA] [--ff-kinetic MA] [--log f.jsonl]
  *                                                scripted ground drive out and back (motion!)
- *   esc_tool stop                                broadcast STOP; clears a fault whose cause is gone
+ *   esc_tool stop                                broadcast DISABLE
+ *   esc_tool clear                               clear latched ESC faults while stopped
  *
  * align turns the wheel about 1/4 revolution forward and back at 2 A: battery ON, wheels off the
  * ground. Results are lost on ESC reset; bake them into the per-wheel build (scripts/esc_build.sh
  * --hall-shift). capture holds the rotor with d-axis current (1 A, then the step): it may click into
- * position but makes no torque; battery ON. spin streams SPEED_WRITE to one wheel only; --kp/--ki are
- * set in RAM first and the firmware defaults (drive_parameters.h) restored afterwards; STOP on exit,
- * and the ESC stops itself 0.25 s after the stream. pulse drives the whole robot through the Nucleo:
+ * position but makes no torque; battery ON. spin arms and streams SPEED to one wheel; --kp/--ki are
+ * set in RAM first and the firmware defaults (drive_parameters.h) restored afterwards; DISABLE on exit,
+ * and the ESC stops itself 0.1 s after the stream. pulse drives the whole robot through the Nucleo:
  * each rep goes out along --axis for --seconds and back; gains and friction feed-forward are set in
  * RAM on all four wheels and the defaults restored afterwards. Ctrl-C or switching the battery off
  * stops it: the Nucleo brakes 0.3 s after the heartbeat stops.
  */
 #include <math.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +37,8 @@
 #include "capture_analysis.h"
 #include "esc_defaults.h"
 #include "esc_ops.h"
+#include "esc_ctl.h"
+#include "motor_protocol.h"
 #include "ik_link.h"
 #include "pulse_run.h"
 
@@ -85,8 +89,19 @@ static int cmd_status(ik_link_t *l)
   if (ik_rows(l, before)) return die("%s", l->err);
   sleep_s(0.3);
   if (ik_rows(l, rows)) return die("%s", l->err);
+  ik_link_row_t links[IK_WHEELS];
+  ik_status_t status;
+  if (ik_link_rows(l, links) || ik_status(l, &status)) return die("%s", l->err);
   for (int i = 0; i < IK_WHEELS; i++) {
     const ik_row_t *r = &rows[i];
+    const ik_link_row_t *link = &links[i];
+    const bool faulted = status.fault & (1U << i), lost = status.fault & (1U << (4 + i));
+    printf("%s/%s: link %s/%s/%s session %u misses %u fault %u lost %u cause %s armed %u\n",
+           IK_WHEEL_POS[i], IK_WHEEL_CORNER[i], link->valid ? link->lifecycle_name : "unreadable",
+           link->valid ? link->outcome_name : "?", link->valid ? link->reason_name : "?",
+           link->session, link->misses, faulted, lost,
+           !(faulted || lost) ? "-" : !link->valid ? "?" : link->fault_reason ? link->fault_reason_name : lost ? "no replies" : "NONE",
+           !!(status.armed & (1U << i)));
     /* rows keep the last values; only a new count means the ESC is live */
     if (!r->valid || !r->status_count || (before[i].valid && before[i].status_count == r->status_count)) {
       printf("%s/%s: no reply\n", IK_WHEEL_POS[i], IK_WHEEL_CORNER[i]);
@@ -197,11 +212,21 @@ static int cmd_capture(ik_link_t *l, const wheel_t *w, int n, int step_ma, const
 
 typedef struct { double t; int cmd; int32_t rpm; double iq_a, iq_ref_a; const char *mc_state, *stop_reason; char faults[96]; } spin_row_t;
 
-typedef struct { int rpm; double seconds; int ramp_ms; int kp, ki; bool has_kp, has_ki; const char *log; } spin_args_t;
+typedef struct { int rpm; double seconds; int kp, ki; bool has_kp, has_ki; const char *log; } spin_args_t;
+
+static volatile sig_atomic_t spin_interrupted;
+static void spin_interrupt(int signal_number) { spin_interrupted = signal_number; }
 
 static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
 {
-  if (abs(a->rpm) > 600 || !(a->seconds > 0 && a->seconds <= 10)) return die("spin: |rpm| <= 600 and 0 < seconds <= 10");
+  if (a->rpm < -600 || a->rpm > 600 || !(a->seconds > 0 && a->seconds <= 10))
+    return die("spin: |rpm| <= 600 and 0 < seconds <= 10");
+  struct sigaction action = {.sa_handler = spin_interrupt}, old_int, old_term, old_hup;
+  sigemptyset(&action.sa_mask);
+  spin_interrupted = 0;
+  sigaction(SIGINT, &action, &old_int);
+  sigaction(SIGTERM, &action, &old_term);
+  sigaction(SIGHUP, &action, &old_hup);
   int kp0, ki0;
   esc_default("kp", &kp0);
   esc_default("ki", &ki0);
@@ -211,14 +236,34 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
   spin_row_t *rows = malloc(cap * sizeof *rows);
   int err = 0;
   if (gains && (send_config(l, w->sel, "kp", kp) || send_config(l, w->sel, "ki", ki))) err = 1;
-  uint32_t word = ((uint32_t)(a->ramp_ms & 0xFFFF) << 16) | ((uint32_t)a->rpm & 0xFFFF);
+  esc_ctl_t ctl;
+  esc_ctl_init(&ctl, l, 0.03);
+  if (!err && esc_ctl_arm(&ctl, w->index)) err = 1;
   double t0 = now_s(), last_cmd = -1.0, now;
   uint32_t last_count = 0;
   bool have_count = false;
-  while (!err && (now = now_s() - t0) < a->seconds + 0.6) {
-    if (now < a->seconds && now - last_cmd >= 0.05) {
-      if (ik_send_raw(l, SPEED_WRITE | w->sel, word, 1.0)) { err = 1; break; }
+  bool disabled = false;
+  while (!err && !spin_interrupted && (now = now_s() - t0) < a->seconds + 0.6) {
+    if (now < a->seconds && now - last_cmd >= 0.02) {
+      if (last_cmd >= 0 && now - last_cmd > 0.04) {
+        snprintf(l->err, sizeof l->err, "spin: SPEED stream missed 40 ms deadline"); err = 1; break;
+      }
+      if (esc_ctl_speed(&ctl, w->index, a->rpm)) { err = 1; break; }
       last_cmd = now;
+    }
+    if (!disabled && now >= a->seconds) {
+      if (esc_ctl_disable_all(&ctl)) { err = 1; break; }
+      disabled = true;
+    }
+    if (!disabled) {
+      ik_link_row_t links[IK_WHEELS];
+      if (ik_link_rows(l, links)) { err = 1; break; }
+      const ik_link_row_t *link = &links[w->index];
+      if (link->valid && (link->lifecycle == MOTOR_LC_FAULTED || link->lifecycle == MOTOR_LC_DISARMED ||
+                          link->outcome == MOTOR_OUT_REJECTED || link->session != ctl.wheel[w->index].session)) {
+        snprintf(l->err, sizeof l->err, "%s spin stopped: %s/%s/%s", w->name,
+                 link->lifecycle_name, link->outcome_name, link->reason_name); err = 1; break;
+      }
     }
     ik_row_t r[IK_WHEELS];
     if (ik_rows(l, r)) { err = 1; break; }
@@ -234,7 +279,7 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
     sleep_s(0.005);
   }
   if (err) fprintf(stderr, "%s\n", l->err);
-  for (int i = 0; i < 3; i++) (void)ik_send_raw(l, MOTOR_STOP | 0x0F, 0, 1.0); /* always stop, errors or not */
+  if (esc_ctl_disable_all(&ctl)) { fprintf(stderr, "%s\n", l->err); err = 1; }
   if (gains) {
     const int idx[1] = {w->index};
     if (!pulse_wait_idle(l, idx, 1, 3.0)) printf("%s: not IDLE; speed gains may not be restored (esc_tool set)\n", w->name);
@@ -261,7 +306,7 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
     if (rows[i].faults[0] && !strstr(faults, rows[i].faults)) {
       snprintf(faults + strlen(faults), sizeof faults - strlen(faults), "%s%s", faults[0] ? "," : "", rows[i].faults);
     }
-    if (!(a->ramp_ms / 1000.0 + 0.5 < rows[i].t && rows[i].t < a->seconds)) continue;
+    if (!(0.52 < rows[i].t && rows[i].t < a->seconds)) continue;
     m++;
     sum += rows[i].rpm;
     sum2 += (double)rows[i].rpm * rows[i].rpm;
@@ -277,6 +322,9 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
            w->name, a->rpm, kp, ki, mean, sd, wrong, m, ref_sum / (double)m, ref_peak, faults[0] ? faults : "-");
   }
   free(rows);
+  sigaction(SIGINT, &old_int, NULL);
+  sigaction(SIGTERM, &old_term, NULL);
+  sigaction(SIGHUP, &old_hup, NULL);
   return err;
 }
 
@@ -361,7 +409,7 @@ static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
 
 static int usage(void)
 {
-  return die("usage: esc_tool [--elf F] [--sn SERIAL] status|stop|align W|set W KEY VALUE|capture W [--step-ma N] [--out F]|"
+  return die("usage: esc_tool [--elf F] [--sn SERIAL] status|stop|clear|align W|set W KEY VALUE|capture W [--step-ma N] [--out F]|"
              "spin W --rpm N [...]|pulse [...]  (see the header of src/tools/esc_tool.c)");
 }
 
@@ -378,12 +426,12 @@ int main(int argc, char **argv)
   const char *cmd = argv[i++];
   wheel_t w[IK_WHEELS];
   int nw = 0;
-  if (strcmp(cmd, "status") && strcmp(cmd, "stop") && strcmp(cmd, "pulse")) {
+  if (strcmp(cmd, "status") && strcmp(cmd, "stop") && strcmp(cmd, "clear") && strcmp(cmd, "pulse")) {
     if (i >= argc) return usage();
     if (!(nw = pick_wheels(argv[i], w))) return die("unknown wheel %s; use FR BR BL FL (or NE SE SW NW) or all", argv[i]);
     i++;
   }
-  spin_args_t sa = {.rpm = 0, .seconds = 3.0, .ramp_ms = 300};
+  spin_args_t sa = {.rpm = 0, .seconds = 3.0};
   pulse_args_t pa = {.axis = "vy", .speed = 0.2, .seconds = 1.5, .reps = 3};
   int step_ma = 3000, set_value = 0;
   const char *out = NULL, *key = NULL;
@@ -402,7 +450,6 @@ int main(int argc, char **argv)
     else if (!strcmp(o, "--out")) out = v;
     else if (!strcmp(o, "--rpm")) sa.rpm = atoi(v), have_rpm = true;
     else if (!strcmp(o, "--seconds")) sa.seconds = pa.seconds = atof(v);
-    else if (!strcmp(o, "--ramp-ms")) sa.ramp_ms = atoi(v);
     else if (!strcmp(o, "--kp")) sa.kp = pa.kp = atoi(v), sa.has_kp = pa.has_kp = true;
     else if (!strcmp(o, "--ki")) sa.ki = pa.ki = atoi(v), sa.has_ki = pa.has_ki = true;
     else if (!strcmp(o, "--log")) sa.log = pa.log = v;
@@ -419,11 +466,15 @@ int main(int argc, char **argv)
 
   ik_link_t link;
   if (ik_link_open(&link, sn, elf)) return die("%s", link.err);
+  esc_ctl_t ctl;
+  esc_ctl_init(&ctl, &link, 1.0);
   int rc = 0;
   if (!strcmp(cmd, "status")) {
     rc = cmd_status(&link);
   } else if (!strcmp(cmd, "stop")) {
-    rc = ik_send_raw(&link, MOTOR_STOP | 0x0F, 0, 1.0) ? die("%s", link.err) : 0;
+    rc = esc_ctl_disable_all(&ctl) ? die("%s", link.err) : 0;
+  } else if (!strcmp(cmd, "clear")) {
+    rc = esc_ctl_clear_faults(&ctl) ? die("%s", link.err) : 0;
   } else if (!strcmp(cmd, "align")) {
     rc = cmd_align(&link, w, nw);
   } else if (!strcmp(cmd, "capture")) {

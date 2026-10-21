@@ -204,8 +204,8 @@ static void test_stage_refuses_static_replies_without_writes(void)
   uint32_t addresses[IK_SYM_COUNT]; char err[256];
   CHECK_EQ(ik_resolve(FAKE_ELF, addresses, err, sizeof err), 0);
   char mem[256];
-  snprintf(mem, sizeof mem, "%x=%x,%x=1234,%x=dead", addresses[IK_ABI_SYM], IK_ABI,
-           addresses[IK_ENABLE], addresses[IK_RAW_SEQ]);
+  snprintf(mem, sizeof mem, "%x=%x,%x=1234,%x=dead,%x=0", addresses[IK_ABI_SYM], IK_ABI,
+           addresses[IK_ENABLE], addresses[IK_RAW_SEQ], addresses[IK_FAULT]);
   setenv("FAKE_OCD_MEM", mem, 1);
   ik_link_t link; CHECK_EQ(ik_link_open(&link, "SN", FAKE_ELF), 0);
   drive_settings_t settings; CHECK_EQ(drive_settings_defaults(&settings), 0);

@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 #define EOM 0x1a
-#define SLOTS 256
+#define SLOTS 512
 
 static struct { unsigned long addr, value; } mem[SLOTS];
 static int used;

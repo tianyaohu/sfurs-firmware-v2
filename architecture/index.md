@@ -20,7 +20,7 @@ When you add a file or folder, add a line here in the same commit.
 | File | Role |
 |---|---|
 | `src/nucleo/CM7/Core/Src/main.c` | CubeMX init; our code only in `USER CODE` sections |
-| `src/nucleo/CM7/Core/Src/ik_drive.c` | 20 ms drive loop: read twist mailbox, IK, slew-limit, send `SPEED_WRITE` |
+| `src/nucleo/CM7/Core/Src/ik_drive.c` | 20 ms drive loop: read twist mailbox, IK, slew-limit, send protocol v1 CONTROL frames |
 | `src/nucleo/CM7/Core/Src/ik_telemetry.c` | Poll ESC status/diag, keep last reply per wheel for the PC |
 | `src/nucleo/CM7/Core/Src/fwu_updater.c`, `can_fwu_host.c` | Updater image: push an ESC app over CAN |
 | `src/shared/src/rover_kinematics.c` | Body twist <-> wheel speeds (IK table) |
@@ -52,7 +52,7 @@ Programs (one `targets/<tool>.cmake` each):
 | Program | Role |
 |---|---|
 | `esc_update.c` | Install the ESC app over CAN or SWD, per wheel (logic in `lib/flashimg_*.c`) |
-| `esc_tool.c` | ESC setup: status, align, set, capture, spin, pulse, stop |
+| `esc_tool.c` | ESC setup: status, align, set, capture, spin, pulse, stop, clear |
 | `keyboard_drive.c` | WASD/QE drive |
 | `move_test.c` | Scripted straight-line moves, logged with monotonic stamps |
 | `tune_ground.c` | Ground friction feed-forward tuning |
@@ -65,7 +65,8 @@ Library `lib/` (every file joins library `tools`):
 |---|---|
 | `ocd.c` | OpenOCD session: SWD read/write over its Tcl port, one process per ST-LINK serial |
 | `elfsym.c`, `crc32.c`, `sha256.c` | ELF symbol lookup, CRC-32 (IEEE, = zlib), SHA-256 |
-| `ik_link.c` | Nucleo mailbox: command words, CONFIG_SET, telemetry decode, capture and recorder readout |
+| `ik_link.c` | Nucleo mailbox: command words, CONFIG_SET, telemetry and protocol-link decode, fault check, capture and recorder readout |
+| `esc_ctl.c` | Protocol v1 to single wheels while the drive is stopped: ARM handshake, SPEED, DISABLE, CLEAR_FAULT (frames from `motor_protocol.c`) |
 | `esc_ops.c`, `esc_defaults.c` | Breakaway timing, pulse guard and plan; ESC boot defaults from `drive_parameters.h` (generated header) |
 | `pulse_run.c` | Run a plan through the Nucleo, guard it, log it, restore defaults |
 | `capture_analysis.c`, `tune_analysis.c` | Current-loop R/L/PI fit; friction fit, overshoot, acceptance |

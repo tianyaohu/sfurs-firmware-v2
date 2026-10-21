@@ -64,6 +64,8 @@ int pulse_run(ik_link_t *l, const esc_move_t *plan, size_t n_moves, double durat
               const pulse_settings_t *settings, int accel_rpmps, pulse_result_t *out)
 {
   memset(out, 0, sizeof *out);
+  uint32_t fault;
+  if (ik_read(l, IK_FAULT, &fault) || ik_check_fault(l, fault)) return -1;
   ik_row_t before[IK_WHEELS], rows[IK_WHEELS];
   if (ik_rows(l, before)) return -1;
   pulse_sleep_s(0.3);
@@ -100,6 +102,12 @@ int pulse_run(ik_link_t *l, const esc_move_t *plan, size_t n_moves, double durat
       }
       ik_status_t st;
       if (ik_status(l, &st) || ik_rows(l, rows)) { err = 1; break; }
+      if (st.fault && ik_check_fault(l, st.fault)) {
+        snprintf(out->aborted, sizeof out->aborted, "%.127s", l->err);
+        fprintf(stderr, "%s\n", l->err);
+        err = 1;
+        break;
+      }
       uint32_t counts[IK_WHEELS];
       int changed = !have_last;
       for (int i = 0; i < IK_WHEELS; i++) {

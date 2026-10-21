@@ -32,7 +32,7 @@ what someone does next; this is not a log.
   whose reply count advanced is live (`esc_tool status` checks this).
 - **USB before battery latches undervolt.** An ESC brought up on its ST-LINK
   USB sits in undervolt; when the battery comes on it stays in FAULT_OVER.
-  `esc_tool stop` clears it once no fault is present.
+  `esc_tool clear` clears it once no fault is present.
 - **Idle Iq of ±25 A is not current.** Current offsets are calibrated at each
   motor start; before that the reading is offset garbage with PWM off.
 - **Speed gains that hold the robot on the ground limit-cycle in free air.**

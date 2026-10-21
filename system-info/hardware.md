@@ -46,7 +46,7 @@ few characters; check the full serial before any write.
 - Battery state is measured: ESC Vbus over CAN (`esc_tool status`) or SWD;
   < 8 V is off (USB alone ~4.6 V, the 3S pack ~12 V).
 - Power an ESC from the battery before USB: USB-first latches undervolt
-  (FAULT_OVER). `esc_tool stop` clears it.
+  (FAULT_OVER). `esc_tool clear` clears it.
 - Wheels off the ground for alignment and first runs after any firmware change.
 - One program per probe: close `keyboard_drive` / `esc_tool` before
   flashing or attaching another tool.

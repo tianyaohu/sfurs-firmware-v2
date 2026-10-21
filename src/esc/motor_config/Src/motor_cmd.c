@@ -109,7 +109,7 @@ static void clear_target(struct motor_cmd *m)
 {
   m->setpoint = 0;
   m->ff_ma = 0;
-  m->park_ms = 0U;
+  m->parking = 0U;
   m->start_dir = 0;
   m->first_edge = 0U;
 }
@@ -157,7 +157,7 @@ static enum motor_reason motion_verdict(const struct motor_cmd *m, const struct 
   *duplicate = 0;
   if (m->lifecycle == MOTOR_LC_FAULTED) return (enum motor_reason)m->latched;
   if (!armed(m->lifecycle)) return MOTOR_R_NOT_ARMED;
-  if (c->session != m->session) return MOTOR_R_BAD_SESSION;
+  if (c->session != m->session || m->session != m->tick_session) return MOTOR_R_BAD_SESSION;
   switch (motor_seq_classify(m->last_seq, c->seq)) {
     case MOTOR_SEQ_NEXT: break;
     case MOTOR_SEQ_DUPLICATE:
@@ -201,14 +201,17 @@ static void on_disable(struct motor_cmd *m, const struct motor_cmd_inputs *in, s
     m->lifecycle = MOTOR_LC_READY;
   }
   if (m->lifecycle != MOTOR_LC_FAULTED) clear_target(m);
-  reply(m, in, c->seq, MOTOR_OUT_APPLIED, m->latched);
+  reply(m, in, c->seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE); /* a FAULTED lifecycle field says the rest */
 }
 
 static void on_arm(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct candidate *cand,
                    const struct motor_cmd_rx_entry *e)
 {
+  if (e->c.session != m->session || m->session != m->tick_session) {
+    reply(m, in, e->c.seq, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SESSION);
+    return;
+  }
   if (m->lifecycle == MOTOR_LC_FAULTED) { reply(m, in, e->c.seq, MOTOR_OUT_REJECTED, m->latched); return; }
-  if (e->c.session != m->session) { reply(m, in, e->c.seq, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SESSION); return; }
   supersede(m, in, cand);
   if (m->lifecycle == MOTOR_LC_DISARMED) {
     m->lifecycle = MOTOR_LC_READY;
@@ -224,9 +227,9 @@ static void on_clear_fault(struct motor_cmd *m, const struct motor_cmd_inputs *i
                            const struct motor_control *c)
 {
   if (m->lifecycle != MOTOR_LC_FAULTED) { reply(m, in, c->seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE); return; }
-  const int cause_gone = in->mc == MOTOR_CMD_MC_IDLE || (in->mc == MOTOR_CMD_MC_FAULT && !in->mc_fault_present);
+  const int cause_gone = !in->mc_fault_present && (in->mc == MOTOR_CMD_MC_IDLE || in->mc == MOTOR_CMD_MC_FAULT);
   if (!cause_gone) { reply(m, in, c->seq, MOTOR_OUT_REJECTED, MOTOR_R_NOT_IDLE); return; }
-  if (in->mc == MOTOR_CMD_MC_FAULT) out->ack_fault = 1U;
+  out->ack_fault = 1U; /* MCSDK ignores it outside FAULT_OVER */
   m->latched = MOTOR_R_NONE;
   disarm(m, out, MOTOR_CMD_STOP_NONE);
   reply(m, in, c->seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
@@ -257,8 +260,9 @@ static void drain(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
     const struct motor_cmd_rx_entry e = m->inbox[tail % MOTOR_CMD_INBOX];
     atomic_store_explicit(&m->inbox_tail, tail + 1U, memory_order_release);
     if (e.reason != MOTOR_R_NONE) { reply(m, in, e.c.seq, MOTOR_OUT_REJECTED, e.reason); continue; }
-    /* Freshness is judged by receive time, never by when the tick got to it. */
-    if (m->now_ms - e.rx_ms >= MOTOR_WATCHDOG_MS) {
+    /* Motion freshness is judged by receive time, never by when the tick got to it. A late
+     * DISABLE still stops (the safe direction) and a late ARM only starts the watchdog clock. */
+    if (e.c.mode != MOTOR_MODE_DISABLE && m->now_ms - e.rx_ms >= MOTOR_WATCHDOG_MS) {
       reply(m, in, e.c.seq, MOTOR_OUT_REJECTED, MOTOR_R_TIMEOUT);
       continue;
     }
@@ -301,7 +305,7 @@ static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
     case MOTOR_LC_STARTING:
       if (in->mc == MOTOR_CMD_MC_RUN) {
         m->lifecycle = MOTOR_LC_RUNNING;
-        m->park_ms = 0U;
+        m->parking = 0U;
       } else if (m->now_ms - m->state_ms >= MOTOR_CMD_START_TIMEOUT_MS) {
         fault(m, out, MOTOR_R_FAULT_MCSDK);
       }
@@ -313,13 +317,16 @@ static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
       } else if (in->mc != MOTOR_CMD_MC_RUN) { /* MCSDK left RUN on its own */
         fault(m, out, MOTOR_R_FAULT_MCSDK);
       } else if (m->setpoint == 0 && in->rpm < MOTOR_CMD_PARK_RPM && in->rpm > -MOTOR_CMD_PARK_RPM) {
-        if (++m->park_ms >= MOTOR_CMD_PARK_MS) {
+        if (!m->parking) {
+          m->parking = 1U;
+          m->park_since = m->now_ms;
+        } else if (m->now_ms - m->park_since >= MOTOR_CMD_PARK_MS) {
           stop_output(m, out, MOTOR_CMD_STOP_PARKED);
           m->lifecycle = MOTOR_LC_READY;
           clear_target(m);
         }
       } else {
-        m->park_ms = 0U;
+        m->parking = 0U;
       }
       break;
     default:
@@ -336,10 +343,17 @@ void motor_cmd_tick(struct motor_cmd *m, const struct motor_cmd_inputs *in, stru
 {
   memset(out, 0, sizeof *out);
   m->now_ms = in->now_ms;
+  m->tick_session = m->session;
   if (in->mc == MOTOR_CMD_MC_FAULT && m->lifecycle != MOTOR_LC_FAULTED) fault(m, out, MOTOR_R_FAULT_MCSDK);
   if (atomic_exchange_explicit(&m->inbox_overflow, 0U, memory_order_acq_rel)) {
     ++m->count.overflow;
-    if (m->lifecycle != MOTOR_LC_FAULTED) disarm(m, out, MOTOR_CMD_STOP_OVERFLOW);
+    if (m->lifecycle != MOTOR_LC_FAULTED) {
+      disarm(m, out, MOTOR_CMD_STOP_OVERFLOW);
+    } else { /* stays FAULTED, but nothing from the faulty burst may outlive it */
+      m->session = motor_session_next(m->session, m->now_ms);
+      m->applied_seq = 0U;
+      m->last_valid = 0U;
+    }
   }
   struct candidate cand = { 0 };
   drain(m, in, out, &cand);

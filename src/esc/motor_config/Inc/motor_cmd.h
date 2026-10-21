@@ -118,6 +118,8 @@ struct motor_cmd {
   uint8_t lifecycle;       /**< ::motor_lifecycle */
   uint8_t latched;         /**< ::motor_reason of the fault while FAULTED, else 0 */
   uint8_t session;         /**< current session (the challenge while DISARMED) */
+  uint8_t tick_session;    /**< session when this tick began: frames drained in the tick of a session
+                                change were sent before anyone could know the new one */
   uint8_t last_seq;        /**< sequence baseline (ARM or last accepted motion frame) */
   uint8_t applied_seq;     /**< seq of the motion frame the target came from; 0 after a disarm */
   uint8_t last_valid;      /**< last_frame holds an accepted motion frame of this session */
@@ -127,7 +129,8 @@ struct motor_cmd {
   int16_t ff_ma;           /**< applied feed-forward */
   uint32_t watch_ms;       /**< ARM time or receive time of the last fresh motion frame */
   uint32_t state_ms;       /**< entry time of STARTING */
-  uint32_t park_ms;        /**< time spent at zero target and standstill */
+  uint32_t park_since;     /**< time the wheel came to standstill at a zero target, ms */
+  uint8_t parking;         /**< park_since is running */
   uint16_t start_pos;      /**< Hall edge counters when the target last left zero or reversed */
   uint16_t start_neg;      /**< see start_pos */
   int8_t start_dir;        /**< sign of the target at that moment */

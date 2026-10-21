@@ -31,10 +31,10 @@ The 1 kHz tick evaluates, in this order: (1) MCSDK fault, (2) lifecycle FIFO, (3
 | STARTING, RUNNING, HOLD | DISABLE | READY | `MC_StopMotor1`, integrator and ff cleared, motion slot cleared |
 | DISARMED, READY | DISABLE | unchanged | none (idempotent) |
 | FAULTED | DISABLE | FAULTED | none (output already off) |
-| FAULTED | CLEAR_FAULT, MCSDK fault gone and MCSDK IDLE | DISARMED | acknowledge the MCSDK fault, new session |
+| FAULTED | CLEAR_FAULT, no fault present and MCSDK IDLE or FAULT_OVER (it leaves FAULT_OVER only through the acknowledgement) | DISARMED | acknowledge the MCSDK fault (always; ignored outside FAULT_OVER), new session |
 | FAULTED | CLEAR_FAULT, cause still present or not IDLE | FAULTED | REJECTED(NOT_IDLE or the latched reason) |
 | not FAULTED | CLEAR_FAULT | unchanged | APPLIED (nothing latched) |
-| READY | accepted motion frame, aligned | STARTING | `MC_StartMotor1`, mode latched, reply INHIBITED(STARTING) |
+| READY | non-zero target held, aligned, not busy, MCSDK IDLE | STARTING | `MC_StartMotor1`, mode latched. The target is held and answered INHIBITED(STARTING) until MCSDK is IDLE (after a stop it passes through STOP first; `MC_StartMotor1` refuses anything but IDLE) |
 | READY | accepted motion frame, not aligned | READY | REJECTED(NOT_ALIGNED) |
 | STARTING | MCSDK reaches RUN | RUNNING | the integrator starts at 0, ff slew starts at 0 |
 | STARTING | no RUN within 500 ms | FAULTED | reason FAULT_MCSDK, `MC_StopMotor1` |
@@ -45,7 +45,7 @@ The 1 kHz tick evaluates, in this order: (1) MCSDK fault, (2) lifecycle FIFO, (3
 | RUNNING | stall monitor fires | FAULTED | reason FAULT_STALL, `MC_StopMotor1` |
 | RUNNING | speed estimate invalid after it was valid, beyond the stale window | FAULTED | reason FAULT_HALL_LOST, `MC_StopMotor1` |
 | armed, not FAULTED | watchdog age >= 100 ms | DISARMED | `MC_StopMotor1` if on, new session, reason TIMEOUT (sticky in DIAG until the next ARM) |
-| any | lifecycle FIFO overflow | DISARMED (FAULTED stays FAULTED) | `MC_StopMotor1`, new session, LIFECYCLE_OVERFLOW counted |
+| any | inbox overflow | DISARMED (FAULTED stays FAULTED) | `MC_StopMotor1`, new session (also when FAULTED), LIFECYCLE_OVERFLOW counted |
 
 Notes:
 - A DISABLE keeps the session: the Nucleo can resume with the next sequence without a new ARM. Losing commands
@@ -78,6 +78,14 @@ Refined during implementation (2026-10-21); same guarantees as the approved draf
 - ARM starts the watchdog clock; after that only fresh accepted motion frames refresh it. An armed ESC that receives
   no motion for 100 ms disarms.
 - CLEAR_FAULT does not check the session: it can only lead to DISARMED, never to motion.
+- A frame drained in the same tick as a session change (overflow, clear, disarm) cannot use the new
+  session: it was sent before the sender could have read it from a reply. The session generator is
+  deterministic, so without this rule a burst could guess it (found by the adversarial tests).
+- Only motion frames expire by receive age. A late DISABLE still stops; a late ARM arms, but starts the
+  watchdog from its own receive time, so it disarms again at once.
+- A plain APPLIED carries reason NONE, also for a DISABLE while FAULTED (the lifecycle field says FAULTED).
+- Parking needs the zero target and standstill to hold for 150 ms of elapsed time from the first such tick.
+- A stop cause is reported only with a real switch-off.
 
 ## Implemented per stage
 

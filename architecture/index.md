@@ -50,6 +50,9 @@ When you add a file or folder, add a line here in the same commit.
 |---|---|
 | `build_all.py` | Build every artifact into `build/` |
 | `swd.py` | SWD memory access through OpenOCD, one process per ST-LINK serial |
+| `lib/ocd.c` | OpenOCD session in C: SWD read/write over the Tcl port (replaces `swd.py` once the tools are ported) |
+| `lib/elfsym.c` | Symbol address/size lookup in firmware ELFs |
+| `lib/crc32.c` | CRC-32 (IEEE) matching zlib |
 | `esc_update.py` | Install the ESC app over CAN, per wheel |
 | `esc_tool.py` | ESC setup: align, status, stop, config, pulse |
 | `tune_ground.py` | Ground speed-loop tuning runs |
@@ -62,7 +65,7 @@ When you add a file or folder, add a line here in the same commit.
 
 ### Tests (`tests/`)
 
-Host tests that compile the real C source against fakes; `run_all.py` runs
+Host tests that compile the real C source against fakes (`tests/CMakeLists.txt`, CTest; `golden/` holds recorded reference outputs for the numeric ports); `run_all.py` runs
 them plus the module gtests. Anything addressed per wheel is tested for all
 four wheels.
 

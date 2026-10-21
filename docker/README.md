@@ -8,7 +8,7 @@ UID=$(id -u) GID=$(id -g) docker compose build
 docker compose run --rm dev bash
 # inside: the checkout is at /work/sfurs_firmware_v2
 python3 tests/run_all.py
-python3 src/tools/build_all.py
+scripts/build.sh
 ```
 
 `build/` CMake caches store absolute paths, so a cache made on the host fails

@@ -61,11 +61,11 @@ directions cancels rotor lag. Results: `ok`, `REVERSED` (Hall order does not
 match phase order: fix wiring), `NO_EDGES` (rotor stuck or Halls dead).
 
 The result lives in RAM. Bake it in with
-`src/tools/build_all.py --shift NE=<deg> SE=<deg> ...` and reinstall.
+`scripts/build.sh --shift NE=<deg> SE=<deg> ...` and reinstall.
 
 ## Bring-up
 
-1. `src/tools/build_all.py`; `src/tools/esc_update.py <W> --can` for each wheel
+1. `scripts/build.sh`; `src/tools/esc_update.py <W> --can` for each wheel
    (`--battery-off` with the ESC's USB for a first install; [CAN_FWU.md](can-fwu.md)).
 2. Battery ON, wheels off the ground: `src/tools/esc_tool.py status`, then
    `src/tools/esc_tool.py align all`. Expect `ok`, 12 edges each way.

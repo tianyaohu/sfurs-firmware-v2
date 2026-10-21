@@ -26,7 +26,7 @@ what someone does next; this is not a log.
 - **Attach, don't connect.** A normal SWD connect resets a running ESC and
   stops the motor; use attach/HOTPLUG for monitoring.
 - **Compare flashed bytes, not ELF files.** Two builds of the same tree give
-  different ELF hashes; `build_all.py` prints hashes of the loadable image.
+  different ELF hashes; `scripts/build.sh` prints hashes of the loadable image.
 - **A frozen telemetry row looks live.** The Nucleo keeps each wheel's last
   reply; a powered-off ESC still "reads" 4.6 V and FAULT_NOW. Only a row
   whose reply count advanced is live (`esc_tool.py status` checks this).

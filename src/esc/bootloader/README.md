@@ -16,7 +16,7 @@ The protocol sources are shared with the Nucleo: `src/shared/src/can_fwu_*.c` an
 
 The app never touches `VTOR`, so the
 `VTOR=0x08004000` the bootloader sets before jumping persists.
-`STM32G431CBUX_FLASH_APP.ld` + `build_cli.py --app-offset` do the link.
+`STM32G431CBUX_FLASH_APP.ld` + `scripts/esc_build.sh --app-offset` do the link.
 
 ## Behaviour
 
@@ -31,9 +31,9 @@ The app never touches `VTOR`, so the
 ## Build (no hardware needed)
 
 ```sh
-python3 src/esc/bootloader/build_boot.py --motor NE --output /tmp/boot
+scripts/boot_build.sh --motor NE --output /tmp/boot
 cd src/esc/motor_config
-python3 build_cli.py --motor NE --app-offset --output /tmp/app
+../../../scripts/esc_build.sh --motor NE --app-offset --output /tmp/app
 ```
 
 Both linkers exclude the mailbox from RAM and set initial MSP to

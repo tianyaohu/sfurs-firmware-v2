@@ -21,7 +21,7 @@
 | FL | `MOTOR_NW` | 8 | `066AFF515266555067023255` | off | -62° |
 
 Hall shifts measured with `esc_tool.py align` (2026-10-16, battery on); build
-with `build_all.py --shift NE=-60 SE=-64 SW=-59 NW=-62`.
+with `scripts/build.sh --shift NE=-60 SE=-64 SW=-59 NW=-62`.
 
 Nucleo ST-LINK: `002200364142500620353451`. FR and FL serials differ in only a
 few characters; check the full serial before any write.

@@ -13,11 +13,11 @@
 ## Build
 
 ```sh
-python3 motor_config/build_cli.py --motor NE --app-offset --output /tmp/esc-NE [--hall-shift DEG]
+../../scripts/esc_build.sh --motor NE --app-offset --output /tmp/esc-NE [--hall-shift DEG]
 ```
 
 Exactly one wheel macro per build. `--app-offset` links at `0x08004000`
-under the CAN bootloader (the only layout in use). `src/tools/build_all.py`
+under the CAN bootloader (the only layout in use). `scripts/build.sh`
 builds all four plus the Nucleo images.
 
 ## What is ours vs generated

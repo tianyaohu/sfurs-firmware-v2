@@ -61,7 +61,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Two images from one source tree:
 #   default                      streaming omni drive (src/tools/keyboard_drive.py)
 #   -DFWU_IMAGE_FILE=<payload.c> ESC updater carrying one ESC application
-#                                (payload from src/tools/fwu_image.py)
+#                                (payload from build/tools/fwu_image/fwu_image)
 set(FWU_IMAGE_FILE "" CACHE FILEPATH "ESC payload C file; selects the updater image")
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/can)

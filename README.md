@@ -30,7 +30,7 @@ All code is under `src/`; each documentation concern has its own top-level folde
 ## Quick start
 
 ```sh
-src/tools/build_all.py                        # everything into build/ (no hardware)
+scripts/build.sh                             # everything into build/ (no hardware)
 python3 tests/run_all.py                      # host tests (no hardware)
 src/tools/esc_update.py NE --can                # install ESC app over CAN, per wheel
 src/tools/esc_tool.py align all                 # battery ON, wheels raised
@@ -40,13 +40,13 @@ src/tools/keyboard_drive.py --speed 0.5         # WASD move, QE rotate, X quit
 Read [system-info/hardware.md](system-info/hardware.md) before touching hardware, and
 [CONTRIBUTING.md](CONTRIBUTING.md) for branches and merge requests.
 Without a host toolchain, run the same commands in the dev container
-([docker/README.md](docker/README.md)); CI runs `run_all.py` and `build_all.py` in it.
+([docker/README.md](docker/README.md)); CI runs `run_all.py` and `scripts/build.sh` in it.
 
 ## Builds
 
-- Nucleo drive image: `cmake --preset Debug` in `src/nucleo/CM7/` (or `build_all.py`).
+- Nucleo drive image: `cmake --preset Debug` in `src/nucleo/CM7/` (or `scripts/build.sh`).
 - Nucleo ESC-updater image: same with `-DFWU_IMAGE_FILE=<payload.c>`.
-- ESC app: `src/esc/motor_config/build_cli.py` (GCC, no CubeIDE).
+- ESC app: `scripts/esc_build.sh` (GCC, no CubeIDE).
 
 Generated HAL/CMSIS (`src/nucleo/Drivers/`) and MCSDK sources are committed; `build/`
 directories are ignored. Keep application code in CubeMX `USER CODE` sections

@@ -78,6 +78,7 @@ struct motor_cmd_inputs {
 /** @brief What the caller must do after a tick. Several may be set; execute in field order. */
 struct motor_cmd_actions {
   uint8_t abort_busy;  /**< abort Hall alignment or capture */
+  uint8_t disabled;    /**< a DISABLE was processed: also drop align/capture requests not started yet */
   uint8_t stop;        /**< switch the output off (MC_StopMotor1) */
   uint8_t stop_cause;  /**< ::motor_cmd_stop of this stop; ::MOTOR_CMD_STOP_NONE when stop is 0 */
   uint8_t ack_fault;   /**< acknowledge the MCSDK fault (MC_AcknowledgeFaultMotor1) */
@@ -135,6 +136,8 @@ struct motor_cmd {
   int8_t start_dir;        /**< sign of the target at that moment */
   uint8_t first_edge;      /**< a Hall edge along the target since then */
   uint32_t now_ms;         /**< time of the current tick */
+  uint8_t disarm_cause;    /**< ::motor_cmd_stop of the last disarm (TIMEOUT, OVERFLOW; NONE after a clear),
+                                kept until the next ARM so a DISARMED wheel shows why over SWD */
   struct motor_cmd_counters count; /**< diagnosis */
 };
 

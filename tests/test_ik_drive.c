@@ -251,10 +251,15 @@ static void test_raw_frames_only_when_stopped(void)
 
 static void test_tx_failures_counted(void)
 {
-  ik_drive_vy_mmps = 1000; ik_drive_enable = 1; fail = 1; run(100, 1);
-  CHECK(ik_drive_tx_fail >= 16 && ik_drive_state == IK_DRIVING && ik_drive_fault == 0U); /* unsent is not lost */
-  fail = 0; run(1000, 1);
-  for (unsigned i = 0; i < 4; ++i) CHECK(last_rpm(i) == fwd1[i]);
+  drive_forward();
+  fail = 1; run(40, 1); fail = 0; /* two periods unsent: tolerated */
+  CHECK(ik_drive_tx_fail >= 8 && ik_drive_state == IK_DRIVING && ik_drive_fault == 0U);
+  run(1000, 1);
+  for (unsigned i = 0; i < 4; ++i) CHECK(last_rpm(i) == fwd1[i] && ik_drive_link[i].misses == 0U);
+  fail = 1; run(20 * (IK_DRIVE_LOST_PERIODS + 1U), 1); /* a wheel that cannot be commanded is lost */
+  CHECK(ik_drive_fault == 0xF0U && ik_drive_state != IK_DRIVING);
+  fail = 0; run(200, 1);
+  CHECK(ik_drive_state == IK_STOPPED);
 }
 
 static void test_custom_acceleration(void)
@@ -270,8 +275,19 @@ static void test_lost_wheel_stops_the_robot(void)
   for (unsigned w = 0; w < 4; ++w) {
     drive_forward();
     drop_replies[w] = 1;
-    run(20 * (IK_DRIVE_LOST_PERIODS + 1U), 1);
+    unsigned before = count;
+    for (unsigned t = 0; t < 20 * (IK_DRIVE_LOST_PERIODS + 1U) && ik_drive_fault == 0U; ++t) {
+      before = count;
+      run(1, 1);
+    }
     CHECK(ik_drive_fault == (1U << (4U + w)) && ik_drive_link[w].misses >= IK_DRIVE_LOST_PERIODS);
+    /* the detecting period sends DISABLE and no further motion */
+    CHECK(count_disable_all(before) == 1U);
+    for (unsigned i = 0; i < 4; ++i) {
+      struct motor_control c;
+      for (unsigned k = before; k < count; ++k)
+        CHECK(!(ids[k] == (MOTOR_CAN_ID_CONTROL | (1U << i)) && decode(k, &c) && c.mode == MOTOR_MODE_SPEED));
+    }
     CHECK(ik_drive_link[w].fault_reason == 0U); /* LOST has no ESC reason */
     const unsigned mark = count;
     run(200, 1);
@@ -332,6 +348,19 @@ static void test_feed_forward_rides_in_speed_frames(void)
   }
 }
 
+/* A lost reply to the first start leaves no first-start time, even after the 8-bit sequence
+ * wraps many times (a later reply with the same seq must not fill it in). */
+static void test_lost_start_reply_stays_invalid(void)
+{
+  ik_drive_vy_mmps = 1000; ik_drive_enable = 1;
+  run(40, 1);                                   /* probe at t=0, ARM at t=20 */
+  drop_replies[0] = 1; run(1, 1); drop_replies[0] = 0; /* t=40: the first motion frame */
+  run(6000, 1);                                 /* ~300 frames: the sequence wraps */
+  CHECK(ik_drive_fault == 0U && ik_drive_link[0].start_count == 1U);
+  CHECK(ik_drive_link[0].first_start_valid == 0U);
+  for (unsigned i = 1; i < 4; ++i) CHECK(ik_drive_link[i].first_start_valid == 1U);
+}
+
 int main(int argc, char **argv)
 {
   CHECK(argc <= 2);
@@ -353,6 +382,7 @@ int main(int argc, char **argv)
     { "faulted_wheel_stops_until_cleared", test_faulted_wheel_stops_until_cleared },
     { "resyncs_a_moved_baseline", test_resyncs_a_moved_baseline },
     { "feed_forward_rides_in_speed_frames", test_feed_forward_rides_in_speed_frames },
+    { "lost_start_reply_stays_invalid", test_lost_start_reply_stays_invalid },
   };
   const char *name = argc == 2 ? argv[1] : cases[0].name;
   for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i)

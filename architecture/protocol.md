@@ -104,8 +104,10 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 5-6 | int16 measured speed, RPM (the one speed estimate of [C](../technical-development-plans/esc-command-v2/C-ownership.md)); 0 when not valid |
 | 7 | int8 measured q-current, 50 mA units, nearest step with halves away from zero, saturated at +-127 (+-6.35 A covers the 6 A limit); 0 while the output is off (the old STATUS showed ~25 A on IDLE wheels on 2026-10-20, so MCSDK's Iq is not meaningful with the bridge off; cause confirmed in Stage 0) |
 
-- Produced by the 1 kHz tick that processed the frame, not by the ISR, so APPLIED means "the controller uses this
-  target from this tick on". It does not mean the speed was reached.
+- Produced by the 1 kHz tick that processed the frame, not by the ISR, so APPLIED means "the target is handed to
+  the controller this tick". The speed loop runs it from its next step (at most 1 ms later: the application hook
+  follows MCSDK's medium-frequency task); that offset is the same on every wheel, so it does not change the
+  command-apply skew. It does not mean the speed was reached.
 - SUPERSEDED: accepted, then replaced in the single motion slot by a newer frame before a tick consumed it.
 - INHIBITED: applied, but the output cannot follow. Reasons: LIMITED (effective limit below the request), STARTING
   (MCSDK start in progress), FF_UNUSED (Stage 2 adapter: the old loop drops ff while its startup loop is on), and
@@ -134,7 +136,9 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 19 | CONFLICT | 20 | BAD_LENGTH (DLC != 8 or wrong ID base; counted, never sent) |
 | 21 | UNSUPPORTED (valid mode this firmware does not implement yet) | | |
 
-Codes 32 and up are latched causes, also reported in DIAG until cleared.
+Codes 32 and up are latched causes. While FAULTED every reply carries the cause as its reason (and the Nucleo keeps
+it as `ik_drive_link.fault_reason`). The cause of the last disarm (timeout, overflow) is kept in the ESC's
+`drive_cmd.disarm_cause` until the next ARM, readable over SWD. DIAG is unchanged (its 8 bytes are full).
 
 ## CONFIG and CONFIG_REPLY (Stage 3; layout frozen now)
 

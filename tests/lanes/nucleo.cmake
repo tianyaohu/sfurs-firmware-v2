@@ -20,7 +20,8 @@ foreach(case
     lost_wheel_stops_the_robot
     faulted_wheel_stops_until_cleared
     resyncs_a_moved_baseline
-    feed_forward_rides_in_speed_frames)
+    feed_forward_rides_in_speed_frames
+    lost_start_reply_stays_invalid)
   add_test(NAME test_ik_drive.${case} COMMAND test_ik_drive ${case})
 endforeach()
 host_test(test_ik_telemetry

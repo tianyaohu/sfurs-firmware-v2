@@ -127,6 +127,7 @@ static void disarm(struct motor_cmd *m, struct motor_cmd_actions *out, enum moto
 {
   stop_output(m, out, cause);
   m->lifecycle = MOTOR_LC_DISARMED;
+  m->disarm_cause = (uint8_t)cause;
   m->session = motor_session_next(m->session, m->now_ms);
   m->applied_seq = 0U;
   m->last_valid = 0U;
@@ -196,6 +197,7 @@ static void on_disable(struct motor_cmd *m, const struct motor_cmd_inputs *in, s
 {
   supersede(m, in, cand);
   if (in->busy) out->abort_busy = 1U;
+  out->disabled = 1U; /* an align/capture request queued before this DISABLE must not start after it */
   if (output_on(m->lifecycle)) {
     stop_output(m, out, MOTOR_CMD_STOP_DISABLE);
     m->lifecycle = MOTOR_LC_READY;
@@ -216,6 +218,7 @@ static void on_arm(struct motor_cmd *m, const struct motor_cmd_inputs *in, struc
   if (m->lifecycle == MOTOR_LC_DISARMED) {
     m->lifecycle = MOTOR_LC_READY;
     m->watch_ms = e->rx_ms; /* ARM starts the watchdog; only fresh motion frames refresh it */
+    m->disarm_cause = MOTOR_CMD_STOP_NONE;
     clear_target(m);
   }
   m->last_seq = e->c.seq;

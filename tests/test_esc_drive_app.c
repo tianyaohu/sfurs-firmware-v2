@@ -299,6 +299,12 @@ static void test_stop_aborts_alignment(void)
   disable(MOTOR_CAN_ID); tick(5);
   CHECK(drive_app.align_result == ESC_ALIGN_ABORTED && !drive_align_force && state == IDLE);
   CHECK(fabs(shift_deg() - 120.0) < 0.01 && drive_app_idle());
+  /* An align or capture request queued before a DISABLE in the same tick never starts. */
+  const int s0 = starts;
+  rx(HALL_ALIGN | MOTOR_CAN_ID, HALL_ALIGN_MAGIC); disable(0xFU); tick(20);
+  CHECK(starts == s0 && drive_app.align_phase == 0 && !drive_align_force);
+  rx(CAPTURE | MOTOR_CAN_ID, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); disable(0xFU); tick(20);
+  CHECK(starts == s0 && drive_app.capture_status == ESC_CAPTURE_REJECTED && drive_app_idle());
 }
 
 static void test_stop_clears_finished_fault(void)

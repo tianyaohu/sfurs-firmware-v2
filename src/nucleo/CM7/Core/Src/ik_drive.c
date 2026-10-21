@@ -32,7 +32,7 @@ static const uint32_t SELECT[4] = {MOTOR_NE_CAN_ID, MOTOR_SE_CAN_ID, MOTOR_SW_CA
 static struct {
   uint8_t seq;           /* sequence of the last motion frame (an ARM reuses it as the baseline) */
   uint8_t sent_seq;      /* seq of the frame sent this period */
-  uint8_t sent, replied; /* a frame went out this period / its reply came back */
+  uint8_t sent, replied; /* a frame was due this period (queued or not) / its reply came back */
   uint8_t rearm;         /* the ESC rejected our sequence: re-baseline with ARM */
   int8_t sign;           /* sign of the last setpoint sent, to see a start */
   uint8_t start_seq, start_pending; /* the frame whose reply times the current start */
@@ -233,8 +233,12 @@ static void check_replies(void)
 {
   for (unsigned w = 0; w < 4U; ++w) {
     if (!wheel[w].sent) continue;
+    /* The start's reply had its period to arrive; a late one must not time a later start
+     * after the 8-bit sequence wraps. */
+    wheel[w].start_pending = 0U;
     link_open(w);
     volatile struct ik_drive_link *l = &ik_drive_link[w];
+    /* A frame that could not even be queued counts as a miss: that wheel is not commanded. */
     l->misses = wheel[w].replied ? 0U : l->misses + 1U;
     const uint32_t had = ik_drive_fault & ((1U << w) | (1U << (4U + w)));
     if (l->misses >= IK_DRIVE_LOST_PERIODS) ik_drive_fault |= 1U << (4U + w);
@@ -273,7 +277,8 @@ static void send_wheel(ik_send_fn send, unsigned w, int16_t rpm, int16_t ff_ma)
   }
   wheel[w].sent_seq = c.seq;
   wheel[w].replied = 0U;
-  wheel[w].sent = (uint8_t)send_control(send, &c, SELECT[w]);
+  (void)send_control(send, &c, SELECT[w]);
+  wheel[w].sent = 1U;
 }
 
 void ik_drive_tick(uint32_t now, ik_send_fn send)
@@ -302,9 +307,11 @@ void ik_drive_tick(uint32_t now, ik_send_fn send)
 
   if (ik_drive_state == IK_DRIVING) {
     check_replies();
-    if (ik_drive_fault != 0U) { /* a FAULTED or LOST wheel stops the robot now */
+    if (ik_drive_fault != 0U) { /* a FAULTED or LOST wheel stops the robot now, not next period */
       ik_drive_state = IK_STOPPING;
-      stop_frames = 0U;
+      stop_frames = disable_all(send) ? 1U : 0U;
+      for (unsigned w = 0; w < 4U; ++w) wheel[w].sent = 0U;
+      return;
     }
   }
   if (ik_drive_state == IK_STOPPING) {

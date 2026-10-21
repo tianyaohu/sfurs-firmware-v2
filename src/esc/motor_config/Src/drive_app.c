@@ -663,6 +663,14 @@ static void command_tick(uint16_t state)
     .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg };
   struct motor_cmd_actions act;
   motor_cmd_tick(&drive_cmd, &in, &act);
+  if (act.disabled) { /* service requests that arrived before the DISABLE never start */
+    if (rx_align_count != seen_align) { seen_align = rx_align_count; ++drive_app.rejected; }
+    if (rx_capture_count != seen_capture) {
+      seen_capture = rx_capture_count;
+      drive_app.capture_status = ESC_CAPTURE_REJECTED;
+      ++drive_app.rejected;
+    }
+  }
   if (act.abort_busy) {
     if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING)
       align_finish(ESC_ALIGN_ABORTED);
@@ -719,10 +727,9 @@ void drive_app_tick(void)
 {
   ++drive_app.now_ms;
   const uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
+  command_tick(state); /* first: a DISABLE in it cancels service requests queued before it */
   const uint32_t align_count = rx_align_count, config_count = rx_config_count;
   const uint32_t capture_count = rx_capture_count, record_count = rx_record_count;
-
-  command_tick(state);
   align_tick(state);
   capture_tick(state);
 

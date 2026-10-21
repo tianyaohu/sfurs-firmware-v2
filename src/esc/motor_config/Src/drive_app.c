@@ -291,7 +291,7 @@ static void record_sample(void)
   s[7] = (int16_t)((drive_dsc.state & 3U) | ((drive_dsc.reason & 15U) << 2) |
                    ((ran ? drive_dsc.capped & 1U : 0U) << 6) | ((drive_dsc_cfg.enable & 1U) << 7) |
                    (((uint32_t)(HALL_M1.EdgesPos - HALL_M1.EdgesNeg) & 15U) << 8) |
-                   (((uint32_t)HALL_M1.Captures & 7U) << 12) | ((ran ? 1U : 0U) << 15));
+                   (((uint32_t)HALL_M1.HallState & 7U) << 12) | ((ran ? 1U : 0U) << 15));
   if (status == ESC_RECORD_ARMED) {
     if (rec_delay == UINT32_MAX) { /* waiting for the reference to leave zero */
       if (moving && !rec_prev_moving) rec_delay = (rx_record_word >> 9) & 0xFFFU;

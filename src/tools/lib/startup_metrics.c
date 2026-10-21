@@ -8,6 +8,17 @@ static int direction(const ik_record_unpacked_t *r, size_t n)
   return 0;
 }
 
+int startup_hall_sector(int hall_state)
+{
+  /* MCSDK positive (forward) order, src/esc/motor_config/Src/hall_speed_pos_fdbk.c
+   * HALL_TIMx_CC_IRQHandler: STATE_5 after STATE_4 is POSITIVE at PhaseShift (line 462),
+   * then 1 (+60), 3 (+120), 2 (+180), 6 (-120), 4 (-60); the USER edge counter there
+   * (line 595) counts the same order as EdgesPos. POSITIVE also sets the speed sign
+   * (line 736), so positive motor RPM and positive net edges both increment the sector. */
+  static const int sector[8] = {-1, 1, 3, 2, 5, 0, 4, -1};
+  return hall_state >= 0 && hall_state <= 7 ? sector[hall_state] : -1;
+}
+
 startup_calibration_t startup_nominal(double spread_deg)
 {
   return (startup_calibration_t){{7.5, 7.5, 7.5, 7.5, 7.5, 7.5}, spread_deg, -1};
@@ -45,7 +56,7 @@ const char *startup_rule_name(startup_rule_t r)
 {
   static const char *const names[] = {"none", "deadline", "wrong_direction", "overshoot",
     "invalid_input", "missing_baseline", "unknown_sector", "reference_reversal",
-    "short_record", "too_few_measurable", "overshoot_window", "no_plateau"};
+    "short_record", "too_few_measurable", "overshoot_window", "no_plateau", "hall_sequence"};
   return r >= STARTUP_RULE_NONE && r < STARTUP_RULE_COUNT ? names[r] : "invalid_input";
 }
 
@@ -91,21 +102,41 @@ startup_result_t startup_evaluate(const ik_record_unpacked_t *r, size_t n,
    * not the task's 60 deg. Reject inconsistent maps rather than rescaling them. */
   if (fabs(sum - 45) > 1e-6 || !isfinite(cal->spread_deg) || cal->spread_deg < 0 ||
       cal->starting_sector < -1 || cal->starting_sector > 5) return out;
-  /* SPEC-QUESTION: an unknown nonuniform sector or a reversing reference cannot
-   * establish the single-start geometry; neither is eligible for PASS. */
-  if (cal->starting_sector == -1 && !uniform) { out.rule = STARTUP_RULE_SECTOR; return out; }
   /* SPEC-QUESTION: trigger is 2 RPM, not apply. Require a zero baseline and
    * integrate from row 0; a clipped/delayed record cannot establish deadlines. */
   if (r[0].ref_rpm != 0) { out.rule = STARTUP_RULE_BASELINE; return out; }
   for (size_t i = 0; i < n; ++i)
     if ((double)out.sign * r[i].ref_rpm < 0) { out.rule = STARTUP_RULE_REFERENCE; return out; }
+  size_t begin = 1;
+  while (begin < n && r[begin].ref_rpm == 0) ++begin;
+  int initial_sector = cal->starting_sector;
+  /* The last zero-reference row is where the start begins; its Hall state fixes s0.
+   * Without one (older records, a nominal map) the given sector stands. */
+  const int recorded = startup_hall_sector(r[begin - 1].hall_state);
+  if (recorded >= 0) {
+    if (initial_sector >= 0 && initial_sector != recorded) {
+      out.rule = STARTUP_RULE_HALL_SEQUENCE; return out;
+    }
+    initial_sector = recorded;
+    /* Each row's Hall state must be the sector its net edges lead to; a skipped
+     * or invalid state means the edge record is not evidence. */
+    int expect = recorded;
+    for (size_t i = begin; i < n; ++i) {
+      int delta = (r[i].edges_mod16 - r[i - 1].edges_mod16 + 24) % 16 - 8;
+      expect = (expect + delta + 12) % 6;
+      if (startup_hall_sector(r[i].hall_state) != expect) {
+        out.rule = STARTUP_RULE_HALL_SEQUENCE; return out;
+      }
+    }
+  }
+  /* SPEC-QUESTION: an unknown nonuniform sector or a reversing reference cannot
+   * establish the single-start geometry; neither is eligible for PASS. */
+  if (initial_sector == -1 && !uniform) { out.rule = STARTUP_RULE_SECTOR; return out; }
+  if (initial_sector < 0) initial_sector = 0;
 
   edge_t edges[STARTUP_MAX_SAMPLES * 8];
   size_t count = 0;
-  int sector = cal->starting_sector < 0 ? 0 : cal->starting_sector;
-  int initial_sector = sector;
-  size_t begin = 1;
-  while (begin < n && r[begin].ref_rpm == 0) ++begin;
+  int sector = initial_sector;
   for (size_t i = begin; i < n; ++i) {
     int delta = (r[i].edges_mod16 - r[i - 1].edges_mod16 + 24) % 16 - 8;
     int sign = delta < 0 ? -1 : 1;

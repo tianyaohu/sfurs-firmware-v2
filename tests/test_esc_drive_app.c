@@ -630,12 +630,16 @@ static void test_recorder_dsc_stop_drops_loop_terms(void)
   drive_app.aligned = 1; speed_ref = 51;
   rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
   rx(CAPTURE | MOTOR_CAN_ID, rec | 0U); tick(2);
+  rotor_deg = true_shift_deg + 3 * 60 + 30; tick(2);       /* rotor parked in sector 3 */
+  CHECK(HALL_M1.HallState == SEQ[3]);
+  HALL_M1.Captures = 5;                                     /* differs from both Hall states */
   arm(); speed_cmd(51); tick(3); CHECK(state == RUN);
   drive_dsc = (dsc_state_t){ .state = DSC_RUNNING, .reason = DSC_R_EDGE, .capped = 1,
                              .p = 200, .i = 100, .ff = 326 };
   tick(10);
   drive_dsc.state = DSC_FAILED; drive_dsc.reason = DSC_R_NO_EDGE;
   tick(3); CHECK(state == IDLE && drive_cmd.lifecycle == MOTOR_LC_FAULTED);
+  rotor_deg += 60; tick(1); CHECK(HALL_M1.HallState == SEQ[4]); /* pushed one sector on */
   tick(400);
   rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == 0);
@@ -644,6 +648,7 @@ static void test_recorder_dsc_stop_drops_loop_terms(void)
   rx(CAPTURE | MOTOR_CAN_ID, read | ESC_RECORD_READ_CH67 | (1U << 10) | 5U); frames = 0; drive_app_poll(send);
   uint16_t packed = (uint16_t)f16(frame[0] + 4);
   CHECK((packed & 3U) == DSC_RUNNING && (packed & 0x40U) && (packed & 0x80U) && (packed & 0x8000U));
+  CHECK(((packed >> 12) & 7U) == SEQ[3]);                /* raw Hall state, not captures */
   rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == 0 && f16(frame[0] + 6) == 0);               /* stopped: ref, P */
   rx(CAPTURE | MOTOR_CAN_ID, read | (1U << 16) | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
@@ -652,6 +657,7 @@ static void test_recorder_dsc_stop_drops_loop_terms(void)
   packed = (uint16_t)f16(frame[0] + 4);
   CHECK((packed & 3U) == DSC_FAILED && ((packed >> 2) & 15U) == DSC_R_NO_EDGE); /* failure kept */
   CHECK(!(packed & 0x40U) && !(packed & 0x8000U));                     /* not capped, loop off */
+  CHECK(((packed >> 12) & 7U) == SEQ[4]);                /* sampled in the same tick */
 }
 
 int main(int argc, char **argv)

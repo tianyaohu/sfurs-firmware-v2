@@ -16,12 +16,16 @@ typedef enum {
   STARTUP_RULE_OVERSHOOT, STARTUP_RULE_INPUT, STARTUP_RULE_BASELINE,
   STARTUP_RULE_SECTOR, STARTUP_RULE_REFERENCE, STARTUP_RULE_RECORD,
   STARTUP_RULE_MEASURABLE, STARTUP_RULE_WINDOW, STARTUP_RULE_NO_PLATEAU,
-  STARTUP_RULE_COUNT
+  STARTUP_RULE_HALL_SEQUENCE, STARTUP_RULE_COUNT
 } startup_rule_t;
+/** Sector k is the k-th Hall state of the MCSDK decoder's positive electrical order
+ * 5-1-3-2-6-4 (sector 0 = state 5, the one decoded at PhaseShift). */
 typedef struct {
-  double widths_deg[6]; /**< Mechanical sector widths, total 45 degrees. */
+  double widths_deg[6]; /**< Mechanical sector widths, total 45 degrees, indexed by sector. */
   double spread_deg;
-  int starting_sector; /**< 0..5, or -1 when unknown. Positive rotation increments sectors. */
+  /** 0..5, or -1 when unknown. Positive rotation increments sectors. A valid recorded
+   * Hall state on the last zero-reference row overrides -1 and must agree otherwise. */
+  int starting_sector;
 } startup_calibration_t;
 typedef struct {
   double time_ms, distance_deg, deadline_ms, tolerance_ms;
@@ -42,6 +46,9 @@ typedef struct {
   double skew_ms;
 } startup_sync_t;
 
+/** @brief Sector 0..5 of a raw Hall state (1..6) in the positive electrical order, or -1
+ * for an invalid state (0, 7, or out of range). */
+int startup_hall_sector(int hall_state);
 /** @brief Nominal 7.5 degree sectors, unknown starting sector, given spread in degrees. */
 startup_calibration_t startup_nominal(double spread_deg);
 /** @brief Integrate linearly interpolated reference in its first nonzero direction.
@@ -54,6 +61,9 @@ double startup_t_ref(const ik_record_unpacked_t *rows, size_t n, double angle_de
 /** @brief Evaluate one record (at most 384 rows). The steady target is the last
  * reference magnitude, >= 2 RPM, with all last 50 magnitudes within +/-1 RPM.
  * Missing inputs produce NOT_MEASURABLE. Tracking and overshoot remain separate.
+ * When the last zero-reference row has a valid Hall state, the starting sector is
+ * taken from it and every later row's Hall state must equal the sector reached by
+ * the recorded net edges; any mismatch is NOT_MEASURABLE (hall_sequence).
  */
 startup_result_t startup_evaluate(const ik_record_unpacked_t *rows, size_t n,
                                  const startup_calibration_t *cal);

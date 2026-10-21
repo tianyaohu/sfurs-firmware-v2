@@ -13,9 +13,12 @@ the user's (2026-10-21); this file makes it computable.
 averaged over the 8 pole pairs). The pole-pair spread of each
   width is measured and becomes part of the tolerance.
 - The rotor's position inside its starting sector is unknown.
-- Edge times come from the ESC recorder at 1 kHz (+-1 ms). The Stage 2 firmware adds the Hall state at the start and
-  each edge's direction and sector to the record. Until then (Stage 0 baseline) sectors are taken as nominal 7.5 deg
-  and the tolerance is widened by the width spread measured in Stage 0.
+- Edge times come from the ESC recorder at 1 kHz (+-1 ms). Each record row carries the net edge count (direction)
+  and the raw Hall state of that tick (packed bits 12-14). s0 is the sector of the Hall state on the last
+  zero-reference row; sectors are numbered in the MCSDK positive order 5-1-3-2-6-4 (sector 0 = state 5), and every
+  later row's Hall state must be the sector its edges lead to, else the start is not measurable (`hall_sequence`).
+  Without a calibration map sectors are nominal 7.5 deg and the tolerance is widened by the width spread measured in
+  Stage 0.
 
 ## Startup tracking (per active wheel, per start)
 

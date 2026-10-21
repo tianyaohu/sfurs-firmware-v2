@@ -41,10 +41,10 @@ int drive_records_read(ik_link_t *l, const char *path, double t0_monotonic_s, dr
       const ik_record_unpacked_t *r = &rows[k];
       fprintf(f, "%s{\"ref_rpm\":%d,\"rpm\":%d,\"p_a\":%.6g,\"i_a\":%.6g,\"ff_a\":%.6g,"
                  "\"iq_ref_a\":%.6g,\"iq_a\":%.6g,\"state\":\"%s\",\"reason\":\"%s\","
-                 "\"capped\":%s,\"dsc\":%s,\"loop\":%s,\"edges_mod16\":%d,\"captures_mod8\":%d}",
+                 "\"capped\":%s,\"dsc\":%s,\"loop\":%s,\"edges_mod16\":%d,\"hall_state\":%d}",
               k ? "," : "", r->ref_rpm, r->rpm, r->p_a, r->i_a, r->ff_a, r->iq_ref_a, r->iq_a,
               r->state, r->reason, r->capped ? "true" : "false", r->dsc ? "true" : "false",
-              r->loop ? "true" : "false", r->edges_mod16, r->captures_mod8);
+              r->loop ? "true" : "false", r->edges_mod16, r->hall_state);
     }
     fputs("]}", f);
   }

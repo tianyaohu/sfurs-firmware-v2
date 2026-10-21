@@ -98,8 +98,9 @@ enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
  * sample index.
  * Channels: ramped ref RPM, measured RPM, P, I, ff, Iq reference, measured Iq
  * (counts), packed: bits 0-1 startup-loop state (DSC_*), 2-5 reason, 6 P cap,
- * 7 startup loop enabled, 8-11 net Hall edges (+ minus -) mod 16, 12-14 Hall
- * captures mod 8, 15 speed loop ran this tick (else ref, P, I, ff, Iq ref are
+ * 7 startup loop enabled, 8-11 net Hall edges (+ minus -) mod 16, 12-14 raw Hall
+ * state (HALL_M1.HallState, 1..6; 0/7 = invalid) so tools know the starting sector
+ * and the sector after each edge, 15 speed loop ran this tick (else ref, P, I, ff, Iq ref are
  * 0; state/reason keep the last values, e.g. FAILED). Legacy loop: I from the
  * PI integral, P = PI out - I, ff = Iq reference - PI out. */
 #define ESC_RECORD_START 0x5EU

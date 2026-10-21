@@ -67,7 +67,7 @@ static void test_unpack_record(void)
   CHECK(!strcmp(u.state, "running") && !strcmp(u.reason, "edge"));
   CHECK(u.capped && u.dsc && u.loop);
   CHECK_EQ(u.edges_mod16, 3);
-  CHECK_EQ(u.captures_mod8, 5);
+  CHECK_EQ(u.hall_state, 5);
   CHECK_NEAR(u.p_a, 0.5, 1e-9);
   CHECK_NEAR(u.iq_a, -1.0, 1e-9);
 }

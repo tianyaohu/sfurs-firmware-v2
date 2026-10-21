@@ -71,6 +71,10 @@ int __wrap_ik_record_read(ik_link_t *link, uint32_t selector, ik_record_sample_t
   CHECK(false); return -1;
 }
 
+/* MCSDK positive electrical order (hall_speed_pos_fdbk.c): sector k shows state HALL_ORDER[k]. */
+static const int HALL_ORDER[6] = {5, 1, 3, 2, 6, 4};
+static bool trace_hall; /* also record the Hall state of every row */
+
 /* Construct reference and boundary crossings directly, without motor dynamics. */
 static void trace(int sign, double offset, int delay, const startup_calibration_t *cal)
 {
@@ -80,6 +84,7 @@ static void trace(int sign, double offset, int delay, const startup_calibration_
   double next = cal->widths_deg[sector] - offset;
   int counter = 15;
   rows[0].edges_mod16 = counter;
+  if (trace_hall) rows[0].hall_state = HALL_ORDER[sector];
   for (int t = 1; t < STARTUP_MAX_SAMPLES; ++t) {
     rows[t].ref_rpm = sign * (t < 120 ? t : 120);
     int source = t - delay;
@@ -94,6 +99,7 @@ static void trace(int sign, double offset, int delay, const startup_calibration_
       next += cal->widths_deg[sector];
     }
     rows[t].edges_mod16 = counter;
+    if (trace_hall) rows[t].hall_state = HALL_ORDER[sector];
   }
 }
 static startup_result_t nominal(void)
@@ -304,6 +310,54 @@ static void calibrated(void)
   c = (startup_calibration_t){{10,10,10,10,10,10},0,0};
   CHECK_EQ(startup_evaluate(rows, 384, &c).rule, STARTUP_RULE_INPUT);
 }
+static void hall_states(void)
+{
+  for (int h = 0; h < 8; ++h) {
+    int k = -1;
+    for (int s = 0; s < 6; ++s) if (HALL_ORDER[s] == h) k = s;
+    CHECK_EQ(startup_hall_sector(h), k); /* 0 and 7 are invalid */
+  }
+  CHECK_EQ(startup_hall_sector(-1), -1);
+  CHECK_EQ(startup_hall_sector(8), -1);
+  trace_hall = true;
+  const startup_calibration_t map = {{5, 10, 6, 9, 7, 8}, 0, -1};
+  for (int s = 0; s < 6; ++s) for (int sign = -1; sign <= 1; sign += 2) {
+    startup_calibration_t c = map;
+    c.starting_sector = s; /* the trace's true start; the evaluation only sees the Hall state */
+    trace(sign, 0, 0, &c);
+    CHECK_EQ(rows[0].hall_state, HALL_ORDER[s]);
+    startup_result_t r = startup_evaluate(rows, 384, &map);
+    CHECK_EQ(r.verdict, STARTUP_PASS);
+    CHECK_EQ(r.sign, sign);
+    CHECK_NEAR(r.transitions[0].distance_deg, map.widths_deg[s], 1e-12);
+    CHECK_NEAR(r.transitions[1].distance_deg, map.widths_deg[s] + map.widths_deg[(s+sign+6)%6], 1e-12);
+    CHECK_EQ(startup_evaluate(rows, 384, &c).verdict, STARTUP_PASS); /* agreeing given sector */
+    c.starting_sector = (s + 1) % 6;                                 /* disagreeing one */
+    CHECK_EQ(startup_evaluate(rows, 384, &c).rule, STARTUP_RULE_HALL_SEQUENCE);
+    startup_calibration_t nominal_cal = startup_nominal(0);
+    CHECK_EQ(startup_evaluate(rows, 384, &nominal_cal).verdict, STARTUP_PASS);
+    size_t first = 1;
+    while (rows[first].edges_mod16 == rows[first - 1].edges_mod16) ++first;
+    int saved = rows[first].hall_state;
+    rows[first].hall_state = HALL_ORDER[(s - sign + 6) % 6]; /* edge counted one way, Hall went the other */
+    r = startup_evaluate(rows, 384, &map);
+    CHECK_EQ(r.verdict, STARTUP_NOT_MEASURABLE);
+    CHECK_EQ(r.rule, STARTUP_RULE_HALL_SEQUENCE);
+    CHECK(!strcmp(startup_rule_name(r.rule), "hall_sequence"));
+    CHECK_EQ(startup_evaluate(rows, 384, &nominal_cal).rule, STARTUP_RULE_HALL_SEQUENCE);
+    rows[first].hall_state = saved;
+    saved = rows[200].hall_state;
+    rows[200].hall_state = 7;                                /* invalid state mid-run */
+    CHECK_EQ(startup_evaluate(rows, 384, &map).rule, STARTUP_RULE_HALL_SEQUENCE);
+    rows[200].hall_state = saved;
+    CHECK_EQ(startup_evaluate(rows, 384, &map).verdict, STARTUP_PASS);
+    rows[201].edges_mod16 = (rows[201].edges_mod16 + 1) % 16; /* edge without a Hall change */
+    CHECK_EQ(startup_evaluate(rows, 384, &map).rule, STARTUP_RULE_HALL_SEQUENCE);
+  }
+  trace_hall = false;
+  trace(1, 0, 0, &map);                                      /* no Hall state recorded */
+  CHECK_EQ(startup_evaluate(rows, 384, &map).rule, STARTUP_RULE_SECTOR);
+}
 static void synchronization(void)
 {
   double times[4] = {10, 10.001, 10.002, 10.0005};
@@ -472,7 +526,7 @@ static void move_integration(void)
 int main(void)
 {
   tracking(); interpolation_and_incomplete(); multi_edge_and_wrap();
-  overshoot(); plateaus(); calibrated(); synchronization(); report(); move_integration();
+  overshoot(); plateaus(); calibrated(); hall_states(); synchronization(); report(); move_integration();
   puts("startup metrics: all cases passed");
   return 0;
 }

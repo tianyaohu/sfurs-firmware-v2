@@ -395,7 +395,7 @@ void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u)
   u->capped = p & 0x40;
   u->dsc = p & 0x80;
   u->edges_mod16 = (int)((p >> 8) & 15);
-  u->captures_mod8 = (int)((p >> 12) & 7);
+  u->hall_state = (int)((p >> 12) & 7);
   u->loop = p & 0x8000;
 }
 

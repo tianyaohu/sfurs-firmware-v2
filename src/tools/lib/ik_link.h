@@ -93,7 +93,8 @@ typedef struct {
   double p_a, i_a, ff_a, iq_ref_a, iq_a;
   const char *state, *reason;
   bool capped, dsc, loop;
-  int edges_mod16, captures_mod8;
+  int edges_mod16;
+  int hall_state; /**< Raw Hall state 1..6 sampled in the same tick; 0/7 invalid. */
 } ik_record_unpacked_t;
 
 /** @brief Resolve every ik_drive_* symbol from the ELF. Returns 0, or -1 with err set. */

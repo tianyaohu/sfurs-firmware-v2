@@ -40,6 +40,8 @@ import sys
 import time
 import zlib
 
+import swd
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
 BACKUPS = pathlib.Path("/home/fh/sfurs_firmware/esc-backups")
@@ -67,26 +69,11 @@ def symbols(elf, names):
 
 
 def nucleo_session():
-    from pyocd.core.helpers import ConnectHelper
-    session = ConnectHelper.session_with_chosen_probe(
-        unique_id=NUCLEO_SN, connect_mode="attach", target_override="stm32h755zitx", blocking=False)
-    if session is None:
-        raise RuntimeError("Nucleo probe not found")
-    return session
+    return swd.Session(NUCLEO_SN, "stm32h755")
 
 
 def esc_session(sn):
-    from pyocd.core.helpers import ConnectHelper
-    from pyocd.core.session import Session
-    probes = [p for p in ConnectHelper.get_all_connected_probes(blocking=False) if p.unique_id == sn]
-    if len(probes) != 1:
-        raise RuntimeError(f"ESC probe {sn} not connected")
-    return Session(probes[0], auto_open=False, options={
-        "target_override": "stm32g431cbux", "connect_mode": "attach",
-        "resume_on_disconnect": False, "auto_unlock": False, "no_config": True,
-        "user_script": "/dev/null", "pack.debug_sequences.enable": False, "enable_swv": False,
-        "cache.enable_memory": False, "cache.enable_register": False,
-        "vector_catch": "none", "frequency": 1000000})
+    return swd.Session(sn, "stm32g431")
 
 
 def read_flash(target):
@@ -242,7 +229,6 @@ def can_install(args, w, selector, app, crc, app_elf, updater, drive, out, sessi
                 raise RuntimeError(f"boot-entry request not sent (result {boot})")
             time.sleep(0.3)  # the app resets into its bootloader, which then listens
         t.write32(addr["can_fwu_request"], 1)
-        from pyocd.core.target import Target
         deadline, last = time.monotonic() + 60, None
         while True:
             state, result = t.read32(addr["fwu_host"]), t.read32(addr["can_fwu_result"])
@@ -255,7 +241,7 @@ def can_install(args, w, selector, app, crc, app_elf, updater, drive, out, sessi
                 raise RuntimeError(f"transfer failed; {w} stays in its bootloader. "
                                    "Rerun with --can --target-in-boot")
             if time.monotonic() > deadline:
-                t.reset(Target.ResetType.SYSRESETREQ)  # drop the pending request
+                t.reset_sysreq()  # drop the pending request
                 raise RuntimeError(f"no completion within 60 s; if {w} stopped answering it is "
                                    "in its bootloader: rerun with --can --target-in-boot")
             time.sleep(0.1)
@@ -375,8 +361,7 @@ def main():
                 check_battery_off(es.target, known)
             t.write32(addr["can_fwu_dev"], selector)
             t.write32(addr["can_fwu_request"], 1)
-            from pyocd.core.target import Target
-            es.target.reset(Target.ResetType.SYSRESETREQ)  # opens the ESC bootloader's CAN window
+                es.target.reset_sysreq()  # opens the ESC bootloader's CAN window
             deadline, last = time.monotonic() + 60, None
             while True:
                 state, result = t.read32(addr["fwu_host"]), t.read32(addr["can_fwu_result"])
@@ -388,7 +373,7 @@ def main():
                 if state == FWU_FAULT and result == 4:
                     raise RuntimeError("transfer failed; ESC keeps its bootloader, rerun to retry")
                 if time.monotonic() > deadline:
-                    t.reset(Target.ResetType.SYSRESETREQ)  # drop the pending request
+                    t.reset_sysreq()  # drop the pending request
                     raise RuntimeError("no completion within 60 s")
                 time.sleep(0.1)
         finally:

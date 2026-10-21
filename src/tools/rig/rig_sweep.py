@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pyocd>=0.36"]
+# dependencies = []
 # ///
 """Plan or execute oblique out-and-back pulses through esc_tool's IK link.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pyocd>=0.36", "opencv-contrib-python>=4.10,<5", "numpy>=1.26", "PyYAML>=6"]
+# dependencies = ["opencv-contrib-python>=4.10,<5", "numpy>=1.26", "PyYAML>=6"]
 # ///
 """Friction feed-forward tuning on the current surface, checked by the overhead camera.
 

@@ -2,7 +2,7 @@
 
 Resolves the ik_drive_* mailbox and telemetry rows from the flashed ELF,
 writes setpoints/heartbeat, sends one-shot raw ESC frames, and decodes the
-per-wheel telemetry. Pure helpers are importable without pyOCD.
+per-wheel telemetry. Pure helpers are importable without OpenOCD.
 """
 import pathlib
 import re
@@ -12,7 +12,7 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_ELF = ROOT / "build/drive/sfurs_firmware_v2_CM7.elf"  # src/tools/build_all.py
 DEFAULT_SN = "002200364142500620353451"
-TARGET = "stm32h755zitx"
+TARGET = "stm32h755"
 ABI = 0x494B0004
 WHEELS = (("FR", "NE", 1), ("BR", "SE", 2), ("BL", "SW", 4), ("FL", "NW", 8))
 STATES = {0: "STOPPED", 1: "DRIVING", 2: "STOPPING"}
@@ -158,13 +158,9 @@ class Link:
     @classmethod
     def open(cls, sn=DEFAULT_SN, elf=DEFAULT_ELF):
         """Attach without halting or resetting. Returns (session, link)."""
-        from pyocd.core.helpers import ConnectHelper
+        import swd
         addrs = resolve_addrs(elf)
-        session = ConnectHelper.session_with_chosen_probe(
-            unique_id=sn, connect_mode="attach", target_override=TARGET, blocking=False)
-        if session is None:
-            raise RuntimeError(f"Nucleo probe {sn} not found")
-        session.open()
+        session = swd.Session(sn, TARGET).open()
         link = cls(session.target, addrs)
         abi = link.read("abi")
         if abi != ABI:

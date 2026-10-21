@@ -33,7 +33,7 @@ few characters; check the full serial before any write.
   headers; ninja from `pip install --user ninja`. On a fresh PC just install
   `gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build`.
 - `~/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
-- pyOCD (`~/.local/bin`) and pyelftools for the Python tools.
+- OpenOCD (`apt install openocd`, 0.12+; `src/tools/swd.py` starts one per probe serial) and pyelftools for the Python tools.
 - ESC flash backups: `/home/fh/sfurs_firmware/esc-backups/` (outside git).
   `*-original-20261012.bin` are the boards as received (previous engineer's
   sensorless image, no bootloader).
@@ -52,5 +52,5 @@ few characters; check the full serial before any write.
   flashing or attaching another tool.
 - Never mass-erase, change option bytes, or flash CM4.
 - Back up an ESC's full flash before overwriting it (`esc_update.py` does).
-- Attach to a running ESC only with pyOCD `connect_mode=attach` or CLI
+- Attach to a running ESC only through `swd.py` (OpenOCD, no `init`-time reset or halt) or CLI
   `mode=HOTPLUG`; a normal connect resets it.

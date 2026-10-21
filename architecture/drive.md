@@ -7,7 +7,7 @@ Keyboard → PC (`src/tools/keyboard_drive.py`) → SWD mailbox → Nucleo
 ## Data flow
 
 1. The PC writes a body twist (vx, vy in mm/s, ω in mrad/s) and bumps a
-   heartbeat at 50 Hz over the Nucleo's ST-LINK (pyOCD attach, no halt).
+   heartbeat at 50 Hz over the Nucleo's ST-LINK (OpenOCD attach through `swd.py`, no halt).
 2. Every 20 ms the Nucleo runs the inverse kinematics
    (`src/shared/src/rover_kinematics.c`), slews all wheels toward their targets
    with one acceleration limit (default 900 RPM/s, keeps the twist

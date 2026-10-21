@@ -1,6 +1,6 @@
 # Docker dev environment
 
-ARM GCC + CMake/Ninja + host GCC + Python 3 + pyOCD, with ST-LINK USB
+ARM GCC + CMake/Ninja + host GCC + Python 3 + OpenOCD, with ST-LINK USB
 passthrough. No host toolchain install needed.
 
 ```sh
@@ -19,7 +19,7 @@ the container does not work in a linked worktree; run git on the host.
 
 ## Hardware
 
-`src/tools/` talk to the probes through pyOCD, which is in the image. Check
+`src/tools/` talk to the probes through OpenOCD (`src/tools/swd.py`), which is in the image. Check
 `lsusb` shows the ST-LINK. Host udev rules for ST-LINK must already exist (they
 do if the probe works on the host); re-plug after installing them.
 

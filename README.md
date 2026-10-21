@@ -40,7 +40,7 @@ src/tools/keyboard_drive.py --speed 0.5         # WASD move, QE rotate, X quit
 Read [system-info/hardware.md](system-info/hardware.md) before touching hardware, and
 [CONTRIBUTING.md](CONTRIBUTING.md) for branches and merge requests.
 Without a host toolchain, run the same commands in the dev container
-([DOCKER.md](DOCKER.md)); CI runs `run_all.py` and `build_all.py` in it.
+([docker/README.md](docker/README.md)); CI runs `run_all.py` and `build_all.py` in it.
 
 ## Builds
 

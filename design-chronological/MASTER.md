@@ -28,3 +28,13 @@ Append only; format in design/README.md.
   sensor projects); keeping the bootloader copies behind a drift test.
 - Touches: every path; ESC and bootloader images are byte-identical before and after
   (sha256 checked), host tests 22/22.
+
+## 2026-10-20  OpenOCD replaces pyOCD for SWD access  (who: Frank H + claude)
+- Decision: the PC tools read/write target memory through `src/tools/swd.py`, which
+  runs OpenOCD per probe serial and uses its Tcl RPC port; pyOCD is removed.
+- Why: OpenOCD is the common packaged probe tool (apt, Docker), and one wrapper
+  gives every tool the same attach-only behaviour.
+- Rejected: GDB-server clients per tool; keeping both back ends (one way to do each thing).
+- Touches: `esc_update.py`, `ik_link.py`, `docker/Dockerfile`. Host-tested against a fake
+  Tcl endpoint only; bench check with real probes still open (ESC `reset_sysreq` is a
+  direct AIRCR write).

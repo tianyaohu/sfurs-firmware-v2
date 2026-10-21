@@ -1,8 +1,8 @@
 # Development container for sfurs_firmware_v2 (NUCLEO-H755ZI-Q).
 # Provides the full bench toolchain so a new dev can build + test with no
-# host setup: ARM GCC, CMake/Ninja, host GCC, Python 3 + pyOCD and USB
+# host setup: ARM GCC, CMake/Ninja, host GCC, Python 3 + OpenOCD and USB
 # (ST-LINK). STM32CubeProgrammer is proprietary and NOT bundled; mount a host
-# install for flashing (see DOCKER.md).
+# install for flashing (see docker/README.md).
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,11 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libusb-1.0-0 \
         usbutils \
         doxygen \
+        openocd \
         graphviz \
         ca-certificates \
         sudo \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --no-cache-dir --break-system-packages pyocd \
+    && pip3 install --no-cache-dir --break-system-packages pyelftools \
     && arm-none-eabi-gcc --version | head -n 1 \
     && cmake --version | head -n 1
 

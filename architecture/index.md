@@ -49,6 +49,7 @@ When you add a file or folder, add a line here in the same commit.
 | Script | Role |
 |---|---|
 | `build_all.py` | Build every artifact into `build/` |
+| `swd.py` | SWD memory access through OpenOCD, one process per ST-LINK serial |
 | `esc_update.py` | Install the ESC app over CAN, per wheel |
 | `esc_tool.py` | ESC setup: align, status, stop, config, pulse |
 | `tune_ground.py` | Ground speed-loop tuning runs |

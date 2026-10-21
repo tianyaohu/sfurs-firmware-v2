@@ -52,7 +52,10 @@ It is never battery current. The ESC converts with `CURRENT_CONV_FACTOR` counts 
 3. reserved flag bits set [RESERVED_NONZERO]; ARM or CLEAR_FAULT with mode != DISABLE, or both together
    [BAD_FLAGS].
 4. DISABLE with setpoint or ff != 0, CURRENT with ff != 0 [RESERVED_NONZERO].
-5. More than one select bit in the ID with mode != DISABLE (only a plain DISABLE may be broadcast) [BAD_SELECT].
+5. No select bit, or more than one select bit on anything but a plain DISABLE (mode DISABLE, no flags); only a
+   plain DISABLE may be broadcast [BAD_SELECT].
+
+The rules are checked in this order and the first violated one is reported. NULL pointers count as BAD_LENGTH.
 
 ### Range validation (ESC, against its own compile-time limits)
 

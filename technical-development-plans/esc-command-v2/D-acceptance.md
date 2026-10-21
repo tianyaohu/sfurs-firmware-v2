@@ -44,9 +44,13 @@ applied the frame; 4 replies queue behind each other at about 0.25 ms each. Meas
 
 ## Overshoot
 
-Measured speed = calibrated edge-interval speed (sector width / time between consecutive transitions), independent of
-the firmware's estimator; valid only between two transitions in the same direction. **Pass: max over the first 500 ms
-after the first transition <= 1.3 x the steady commanded wheel speed** (the Nucleo target, 120 RPM at the gate).
+Measured speed = calibrated edge-interval speed, independent of the firmware's estimator: summed sector widths over
+the shortest run of consecutive same-direction transitions that spans >= 25 ms, divided by that time. With 1 ms
+edge timestamps this bounds the quantization error to about 4 % (a single 10 ms sector at 120 RPM would be +-10 %).
+Evaluated at each transition once such a run exists. **Pass: max from the first transition to the end of the
+recording <= 1.3 x the steady commanded wheel speed** (the Nucleo target, 120 RPM at the gate). The recorder holds
+384 ms per start, so with the default 50 ms pre-trigger this window is at least 200 ms after the first transition at
+the gate speed; a start whose window is shorter is "not measurable" for overshoot.
 
 ## Other failures (any one fails the start)
 

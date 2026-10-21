@@ -33,7 +33,7 @@ few characters; check the full serial before any write.
   headers; ninja from `pip install --user ninja`. On a fresh PC just install
   `gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build`.
 - `~/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
-- OpenOCD (`apt install openocd`, 0.12+; `src/tools/swd.py` starts one per probe serial) and pyelftools for the Python tools.
+- OpenOCD (`apt install openocd`, 0.11 or newer; `src/tools/swd.py` starts one per probe serial) and pyelftools for the Python tools.
 - ESC flash backups: `/home/fh/sfurs_firmware/esc-backups/` (outside git).
   `*-original-20261012.bin` are the boards as received (previous engineer's
   sensorless image, no bootloader).

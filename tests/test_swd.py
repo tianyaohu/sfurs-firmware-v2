@@ -14,6 +14,8 @@ import swd  # noqa: E402
 FAKE = '''#!/usr/bin/env python3
 import re, socket, sys
 a = sys.argv[1:]
+if a == ["--version"]:
+    print("Open On-Chip Debugger " + open(__file__ + ".ver").read(), file=sys.stderr); sys.exit(0)
 if "FAIL" in " ".join(a):
     print("Error: open failed"); sys.exit(1)
 open(__file__ + ".args", "w").write("\\n".join(a))
@@ -49,6 +51,10 @@ class Swd(unittest.TestCase):
         self.fake = pathlib.Path(self.dir.name) / "openocd"
         self.fake.write_text(FAKE)
         self.fake.chmod(self.fake.stat().st_mode | stat.S_IXUSR)
+        self.set_version("0.12.0")
+
+    def set_version(self, v):
+        pathlib.Path(str(self.fake) + ".ver").write_text(v)
 
     def tearDown(self):
         self.dir.cleanup()
@@ -71,6 +77,12 @@ class Swd(unittest.TestCase):
             self.assertTrue(any(a.endswith(script) for a in args))
             self.assertEqual("adapter speed 1000" in args, speed)
             self.assertIn("gdb_port disabled", args)
+
+    def test_serial_command_follows_openocd_version(self):
+        self.set_version("0.11.0")
+        with swd.Session("SN123", "stm32g431", str(self.fake)):
+            args = pathlib.Path(str(self.fake) + ".args").read_text().split("\n")
+        self.assertIn("hla_serial SN123", args)
 
     def test_reset_writes_aircr(self):
         with swd.Session("SN123", "stm32g431", str(self.fake)) as s:

@@ -9,6 +9,7 @@ or flashes (flashing goes through STM32CubeProgrammer). Target method names
 follow what the tools already used, so call sites stay the same.
 """
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -26,6 +27,15 @@ BLOCK_WORDS = 256  # keeps each Tcl command short
 
 class SwdError(RuntimeError):
     pass
+
+
+def serial_command(binary, serial):
+    """`adapter serial` exists from OpenOCD 0.12; 0.11 (Ubuntu 22.04) only has
+    the ST-LINK-specific `hla_serial`."""
+    out = subprocess.run([binary, "--version"], capture_output=True, text=True).stderr
+    version = re.search(r"Open On-Chip Debugger (\d+)\.(\d+)", out)
+    new = version and (int(version[1]), int(version[2])) >= (0, 12)
+    return f"{'adapter serial' if new else 'hla_serial'} {serial}"
 
 
 class Tcl:
@@ -108,7 +118,7 @@ class Session:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         cmd = [self.binary, "-f", "interface/stlink.cfg",
-               "-c", f"adapter serial {self.serial}",
+               "-c", serial_command(self.binary, self.serial),
                "-c", f"tcl_port {port}", "-c", "gdb_port disabled", "-c", "telnet_port disabled"]
         if speed:
             cmd += ["-c", f"adapter speed {speed}"]

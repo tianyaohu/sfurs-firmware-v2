@@ -24,6 +24,7 @@ When you add a file or folder, add a line here in the same commit.
 | `src/nucleo/CM7/Core/Src/ik_telemetry.c` | Poll ESC status/diag, keep last reply per wheel for the PC |
 | `src/nucleo/CM7/Core/Src/fwu_updater.c`, `can_fwu_host.c` | Updater image: push an ESC app over CAN |
 | `src/shared/src/rover_kinematics.c` | Body twist <-> wheel speeds (IK table) |
+| `src/shared/src/motor_protocol.c` | Motor command protocol v1 codec (CONTROL / CONTROL_REPLY, sequence and session rules); not on the wire yet |
 | `src/shared/src/friction_ff.c` | Body-frame friction model: commanded twist -> per-wheel feed-forward current (not wired into the drive yet) |
 | `src/shared/src/can_fwu_protocol.c`, `can_fwu_boot.c` | CAN firmware-update protocol, shared host/bootloader |
 | `src/nucleo/CM4/` | Unused CubeMX skeleton |

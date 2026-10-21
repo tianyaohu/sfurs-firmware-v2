@@ -102,7 +102,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 3 | reason (table below; 0 for a plain APPLIED) |
 | 4 | session the ESC accepts now (the challenge while DISARMED) |
 | 5-6 | int16 measured speed, RPM (the one speed estimate of [C](C-ownership.md)); 0 when not valid |
-| 7 | int8 measured q-current, 50 mA units (+-6.35 A covers the 6 A limit) |
+| 7 | int8 measured q-current, 50 mA units, nearest step with halves away from zero, saturated at +-127 (+-6.35 A covers the 6 A limit); 0 while the output is off (the old STATUS showed ~25 A on IDLE wheels on 2026-10-20, so MCSDK's Iq is not meaningful with the bridge off; cause confirmed in Stage 0) |
 
 - Produced by the 1 kHz tick that processed the frame, not by the ISR, so APPLIED means "the controller uses this
   target from this tick on". It does not mean the speed was reached.

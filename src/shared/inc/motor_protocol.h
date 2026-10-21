@@ -135,7 +135,8 @@ enum motor_reason motor_control_check(const struct motor_control *c, uint32_t se
  * @param id   11-bit CAN ID (must be ::MOTOR_CAN_ID_CONTROL | select)
  * @param data payload bytes
  * @param dlc  payload length, bytes
- * @param out  decoded fields; filled whenever dlc is 8, even if the check fails (the reply needs seq)
+ * @param out  decoded fields; filled whenever dlc is 8 and the ID base is CONTROL, even if the check
+ *             fails (the reply needs seq); untouched otherwise (such a frame gets no reply)
  * @return ::MOTOR_R_NONE, ::MOTOR_R_BAD_LENGTH for dlc != 8 or a wrong ID base, or a ::motor_control_check reason
  */
 enum motor_reason motor_control_decode(uint32_t id, const uint8_t *data, uint32_t dlc,

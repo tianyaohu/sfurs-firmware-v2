@@ -7,3 +7,5 @@ host_test(test_ik_link
   INCLUDES src/tools/lib src/shared/can
   DEFS FAKE_OCD="$<TARGET_FILE:fake_openocd>" FAKE_ELF="$<TARGET_FILE:fake_ik_syms>"
   DEPENDS fake_openocd fake_ik_syms)
+host_test(test_esc_ops
+  SOURCES src/tools/lib/esc_ops.c INCLUDES src/tools/lib LIBS m)

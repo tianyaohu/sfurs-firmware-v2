@@ -9,7 +9,8 @@ the user's (2026-10-21); this file makes it computable.
   6 x 8 = 48 Hall transitions per wheel turn, nominally 7.5 deg apart. Stage 0 confirms by counting edges over one
   marked turn.
 - The Hall state tells which of the 6 electrical sectors the rotor is in, never which pole pair. So the calibration
-  is per wheel and per electrical sector (6 widths, averaged over the 8 pole pairs). The pole-pair spread of each
+  is per wheel and per electrical sector (6 widths in mechanical degrees, summing to one electrical turn = 45 deg,
+averaged over the 8 pole pairs). The pole-pair spread of each
   width is measured and becomes part of the tolerance.
 - The rotor's position inside its starting sector is unknown.
 - Edge times come from the ESC recorder at 1 kHz (+-1 ms). The Stage 2 firmware adds the Hall state at the start and
@@ -48,14 +49,19 @@ Measured speed = calibrated edge-interval speed, independent of the firmware's e
 the shortest run of consecutive same-direction transitions that spans >= 25 ms, divided by that time. With 1 ms
 edge timestamps this bounds the quantization error to about 4 % (a single 10 ms sector at 120 RPM would be +-10 %).
 Evaluated at each transition once such a run exists. **Pass: max from the first transition to the end of the
-recording <= 1.3 x the steady commanded wheel speed** (the Nucleo target, 120 RPM at the gate). The recorder holds
+recording <= 1.3 x that wheel's steady commanded speed** (the plateau of its applied reference; wheels differ within one twist,
+the fastest is 120 RPM at the gate). The recorder holds
 384 ms per start, so with the default 50 ms pre-trigger this window is at least 200 ms after the first transition at
 the gate speed; a start whose window is shorter is "not measurable" for overshoot.
 
 ## Other failures (any one fails the start)
 
-MCSDK fault, I2T derate, FAULTED(STALL / HALL_LOST), REJECTED or LOST on a motion frame, a transition against the
-commanded direction before the first transition along it.
+MCSDK fault, I2T derate, FAULTED(STALL / HALL_LOST), REJECTED or LOST on a motion frame, any of the first 8
+transitions against the commanded direction (rocking is a startup failure, not noise).
+Missing evidence never passes: a record without a zero-reference baseline, a reversing reference, or a wheel whose
+reference has not plateaued (|ref| constant within +-1 RPM for the last 50 ms; the plateau is that wheel's steady
+target for the overshoot ratio) is "not measurable". Two transitions inside one 1 ms tick in opposite directions
+cancel in the recorder's net edge count and are not seen; edge times are taken at the end of their tick.
 
 ## Low-speed operating points
 

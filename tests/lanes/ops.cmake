@@ -1,7 +1,8 @@
 set(ops_sources
   src/tools/lib/drive_ops.c src/tools/lib/drive_keyboard.c src/tools/lib/drive_record.c
   src/tools/lib/pulse_run.c src/tools/lib/esc_ops.c src/tools/lib/tune_analysis.c
-  src/tools/lib/esc_defaults.c src/tools/lib/ik_link.c src/tools/lib/ocd.c src/tools/lib/elfsym.c)
+  src/tools/lib/esc_defaults.c src/tools/lib/ik_link.c src/tools/lib/ocd.c src/tools/lib/elfsym.c
+  src/tools/lib/startup_metrics.c)
 set(ops_absolute_sources)
 foreach(source ${ops_sources})
   list(APPEND ops_absolute_sources ${REPO}/${source})

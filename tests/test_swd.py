@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """src/tools/swd.py against a fake `openocd` executable that speaks OpenOCD's
-documented Tcl RPC (Ctrl-Z framed commands, read_memory / write_memory)."""
+documented Tcl RPC (Ctrl-Z framed commands, mem2array / mww)."""
 import pathlib
 import stat
 import sys
@@ -31,12 +31,12 @@ while True:
     while b"\\x1a" in buf:
         cmd, buf = buf.split(b"\\x1a", 1)
         w = cmd.decode().split()
-        if w[0] == "read_memory":
-            addr, width, n = int(w[1], 0), int(w[2]), int(w[3])
+        if w[0] == "mem2array":  # the client appends a Tcl loop that flattens the array
+            width, addr, n = int(w[2]), int(w[3], 0), int(w[4].rstrip(";"))
             step = width // 8
-            out = " ".join(hex(mem.get(addr + i * step, (addr + i * step) & (2**width - 1))) for i in range(n))
-        elif w[0] == "write_memory":
-            mem[int(w[1], 0)] = int(w[3].strip("{}"), 0); out = ""
+            out = " ".join(str(mem.get(addr + i * step, (addr + i * step) & (2**width - 1))) for i in range(n))
+        elif w[0] == "mww":
+            mem[int(w[1], 0)] = int(w[2], 0); out = ""
         elif w[0] == "shutdown":
             conn.sendall(b"\\x1a"); sys.exit(0)
         else:

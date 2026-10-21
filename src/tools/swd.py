@@ -69,13 +69,16 @@ class Target:
         out = []
         for off in range(0, count, BLOCK_WORDS):
             n = min(BLOCK_WORDS, count - off)
-            reply = self.tcl.run(f"read_memory 0x{addr + off * width // 8:x} {width} {n}")
+            # mem2array, not read_memory: 0.11 has no read_memory. Values come back in decimal.
+            reply = self.tcl.run(
+                f"mem2array _m {width} 0x{addr + off * width // 8:x} {n}; "
+                "set _o {}; foreach i [lsort -integer [array names _m]] {lappend _o $_m($i)}; set _o")
             try:
                 words = [int(w, 0) for w in reply.split()]
             except ValueError:
-                raise SwdError(f"read_memory 0x{addr:x}: {reply}") from None
+                raise SwdError(f"read 0x{addr:x}: {reply}") from None
             if len(words) != n:
-                raise SwdError(f"read_memory 0x{addr:x}: got {len(words)} of {n} items: {reply}")
+                raise SwdError(f"read 0x{addr:x}: got {len(words)} of {n} items: {reply}")
             out += words
         return out
 
@@ -89,9 +92,9 @@ class Target:
         return self._read(addr, 8, count)
 
     def write32(self, addr, value):
-        reply = self.tcl.run(f"write_memory 0x{addr:x} 32 {{0x{value & 0xFFFFFFFF:x}}}")
+        reply = self.tcl.run(f"mww 0x{addr:x} 0x{value & 0xFFFFFFFF:x}")
         if reply:
-            raise SwdError(f"write_memory 0x{addr:x}: {reply}")
+            raise SwdError(f"write 0x{addr:x}: {reply}")
 
     def reset_sysreq(self):
         """Core reset through AIRCR.SYSRESETREQ. The probe may drop the link as

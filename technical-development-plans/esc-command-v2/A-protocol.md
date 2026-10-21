@@ -64,7 +64,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 
 - The ESC holds `session` (nonzero u8). It picks a new one on boot, command timeout, FAULTED -> cleared, and every
   disarm: `next = 1 + (prev - 1 + 1 + (entropy mod 254)) mod 255`, which is never 0 and never equal to `prev`.
-  `entropy` is the 1 kHz tick counter. Every reply carries the current `session` in byte 4.
+  `entropy` is the 1 kHz tick counter. At boot (`prev = 0`): `next = 1 + entropy mod 255`. Every reply carries the current `session` in byte 4.
 - ARM (mode DISABLE, flag ARM) is accepted only when byte 7 equals the current session [BAD_SESSION]. It sets the
   sequence baseline `last_seq = seq`.
 - Motion frames (SPEED, CURRENT) need lifecycle armed [NOT_ARMED] and byte 7 == session [BAD_SESSION]. Then, with
@@ -127,7 +127,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 9 | STALE | 34 | FAULT_HALL_LOST |
 | 10 | SEQ_AMBIGUOUS | 35 | TIMEOUT |
 | 11 | SEQ_JUMP | 36 | LIFECYCLE_OVERFLOW |
-| 19 | CONFLICT | | |
+| 19 | CONFLICT | 20 | BAD_LENGTH (DLC != 8 or wrong ID base; counted, never sent) |
 
 Codes 32 and up are latched causes, also reported in DIAG until cleared.
 

@@ -18,7 +18,7 @@ when its acceptance line is met and recorded in [test-results/](../hardware-test
   measured motion, not hand measurements.
 - Even breakaway across wheels so starts do not yaw.
 - Acceptance: 1 m in any of 8 directions ends within ±10 cm; spin error
-  recorded. Measured with the camera rig (`src/tools/rig/`).
+  recorded. Measured with the camera rig (own repository; join its poses to the tool logs by `CLOCK_MONOTONIC` time).
 
 ## Phase 3: closed-loop motion (only if phase 2 is not enough)
 

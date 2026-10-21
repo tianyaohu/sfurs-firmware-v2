@@ -59,7 +59,7 @@ static void check_embedding(const char *path, size_t size, int legacy_banner,
   if (legacy_banner) {
     const char *name = strrchr(source, '/');
     snprintf(expected, sizeof(expected),
-             "/* Generated from %s by src/tools/fwu_image.py. Do not edit. */\n",
+             "/* Generated from %s by src/tools/fwu_image/fwu_image.c. Do not edit. */\n",
              name ? name + 1 : source);
     CHECK(strcmp(line, expected) == 0);
   }

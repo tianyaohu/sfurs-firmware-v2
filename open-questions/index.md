@@ -21,5 +21,5 @@ answer in the doc it changes.
   is not done.
 - Rig timing: exposure/USB latency is unknown; `rig_analyze --estimate-latency`
   is untested on real data. Camera and `esc_tool` must share a host clock.
-- Rig friction-ID pipeline (`rig_sweep.py --execute`, `rig_analyze.py`) has only
+- Rig friction-ID pipeline (`sweep --execute`, then `rig_analyze.py` in the rig repo) has only
   run on synthetic logs.

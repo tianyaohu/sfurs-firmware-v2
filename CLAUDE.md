@@ -38,7 +38,7 @@ on CAN. Current goal: 1 m command lands within ±10 cm in every direction.
 
 - Do not emulate hardware you do not fully know: fake only at a boundary whose
   behaviour is documented (HAL call, CAN frame), never a made-up plant model.
-- New C logic gets a host unit test; run `python3 tests/run_all.py` (all
+- New C logic gets a host unit test; run `scripts/test.sh` (all
   existing tests, so other firmware is regression-checked) before committing.
 - Ask before touching hardware; rules in `system-info/hardware.md`.
 - A hardware test is recorded in `hardware-test-results/` before the task is

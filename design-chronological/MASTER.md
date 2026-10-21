@@ -38,3 +38,20 @@ Append only; format in design/README.md.
 - Touches: `esc_update.py`, `ik_link.py`, `docker/Dockerfile`. Host-tested against a fake
   Tcl endpoint only; bench check with real probes still open (ESC `reset_sysreq` is a
   direct AIRCR write).
+
+## 2026-10-20  No Python in the repo: C tools, CTest, camera rig out  (who: Frank H + claude, lanes delegated to Codex)
+- Decision: PC tools are C programs in `src/tools/` over `lib/ocd.c` (OpenOCD Tcl client) and the firmware's own
+  headers; host tests are CMake/CTest (`tests/`); build and test drivers are shell (`scripts/`). The overhead
+  camera rig (OpenCV/AprilTag) left to its own repository (history: branch `rig-split`).
+- Why: one toolchain (gcc/CMake) for firmware, tests and tools; the CAN/mailbox constants come from
+  `can_datatypes.h` instead of being copied, so drift is a compile error; no Python/uv/pyocd to install.
+- Consequence: `move_test` and `tune_ground` no longer run the camera in-process. They drive, guard and log
+  with `CLOCK_MONOTONIC` stamps and per-move windows; judging a move against camera poses is done on the rig
+  side by joining on time. The live "path stays on the mat" and "tag seen still" preflights are gone until the rig
+  repo provides them.
+- Rejected: Rust/Go tools (new toolchain, cannot include the firmware headers); shell-only tools (numerics and
+  ELF handling too awkward); keeping a Python rig in this repo (the aim was zero Python).
+- Verified: ESC binaries from `scripts/build.sh` are byte-identical to the former Python build; numeric ports match
+  recorded Python outputs (`tests/golden/`) at 1e-9; every ported test was mutation-checked. Not verified on
+  hardware: everything that drives or programs a board (only read-only OpenOCD attach to the Nucleo was run).
+- Touches: all of `src/tools/`, `tests/`, `scripts/`, CI, Dockerfile, docs.

@@ -32,6 +32,10 @@ run "tests/ (CTest)" sh -c "cmake -S '$ROOT/tests' -B '$ROOT/build/host' $GEN >/
   cmake --build '$ROOT/build/host' &&
   ctest --test-dir '$ROOT/build/host' --output-on-failure"
 
+# shellcheck disable=SC2086
+run "src/tools (build)" sh -c "cmake -S '$ROOT/src/tools' -B '$ROOT/build/tools' $GEN >/dev/null &&
+  cmake --build '$ROOT/build/tools'"
+
 for suite in src/sensors/stm32h7/CM7/optical_flow/tests \
              src/sensors/stm32h7/CM7/IMU/tests \
              src/sensors/stm32h7/CM7/wheel_encoder/tests; do

@@ -6,7 +6,7 @@
  * @file ik_drive.h
  * @brief Streaming omni drive: body twist from the host to four ESCs.
  *
- * The host (src/tools/ik_link.py over SWD) writes a body twist and bumps
+ * The host (src/tools/lib/ik_link.c over SWD) writes a body twist and bumps
  * heartbeat at >=10 Hz. Every ::IK_DRIVE_PERIOD_MS the Nucleo runs the IK,
  * slews each wheel toward its target at a common acceleration limit (keeping
  * the twist direction), and sends SPEED_WRITE to all four ESCs.

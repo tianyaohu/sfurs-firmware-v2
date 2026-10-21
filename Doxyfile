@@ -9,7 +9,6 @@ INPUT                  = src/nucleo/CM7/Core/Src \
                          src/esc/bootloader/boot_main.c \
                          src/esc/motor_config/Src/drive_app.c \
                          src/esc/motor_config/Inc/drive_app.h \
-                         src/tools/rig/README.md \
                          docs prd architecture system-info open-questions \
                          technical-development-plans design-chronological \
                          hardware-test-results references

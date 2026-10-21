@@ -1,7 +1,6 @@
 /* ik_link.c: command words, config frames, telemetry decode, and the SWD
  * mailbox through the fake OpenOCD with a host ELF that carries the ik_drive_*
- * symbols. Ports tests/test_ik_link_record.py (the header-drift checks are now
- * compile-time: ik_link.c includes can_datatypes.h). */
+ * symbols. The constants cannot drift from the firmware: ik_link.c includes can_datatypes.h. */
 #include <stdlib.h>
 #include <string.h>
 

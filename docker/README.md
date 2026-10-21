@@ -7,7 +7,7 @@ passthrough. No host toolchain install needed.
 UID=$(id -u) GID=$(id -g) docker compose build
 docker compose run --rm dev bash
 # inside: the checkout is at /work/sfurs_firmware_v2
-python3 tests/run_all.py
+scripts/test.sh
 scripts/build.sh
 ```
 
@@ -19,7 +19,7 @@ the container does not work in a linked worktree; run git on the host.
 
 ## Hardware
 
-`src/tools/` talk to the probes through OpenOCD (`src/tools/swd.py`), which is in the image. Check
+`src/tools/` talk to the probes through OpenOCD (`src/tools/lib/ocd.c`), which is in the image. Check
 `lsusb` shows the ST-LINK. Host udev rules for ST-LINK must already exist (they
 do if the probe works on the host); re-plug after installing them.
 

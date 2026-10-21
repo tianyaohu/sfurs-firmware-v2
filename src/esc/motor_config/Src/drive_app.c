@@ -141,7 +141,7 @@ void drive_app_init(void)
     .preload_pct = DSC_PRELOAD_PCT_DEFAULT };
   dsc_reset(&drive_dsc);
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
-  drive_app.aligned = 1U; /* measured shift compiled in by build_cli.py --hall-shift */
+  drive_app.aligned = 1U; /* measured shift compiled in by scripts/esc_build.sh --hall-shift */
 #endif
 }
 

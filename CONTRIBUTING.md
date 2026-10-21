@@ -36,7 +36,7 @@ away still get a branch (`hw/...`); delete it when done instead of merging.
 ## Merge requests
 
 - Target `develop` (or `main` from `release/*`).
-- Before opening: `python3 tests/run_all.py` passes and `scripts/build.sh`
+- Before opening: `scripts/test.sh` passes and `scripts/build.sh`
   builds without warnings (CI runs the same once a runner is enabled).
 - Anything that ran on the robot: put the evidence in the MR description
   (board, firmware hash/CRC, battery voltage, numbers measured). Docs describe

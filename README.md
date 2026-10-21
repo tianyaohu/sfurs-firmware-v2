@@ -14,8 +14,9 @@ All code is under `src/`; each documentation concern has its own top-level folde
 | `src/esc/` | ESC application (`motor_config/`) and CAN bootloader ([README](src/esc/README.md)) |
 | `src/shared/` | Code shared by Nucleo and ESC: kinematics, CAN-FWU protocol (`inc/`, `src/`) and the Nucleo ↔ ESC CAN protocol (`can/can_datatypes.h`) |
 | `src/sensors/stm32h7/` | Sensor app for the same Nucleo (FreeRTOS; optical flow, IMU, wheel encoder modules with gtests). Separate CubeMX project, not part of the drive image |
-| `src/tools/` | Build, ESC update, drive, tuning and camera-rig tools |
-| `tests/` | Host tests; `tests/run_all.py` runs them plus the sensor-module gtests |
+| `src/tools/` | PC tools in C (ESC update, setup, drive, tuning, sweep) and `lib/` (OpenOCD client, mailbox link, analysis) |
+| `scripts/` | `build.sh` (all firmware images), `esc_build.sh`, `boot_build.sh`, `test.sh` |
+| `tests/` | Host tests; `scripts/test.sh` runs them plus the sensor-module gtests |
 | `archive/` | Unused: `stm32h5/` sensor-board skeleton, `rs_i2t/` current-limit module. Not built or tested |
 | `docs/` | [System context](docs/index.md) and [lessons](docs/lessons.md) |
 | `prd/` | [Product requirements](prd/index.md), by phase |
@@ -31,16 +32,18 @@ All code is under `src/`; each documentation concern has its own top-level folde
 
 ```sh
 scripts/build.sh                             # everything into build/ (no hardware)
-python3 tests/run_all.py                      # host tests (no hardware)
-src/tools/esc_update.py NE --can                # install ESC app over CAN, per wheel
-src/tools/esc_tool.py align all                 # battery ON, wheels raised
-src/tools/keyboard_drive.py --speed 0.5         # WASD move, QE rotate, X quit
+scripts/test.sh                              # host tests + tool build (no hardware)
+cmake -S src/tools -B build/tools -G Ninja && cmake --build build/tools   # PC tools into build/tools/
+build/tools/esc_update NE --can                # install ESC app over CAN, per wheel
+build/tools/esc_tool align all                 # battery ON, wheels raised
+build/tools/keyboard_drive --speed 0.5         # WASD move, QE rotate, X quit
 ```
 
 Read [system-info/hardware.md](system-info/hardware.md) before touching hardware, and
 [CONTRIBUTING.md](CONTRIBUTING.md) for branches and merge requests.
+The camera rig lives in its own repository (history: branch `rig-split`).
 Without a host toolchain, run the same commands in the dev container
-([docker/README.md](docker/README.md)); CI runs `run_all.py` and `scripts/build.sh` in it.
+([docker/README.md](docker/README.md)); CI runs `scripts/test.sh` and `scripts/build.sh` in it.
 
 ## Builds
 

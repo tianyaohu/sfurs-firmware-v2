@@ -3,7 +3,7 @@
 #include "check.h"
 #include <stddef.h>
 
-static void test_c_decoder_to_python_row(void) {
+static void test_c_decoder_row(void) {
   uint32_t seen[4 * 17];
   unsigned n = 0;
   for (uint32_t t = 5; n < 4 * 17; ++t) {
@@ -96,7 +96,7 @@ static void test_row_layout_matches_header(void) {
 }
 
 int main(void) {
-  test_c_decoder_to_python_row();
+  test_c_decoder_row();
   test_row_layout_matches_header();
   return 0;
 }

@@ -10,7 +10,7 @@
  * the bootloader until a good image lands. Power-cycling restarts the
  * 3 s window from a clean session state (unless remote entry requests listening).
  *
- * Build with -DMOTOR_NE (or SE/SW/NW); see build_boot.py.
+ * Build with -DMOTOR_NE (or SE/SW/NW); see scripts/boot_build.sh.
  */
 #include "stm32g4xx_hal.h"
 #include "can_fwu_protocol.h"

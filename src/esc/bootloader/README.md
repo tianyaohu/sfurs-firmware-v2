@@ -1,7 +1,7 @@
 # B-G431B-ESC1 CAN bootloader
 
 Installed once over SWD at `0x08000000`; every application update then
-arrives over CAN from the Nucleo (`architecture/can-fwu.md`, `src/tools/esc_update.py`).
+arrives over CAN from the Nucleo (`architecture/can-fwu.md`, `build/tools/esc_update`).
 The protocol sources are shared with the Nucleo: `src/shared/src/can_fwu_*.c` and
 `src/shared/inc/` are compiled in directly, so there are no copies to re-sync.
 
@@ -75,7 +75,7 @@ of firmware-update wire/ACK versions. No change to `system_stm32g4xx.c` needed.
 ## Host regression tests
 
 ```sh
-python3 src/esc/bootloader/tests/run_tests.py
+scripts/test.sh
 ```
 
 Runs C helpers and the real shared session with ASan/UBSan. Covers oversized
@@ -102,7 +102,7 @@ $CLI -c port=SWD sn=<esc-probe> -w /tmp/app/motor_NE_drive_offset.elf -v -rst
 ```
 
 Expect: red LED blinks 2 Hz for 3 s, then stays in boot (no validity
-metadata yet); run `src/tools/esc_update.py` to commit the app. If the LED blinks forever, the app image
+metadata yet); run `build/tools/esc_update` to commit the app. If the LED blinks forever, the app image
 is missing/invalid — perform a verified CAN update; SWD programming the app
 alone does not create validity metadata. The bootloader is intact.
 

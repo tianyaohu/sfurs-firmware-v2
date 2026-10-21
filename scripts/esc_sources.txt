@@ -1,5 +1,5 @@
 # Extracted from motor_config/STM32CubeIDE/.project linked resources, then
-# sorted Application/*.c and Application/*.s, matching the former build_cli.py order.
+# sorted Application/*.c and Application/*.s, matching the former scripts/esc_build.sh order.
 Src/aspep.c
 Src/drive_app.c
 Src/drive_speed_ctrl.c

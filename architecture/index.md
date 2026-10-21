@@ -35,7 +35,6 @@ When you add a file or folder, add a line here in the same commit.
 | `motor_config/Src/drive_app.c` | All application behaviour: start, speed target, status/diag, config, protections |
 | `motor_config/Src/mc_tasks_foc.c` | Hall angle hook in the FOC current controller |
 | `motor_config/Inc/*parameters.h` | Motor and loop parameters |
-| `motor_config/build_cli.py` | GCC build, no CubeIDE |
 | `bootloader/` | 16 KiB CAN bootloader; compiles the protocol from `src/shared` |
 | `Inc/motor_controller_can.h` | `MOTOR_NE/SE/SW/NW` build macro to CAN select bit |
 | everything else | ST MCSDK / CubeMX generated; do not hand-edit |
@@ -44,28 +43,43 @@ When you add a file or folder, add a line here in the same commit.
 
 `src/shared/can/can_datatypes.h`: Nucleo <-> ESC CAN IDs and payloads.
 
-### Tools (`src/tools/`)
+### Tools (`src/tools/`, C; `cmake -S src/tools -B build/tools`)
 
-| Script | Role |
+Programs (one `targets/<tool>.cmake` each):
+
+| Program | Role |
 |---|---|
-| `build_all.py` | Build every artifact into `build/` |
-| `swd.py` | SWD memory access through OpenOCD, one process per ST-LINK serial |
-| `lib/ocd.c` | OpenOCD session in C: SWD read/write over the Tcl port (replaces `swd.py` once the tools are ported) |
-| `lib/elfsym.c` | Symbol address/size lookup in firmware ELFs |
-| `lib/crc32.c` | CRC-32 (IEEE) matching zlib |
-| `esc_update.py` | Install the ESC app over CAN, per wheel |
-| `esc_tool.py` | ESC setup: align, status, stop, config, pulse |
-| `tune_ground.py` | Ground speed-loop tuning runs |
-| `keyboard_drive.py` | WASD/QE drive |
-| `move_test.py` | Scripted moves |
-| `ik_link.py` | SWD mailbox link library |
-| `capture_analysis.py` | Current-loop capture analysis (R, L, PI gains) |
-| `fwu_image.py` | ESC app to Nucleo FWU payload |
-| `rig/` | Overhead camera and AprilTag tracker ([README](../src/tools/rig/README.md)) |
+| `esc_update.c` | Install the ESC app over CAN or SWD, per wheel (logic in `lib/flashimg_*.c`) |
+| `esc_tool.c` | ESC setup: status, align, set, capture, spin, pulse, stop |
+| `keyboard_drive.c` | WASD/QE drive |
+| `move_test.c` | Scripted straight-line moves, logged with monotonic stamps |
+| `tune_ground.c` | Ground friction feed-forward tuning |
+| `sweep.c` | Oblique out-and-back pulses for friction identification |
+| `fwu_image/fwu_image.c` | ESC app to Nucleo FWU payload (own CMake project) |
+
+Library `lib/` (every file joins library `tools`):
+
+| File | Role |
+|---|---|
+| `ocd.c` | OpenOCD session: SWD read/write over its Tcl port, one process per ST-LINK serial |
+| `elfsym.c`, `crc32.c`, `sha256.c` | ELF symbol lookup, CRC-32 (IEEE, = zlib), SHA-256 |
+| `ik_link.c` | Nucleo mailbox: command words, CONFIG_SET, telemetry decode, capture and recorder readout |
+| `esc_ops.c`, `esc_defaults.c` | Breakaway timing, pulse guard and plan; ESC boot defaults from `drive_parameters.h` (generated header) |
+| `pulse_run.c` | Run a plan through the Nucleo, guard it, log it, restore defaults |
+| `capture_analysis.c`, `tune_analysis.c` | Current-loop R/L/PI fit; friction fit, overshoot, acceptance |
+| `flashimg_*.c` | ESC update checks (Vbus, flash vs ELF, bus readiness) and install flow |
+| `drive_*.c` | Keyboard control, record summary, staged drive helpers |
+
+The overhead camera rig is a separate repository (history on branch `rig-split`). It meets
+these tools only through logs: both sides stamp `CLOCK_MONOTONIC` seconds, and the tools write each
+move's start/end window so poses can be joined by time.
+
+Scripts (`scripts/`): `build.sh` (all firmware images into `build/`), `esc_build.sh`, `boot_build.sh`
+(ESC app and bootloader), `test.sh` (host tests, tool build, sensor gtests).
 
 ### Tests (`tests/`)
 
-Host tests that compile the real C source against fakes (`tests/CMakeLists.txt`, CTest; `golden/` holds recorded reference outputs for the numeric ports); `run_all.py` runs
+Host tests that compile the real C source against fakes (`tests/CMakeLists.txt`, CTest; `golden/` holds recorded reference outputs for the numeric ports); `scripts/test.sh` runs
 them plus the module gtests. Anything addressed per wheel is tested for all
 four wheels.
 

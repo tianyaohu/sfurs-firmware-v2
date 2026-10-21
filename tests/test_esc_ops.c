@@ -1,4 +1,4 @@
-/* esc_ops.c on synthetic pulse logs (no hardware). Ports tests/test_esc_tool_pulse.py. */
+/* esc_ops.c on synthetic pulse logs (no hardware). */
 #include <math.h>
 #include <string.h>
 

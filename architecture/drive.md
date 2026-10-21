@@ -1,13 +1,13 @@
 # Omni drive
 
-Keyboard → PC (`src/tools/keyboard_drive.py`) → SWD mailbox → Nucleo
+Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
 (`src/nucleo/CM7/Core/Src/ik_drive.c`) → CAN → four ESCs
 (`src/esc/motor_config/Src/drive_app.c`, on top of ST MCSDK 6.4.1).
 
 ## Data flow
 
 1. The PC writes a body twist (vx, vy in mm/s, ω in mrad/s) and bumps a
-   heartbeat at 50 Hz over the Nucleo's ST-LINK (OpenOCD attach through `swd.py`, no halt).
+   heartbeat at 50 Hz over the Nucleo's ST-LINK (OpenOCD attach through `lib/ocd.c`, no halt).
 2. Every 20 ms the Nucleo runs the inverse kinematics
    (`src/shared/src/rover_kinematics.c`), slews all wheels toward their targets
    with one acceleration limit (default 900 RPM/s, keeps the twist
@@ -65,11 +65,11 @@ The result lives in RAM. Bake it in with
 
 ## Bring-up
 
-1. `scripts/build.sh`; `src/tools/esc_update.py <W> --can` for each wheel
+1. `scripts/build.sh`; `build/tools/esc_update <W> --can` for each wheel
    (`--battery-off` with the ESC's USB for a first install; [CAN_FWU.md](can-fwu.md)).
-2. Battery ON, wheels off the ground: `src/tools/esc_tool.py status`, then
-   `src/tools/esc_tool.py align all`. Expect `ok`, 12 edges each way.
-3. Off the ground: `src/tools/keyboard_drive.py --speed 0.3`; check each key
+2. Battery ON, wheels off the ground: `build/tools/esc_tool status`, then
+   `build/tools/esc_tool align all`. Expect `ok`, 12 edges each way.
+3. Off the ground: `build/tools/keyboard_drive --speed 0.3`; check each key
    turns the wheels the right way.
 4. On the ground: `--speed 0.3`, then 0.5, 1.0.
 5. Bake the measured shifts (above) so alignment survives power cycles.
@@ -78,14 +78,14 @@ The result lives in RAM. Bake it in with
 
 Tune from the inside out: current loop, then speed loop.
 
-Current loop: `src/tools/esc_tool.py capture <W> --step-ma 3000` (battery ON,
+Current loop: `build/tools/esc_tool capture <W> --step-ma 3000` (battery ON,
 IDLE). The ESC holds the rotor on the d axis at 1 A, steps Id to 3 A and
 records Id, Iq, Vd, Vq every FOC period (16 kHz, 512 samples); the Nucleo
-relays the readout. `capture_analysis.py` fits R (from the two steady states,
+relays the readout. `capture_analysis.c` fits R (from the two steady states,
 cancelling dead time) and L (transient, with the PWM delay picked by fit),
 reports rise time, overshoot and settling, and prints `current_kp`/`current_ki`
 for 0.5, 0.8 and 1 kHz (Kp = L·ωc, Ki = R·ωc). Try them with
-`esc_tool.py set <W> current_kp N` / `current_ki N` (RAM, both axes) and
+`esc_tool set <W> current_kp N` / `current_ki N` (RAM, both axes) and
 capture again; copy good values into `PID_TORQUE_*`/`PID_FLUX_*` in
 `drive_parameters.h`. With one PWM period of delay, overshoot grows quickly
 above about 0.8 kHz.
@@ -96,7 +96,7 @@ four wheels raised: Kp 4096 / Ki 4424 limit-cycled at ±6 A (loud buzz, no
 rotation); 1024/553 holds ±60 and 120 RPM with Iq ≈ 0.1 A. At 30–60 RPM the
 Hall speed estimate itself scatters by about ±25 RPM whatever the gains. On
 the ground the robot's inertia is part of the plant, so retune there. Tune
-live without reflashing: `src/tools/esc_tool.py set all kp 2048` (IDLE only,
+live without reflashing: `build/tools/esc_tool set all kp 2048` (IDLE only,
 RAM only), then copy good values into `drive_parameters.h`.
 
 Friction feed-forward (`drive_speed_iq_ref` in `drive_app.c`, called from
@@ -106,7 +106,7 @@ slow starts, then overshoot to 2–3× the command. In speed mode the Iq
 reference is the PI output plus sign(speed ref) × ff, with ff = static value at
 standstill fading linearly to the kinetic value at 30 RPM, clamped to the
 current limit (including I²t derate). Both default to 0 (`FRICTION_FF_*` in
-`drive_parameters.h`); tune with `esc_tool.py pulse --ff-static MA
+`drive_parameters.h`); tune with `esc_tool pulse --ff-static MA
 --ff-kinetic MA`, which drives the robot out and back and reports per-wheel
 breakaway time. Ground ladder without feed-forward: Kp 4096 / Ki 1100 is the
 best stable pair; Ki 2200 at Kp 4096 limit-cycles at the 6 A limit.

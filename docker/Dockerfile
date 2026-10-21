@@ -11,8 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         ninja-build \
         git \
-        python3 \
-        python3-pip \
         gcc-arm-none-eabi \
         libnewlib-arm-none-eabi \
         libusb-1.0-0 \
@@ -23,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         sudo \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --no-cache-dir --break-system-packages pyelftools \
     && arm-none-eabi-gcc --version | head -n 1 \
     && cmake --version | head -n 1
 

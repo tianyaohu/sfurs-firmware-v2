@@ -1,5 +1,5 @@
 /* sweep.c plan mode (no hardware): step count, limits and the oblique twists.
- * Ports the plan checks of the old rig_sweep.py. */
+ * */
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>

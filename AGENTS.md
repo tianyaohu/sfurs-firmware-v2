@@ -36,8 +36,8 @@ are in `architecture/drive.md`, `system-info/hardware.md`, `architecture/can-fwu
   sections of CubeMX files. ESC: `motor_config/Src/drive_app.c`, `USER CODE`
   sections, and the parameter headers listed in `src/esc/README.md`.
 - New C logic gets a host test that compiles the real source against fakes
-  (pattern: `tests/test_esc_drive_app.py`). `python3 tests/run_all.py` must
-  pass before committing; `src/tools/build_all.py` must build without warnings.
+  (pattern: `tests/test_esc_drive_app.c`). `scripts/test.sh` must
+  pass before committing; `scripts/build.sh` must build without warnings.
 - Anything addressed per wheel is tested for all four wheels.
 
 ## Git
@@ -66,7 +66,7 @@ Read `system-info/hardware.md` first. In short:
 - Know the battery state before each hardware step and again after any cable
   or power change: measure it (ESC Vbus over CAN or SWD; < 8 V is off) or
   take it from the user. Ask only when it can't be measured.
-- Flashing an ESC: over SWD, battery OFF. Over CAN (`esc_update.py --can`),
+- Flashing an ESC: over SWD, battery OFF. Over CAN (`esc_update --can`),
   battery ON is allowed when every ESC reports IDLE with no fault, Vbus is
   measured, and the bootloader verifies the image CRC. Wheels off the ground
   for alignment and the first run after any firmware change. Motion only

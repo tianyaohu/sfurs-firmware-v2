@@ -56,7 +56,7 @@
 #define ISR_FREQUENCY_HZ                    (PWM_FREQUENCY/REGULATION_EXECUTION_RATE) /*!< @brief FOC execution rate in Hz */
 
 /* Gains values for torque and flux control loops.
- * From esc_tool.py capture on all four motors (2026-10-16, 12.0 V): dq
+ * From esc_tool capture on all four motors (2026-10-16, 12.0 V): dq
  * R 0.30-0.32 Ohm, L 135-150 uH. Pole-zero cancellation at ~1 kHz
  * (Kp = L*wc, Ki = R*wc): 1 -> 3 A step rises in 188-250 us, ~2 %
  * overshoot, settled in ~0.4 ms. The Workbench values (3391/3343, for a

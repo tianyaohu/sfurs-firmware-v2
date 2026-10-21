@@ -8,7 +8,7 @@ runs a separate **updater image** carrying one ESC application.
 
 ```sh
 scripts/build.sh                           # ESC apps, payloads, updaters, drive image
-src/tools/esc_update.py NE --can             # one wheel; repeat for SE SW NW
+build/tools/esc_update NE --can             # one wheel; repeat for SE SW NW
 ```
 
 `--can` needs only the Nucleo USB; the battery may be ON. Through the drive
@@ -66,5 +66,5 @@ bootloader answers; after that any failure latches until a new request.
 - `src/shared/{inc,src}/can_fwu_boot.*`: target session; the bootloader
   (`scripts/boot_build.sh`) compiles it from `src/shared`.
 - `src/nucleo/CM7/Core/Src/can_fwu_host.c`: host session; `fwu_updater.c`: request logic.
-- Tests: `tests/test_can_fwu.py`, `test_fwu_updater.py`, `test_fwu_*`,
-  `src/esc/bootloader/tests/run_tests.py`.
+- Tests: `tests/test_can_fwu.c`, `test_fwu_updater.c`, `test_fwu_*`,
+  `src/esc/bootloader/tests/test_boot_helpers.c` (CTest, `tests/lanes/fwu.cmake`).

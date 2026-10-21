@@ -131,7 +131,7 @@ int main(int argc, char **argv)
   const char *name = strrchr(input, '/');
   name = name ? name + 1 : input;
   /* Preserve the legacy banner because payloads are compared byte for byte. */
-  fprintf(f, "/* Generated from %s by src/tools/fwu_image.py. Do not edit. */\n"
+  fprintf(f, "/* Generated from %s by src/tools/fwu_image/fwu_image.c. Do not edit. */\n"
           "#include \"fwu_test_image.h\"\n"
           "const uint32_t fwu_test_image_size = %zuU;\n"
           "const uint32_t fwu_test_image_crc = 0x%08" PRIX32 "U;\n"

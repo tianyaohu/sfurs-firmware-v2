@@ -19,5 +19,9 @@ add_library(tools STATIC
 target_include_directories(tools PUBLIC ${LIB} ${CMAKE_CURRENT_SOURCE_DIR}/../shared/can ${CMAKE_BINARY_DIR}/gen)
 target_link_libraries(tools PUBLIC m)
 
-add_executable(esc_tool esc_tool.c)
-target_link_libraries(esc_tool PRIVATE tools)
+# One targets/<tool>.cmake per tool (add_executable + target_link_libraries(... tools)),
+# so parallel work on different tools does not conflict.
+file(GLOB tool_targets ${CMAKE_CURRENT_SOURCE_DIR}/targets/*.cmake)
+foreach(f ${tool_targets})
+  include(${f})
+endforeach()

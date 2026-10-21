@@ -14,8 +14,7 @@ extern "C" {
  *
  *  Pure logic: no MCSDK or HAL calls. The caller samples the motor-control state into
  *  ::motor_cmd_inputs, calls ::motor_cmd_tick every 1 ms, and executes the returned
- *  ::motor_cmd_actions. Specification: technical-development-plans/esc-command-v2/
- *  A-protocol.md (wire), B-lifecycle.md (states and transitions).
+ *  ::motor_cmd_actions. Specification: architecture/protocol.md (wire), architecture/command-lifecycle.md (states and transitions).
  *
  *  Contexts. ::motor_cmd_rx runs in the CAN receive ISR and is the only writer of the inbox;
  *  ::motor_cmd_tick is its only reader and the only writer of the reply ring;

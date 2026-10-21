@@ -148,7 +148,7 @@ static int same_payload(const struct motor_control *a, const struct motor_contro
          a->session == b->session;
 }
 
-/* Why a motion frame cannot be accepted, or MOTOR_R_NONE. The order is the one in A-protocol.md:
+/* Why a motion frame cannot be accepted, or MOTOR_R_NONE. The order is the one in architecture/protocol.md:
  * lifecycle, session, sequence, then this ESC's limits and capabilities. A DUPLICATE is reported
  * as MOTOR_R_NONE with *duplicate set. */
 static enum motor_reason motion_verdict(const struct motor_cmd *m, const struct motor_cmd_inputs *in,

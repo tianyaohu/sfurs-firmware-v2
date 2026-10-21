@@ -1,6 +1,6 @@
 # C. Control path and ownership (design, for review)
 
-Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2.md). States: [B](B-lifecycle.md).
+Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2.md). States: [command-lifecycle](../../architecture/command-lifecycle.md).
 
 ## Signal path (SPEED mode, RUNNING)
 

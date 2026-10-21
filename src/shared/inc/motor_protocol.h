@@ -11,8 +11,7 @@ extern "C" {
  *  @brief Motor command protocol v1: the only encoder/decoder of CONTROL frames.
  *
  *  Compiled into the ESC, the Nucleo and the PC tools, so the byte layout exists
- *  once. Specification: technical-development-plans/esc-command-v2/A-protocol.md
- *  (moves to architecture/ when the ESC uses it). These functions are stateless
+ *  once. Specification: architecture/protocol.md. These functions are stateless
  *  except where noted; the ESC applies its own range limits and the session and
  *  sequence state on top of them. */
 
@@ -41,7 +40,7 @@ enum motor_mode {
 #define MOTOR_FLAG_CLEAR_FAULT 0x02U /**< DISABLE only: clear a latched fault */
 #define MOTOR_FLAG_RESERVED 0xFCU    /**< must be 0 */
 
-/** @brief ESC command lifecycle (reply byte 2 bits 2-0); see B-lifecycle.md. */
+/** @brief ESC command lifecycle (reply byte 2 bits 2-0); see architecture/command-lifecycle.md. */
 enum motor_lifecycle {
   MOTOR_LC_DISARMED = 0, /**< motion rejected until ARM */
   MOTOR_LC_READY = 1,    /**< armed, output off */
@@ -127,7 +126,7 @@ enum motor_seq_class {
  * @brief Structural check of a CONTROL frame (no ESC limits, no session or sequence state).
  * @param c      decoded fields
  * @param select wheel select bits of the frame's CAN ID
- * @return ::MOTOR_R_NONE or the first violated rule, in the order of A-protocol.md
+ * @return ::MOTOR_R_NONE or the first violated rule, in the order of architecture/protocol.md
  */
 enum motor_reason motor_control_check(const struct motor_control *c, uint32_t select);
 

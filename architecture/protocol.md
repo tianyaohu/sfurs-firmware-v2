@@ -1,7 +1,7 @@
 # A. Motor command protocol v1 (design, for review)
 
 Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2.md), Stage 1. Moves to
-`architecture/protocol.md` in Stage 2, when it is implemented. Lifecycle semantics: [B](B-lifecycle.md).
+`architecture/protocol.md` in Stage 2, when it is implemented. Lifecycle semantics: [command-lifecycle.md](command-lifecycle.md).
 
 ## Transport
 
@@ -101,7 +101,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 2 | bits 2-0 lifecycle (0 DISARMED, 1 READY, 2 STARTING, 3 RUNNING, 4 HOLD, 5 FAULTED); bits 5-3 outcome (0 APPLIED, 1 INHIBITED, 2 SUPERSEDED, 3 REJECTED, 4 DUPLICATE); bit 6 first_edge (a Hall edge along the command since the current start); bit 7 0 |
 | 3 | reason (table below; 0 for a plain APPLIED) |
 | 4 | session the ESC accepts now (the challenge while DISARMED) |
-| 5-6 | int16 measured speed, RPM (the one speed estimate of [C](C-ownership.md)); 0 when not valid |
+| 5-6 | int16 measured speed, RPM (the one speed estimate of [C](../technical-development-plans/esc-command-v2/C-ownership.md)); 0 when not valid |
 | 7 | int8 measured q-current, 50 mA units, nearest step with halves away from zero, saturated at +-127 (+-6.35 A covers the 6 A limit); 0 while the output is off (the old STATUS showed ~25 A on IDLE wheels on 2026-10-20, so MCSDK's Iq is not meaningful with the bridge off; cause confirmed in Stage 0) |
 
 - Produced by the 1 kHz tick that processed the frame, not by the ISR, so APPLIED means "the controller uses this
@@ -111,7 +111,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
   (MCSDK start in progress), FF_UNUSED (Stage 2 adapter: the old loop drops ff while its startup loop is on), and
   the FAULTED reasons.
 - Pending replies sit in a 4-entry ring; when it is full the newest is dropped and counted (`reply_dropped`, ESC
-  state over SWD); see [B](B-lifecycle.md) for why.
+  state over SWD); see [command-lifecycle.md](command-lifecycle.md) for why.
 - The Nucleo timestamps each reply on receipt. Command-apply skew across wheels is the spread of those receipt
   times within one 20 ms cycle, with error = reply queueing (bounded, measured at H2).
 

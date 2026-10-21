@@ -1,7 +1,7 @@
 # B. ESC command lifecycle (design, for review)
 
 Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2.md), Stage 1. Wire format:
-[A](A-protocol.md). Who owns the current request in each state: [C](C-ownership.md).
+[protocol.md](protocol.md). Who owns the current request in each state: [C](../technical-development-plans/esc-command-v2/C-ownership.md).
 
 ## States
 

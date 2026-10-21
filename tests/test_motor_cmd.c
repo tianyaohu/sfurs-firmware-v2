@@ -1,4 +1,4 @@
-/* ESC command lifecycle (motor_cmd.c) against B-lifecycle.md: one process per scenario. The fake
+/* ESC command lifecycle (motor_cmd.c) against architecture/command-lifecycle.md: one process per scenario. The fake
  * motor-control state is just the inputs struct; the caller-side actions are checked directly. */
 #include "motor_cmd.h"
 #include "check.h"

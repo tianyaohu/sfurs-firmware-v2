@@ -36,17 +36,12 @@
 #include "esc_defaults.h"
 #include "esc_ops.h"
 #include "ik_link.h"
+#include "pulse_run.h"
 
 typedef struct { const char *name; int index; uint32_t sel; } wheel_t;
 
-static double now_s(void)
-{
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
-}
-
-static void sleep_s(double s) { nanosleep(&(struct timespec){(time_t)s, (long)((s - (time_t)s) * 1e9)}, NULL); }
+#define now_s pulse_now_s
+#define sleep_s pulse_sleep_s
 
 static int die(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static int die(const char *fmt, ...)
@@ -82,21 +77,6 @@ static int send_config(ik_link_t *l, uint32_t sel, const char *key, int value)
     return -1;
   }
   return ik_send_raw(l, id, word, 1.0);
-}
-
-/* CONFIG_SET is dropped in any state but IDLE, and STOP -> IDLE takes ~0.7 s after a parked or aborted run. */
-static bool wait_idle(ik_link_t *l, const int *indices, int n, double timeout_s)
-{
-  double deadline = now_s() + timeout_s;
-  while (now_s() < deadline) {
-    ik_row_t rows[IK_WHEELS];
-    if (ik_rows(l, rows)) return false;
-    bool all = true;
-    for (int k = 0; k < n; k++) all &= rows[indices[k]].valid && !strcmp(rows[indices[k]].mc_state, "IDLE");
-    if (all) return true;
-    sleep_s(0.05);
-  }
-  return false;
 }
 
 static int cmd_status(ik_link_t *l)
@@ -217,20 +197,6 @@ static int cmd_capture(ik_link_t *l, const wheel_t *w, int n, int step_ma, const
 
 typedef struct { double t; int cmd; int32_t rpm; double iq_a, iq_ref_a; const char *mc_state, *stop_reason; char faults[96]; } spin_row_t;
 
-static void json_names(FILE *f, const char *names)
-{
-  fputc('[', f);
-  bool first = true;
-  for (const char *p = names; *p;) {
-    const char *e = strchr(p, ' ');
-    size_t len = e ? (size_t)(e - p) : strlen(p);
-    fprintf(f, "%s\"%.*s\"", first ? "" : ",", (int)len, p);
-    first = false;
-    p += len + (e ? 1 : 0);
-  }
-  fputc(']', f);
-}
-
 typedef struct { int rpm; double seconds; int ramp_ms; int kp, ki; bool has_kp, has_ki; const char *log; } spin_args_t;
 
 static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
@@ -271,7 +237,7 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
   for (int i = 0; i < 3; i++) (void)ik_send_raw(l, MOTOR_STOP | 0x0F, 0, 1.0); /* always stop, errors or not */
   if (gains) {
     const int idx[1] = {w->index};
-    if (!wait_idle(l, idx, 1, 3.0)) printf("%s: not IDLE; speed gains may not be restored (esc_tool set)\n", w->name);
+    if (!pulse_wait_idle(l, idx, 1, 3.0)) printf("%s: not IDLE; speed gains may not be restored (esc_tool set)\n", w->name);
     (void)send_config(l, w->sel, "kp", kp0);
     (void)send_config(l, w->sel, "ki", ki0);
   }
@@ -281,7 +247,7 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
       for (size_t i = 0; i < n; i++) {
         fprintf(f, "{\"t\":%.4f,\"cmd\":%d,\"rpm\":%d,\"iq_a\":%.6g,\"iq_ref_a\":%.6g,\"mc_state\":\"%s\",\"fault_names\":",
                 rows[i].t, rows[i].cmd, rows[i].rpm, rows[i].iq_a, rows[i].iq_ref_a, rows[i].mc_state);
-        json_names(f, rows[i].faults);
+        pulse_json_names(f, rows[i].faults);
         fprintf(f, ",\"stop_reason\":\"%s\"}\n", rows[i].stop_reason);
       }
       fclose(f);
@@ -315,45 +281,6 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
 }
 
 typedef struct {
-  esc_log_entry_t e;
-  int32_t twist[3];
-  const char *mc_state[IK_WHEELS];
-  double vbus_v[IK_WHEELS];
-} pulse_entry_t;
-
-static void write_pulse_log(const char *path, const pulse_entry_t *log, size_t n)
-{
-  FILE *f = fopen(path, "w");
-  if (!f) return;
-  for (size_t i = 0; i < n; i++) {
-    const esc_log_entry_t *e = &log[i].e;
-    fprintf(f, "{\"t\":%.4f,\"twist\":[%d,%d,%d],\"target_rpm\":[%d,%d,%d,%d],\"rpm\":[", e->t, log[i].twist[0],
-            log[i].twist[1], log[i].twist[2], e->target_rpm[0], e->target_rpm[1], e->target_rpm[2], e->target_rpm[3]);
-    for (int w = 0; w < 4; w++) {
-      if (e->rpm_ok[w]) fprintf(f, "%s%d", w ? "," : "", e->rpm[w]);
-      else fprintf(f, "%snull", w ? "," : "");
-    }
-    fputs("],\"iq_ref_a\":[", f);
-    for (int w = 0; w < 4; w++) {
-      if (e->iq_ok[w]) fprintf(f, "%s%.3f", w ? "," : "", e->iq_ref_a[w]);
-      else fprintf(f, "%snull", w ? "," : "");
-    }
-    fputs("],\"mc_state\":[", f);
-    for (int w = 0; w < 4; w++) fprintf(f, "%s\"%s\"", w ? "," : "", log[i].mc_state[w] ? log[i].mc_state[w] : "");
-    fputs("],\"faults\":[", f);
-    for (int w = 0; w < 4; w++) {
-      if (w) fputc(',', f);
-      json_names(f, e->faults[w]);
-    }
-    fprintf(f, "],\"vbus_v\":[%.2f,%.2f,%.2f,%.2f]}\n", log[i].vbus_v[0], log[i].vbus_v[1], log[i].vbus_v[2],
-            log[i].vbus_v[3]);
-  }
-  fclose(f);
-}
-
-static const char *const PULSE_KEYS[] = {"kp", "ki", "ff_static_ma", "ff_kinetic_ma"};
-
-typedef struct {
   const char *axis, *log;
   double speed, seconds;
   int accel, reps, kp, ki, ff_static, ff_kinetic;
@@ -366,12 +293,15 @@ static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
     return die("pulse: 0 < speed <= 2 m/s, 0 < seconds <= 3, 1 <= reps <= 10");
   /* Send every tunable, not only the non-default ones: the ESCs may still hold values from an earlier run
    * whose restore did not land. */
-  int used[4], defaults[4];
+  pulse_settings_t settings = {.n_keys = 4, .keys = {"kp", "ki", "ff_static_ma", "ff_kinetic_ma"}};
   const bool has[4] = {a->has_kp, a->has_ki, a->has_ffs, a->has_ffk};
   const int given[4] = {a->kp, a->ki, a->ff_static, a->ff_kinetic};
+  int used[4];
   for (int k = 0; k < 4; k++) {
-    esc_default(PULSE_KEYS[k], &defaults[k]);
-    used[k] = has[k] ? given[k] : defaults[k];
+    int def;
+    esc_default(settings.keys[k], &def);
+    used[k] = has[k] ? given[k] : def;
+    for (int w = 0; w < IK_WHEELS; w++) settings.value[w][k] = used[k];
   }
   int32_t v = (int32_t)lround(a->speed * 1000);
   int32_t out[3] = {0, v, 0};
@@ -383,95 +313,27 @@ static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
   esc_move_t *plan = malloc(n_moves * sizeof *plan);
   double duration = esc_pulse_plan((const int32_t(*)[3])twists, n_moves, a->seconds, 1.0, 0.5, plan);
 
-  ik_row_t before[IK_WHEELS], rows[IK_WHEELS];
-  if (ik_rows(l, before)) return die("%s", l->err);
-  sleep_s(0.3);
-  if (ik_rows(l, rows)) return die("%s", l->err);
-  char dead[64] = "";
-  for (int i = 0; i < IK_WHEELS; i++)  /* rows keep the last values; only a moving reply count is live */
-    if (!rows[i].valid || !before[i].valid || rows[i].status_count == before[i].status_count)
-      snprintf(dead + strlen(dead), sizeof dead - strlen(dead), "%s%s", dead[0] ? ", " : "", IK_WHEEL_POS[i]);
-  if (dead[0]) return die("pulse: no live reply from %s (battery on? CAN?)", dead);
-
-  size_t cap = 4096, n = 0;
-  pulse_entry_t *log = malloc(cap * sizeof *log);
-  esc_guard_t guard;
-  esc_guard_init(&guard);
-  char aborted[128] = "";
-  int err = 0;
-  uint32_t last_counts[IK_WHEELS];
-  bool have_last = false;
-  double t0 = now_s();
-  int32_t twist[3] = {0, 0, 0};
-  for (int i = 0; !err && i < IK_WHEELS; i++)
-    for (int k = 0; !err && k < 4; k++) err = send_config(l, IK_WHEEL_SELECT[i], PULSE_KEYS[k], used[k]);
-  if (!err) err = ik_write(l, IK_ACCEL_RPMPS, (uint32_t)a->accel);
-  if (!err) {
-    t0 = now_s();
-    double next_cmd = 0, now;
-    while (!err && (now = now_s() - t0) < duration) {
-      if (now >= next_cmd) {
-        esc_plan_twist(plan, n_moves, now, twist);
-        if (ik_drive(l, twist[0], twist[1], twist[2], true)) { err = 1; break; }
-        next_cmd = now + 0.02;
-      }
-      ik_status_t st;
-      if (ik_status(l, &st) || ik_rows(l, rows)) { err = 1; break; }
-      uint32_t counts[IK_WHEELS];
-      bool changed = !have_last;
-      for (int i = 0; i < IK_WHEELS; i++) {
-        counts[i] = rows[i].valid ? rows[i].status_count : 0xFFFFFFFFU;
-        changed |= counts[i] != last_counts[i];
-      }
-      if (!changed) continue;
-      memcpy(last_counts, counts, sizeof counts);
-      have_last = true;
-      if (n == cap) log = realloc(log, (cap *= 2) * sizeof *log); /* an entry whenever any wheel replied */
-      pulse_entry_t *p = &log[n++];
-      memset(p, 0, sizeof *p);
-      p->e.t = round(now * 1e4) / 1e4;
-      memcpy(p->twist, twist, sizeof twist);
-      for (int i = 0; i < IK_WHEELS; i++) {
-        p->e.target_rpm[i] = st.target_rpm[i];
-        p->e.rpm_ok[i] = p->e.iq_ok[i] = rows[i].valid;
-        if (rows[i].valid) {
-          p->e.rpm[i] = rows[i].rpm;
-          p->e.iq_ref_a[i] = round(rows[i].iq_ref_a * 1000) / 1000;
-          snprintf(p->e.faults[i], sizeof p->e.faults[i], "%s", rows[i].fault_names);
-          p->mc_state[i] = rows[i].mc_state;
-          p->vbus_v[i] = rows[i].vbus_v;
-        }
-      }
-      if (esc_guard_check(&guard, &p->e, aborted, sizeof aborted)) break;
-    }
-  }
+  pulse_result_t res;
+  int err = pulse_run(l, plan, n_moves, duration, &settings, a->accel, &res);
   if (err) fprintf(stderr, "%s\n", l->err);
-  /* Always: stop driving, wait for STOPPED and IDLE, restore the firmware defaults. */
-  (void)ik_write(l, IK_ENABLE, 0);
-  double deadline = now_s() + 3.0;
-  uint32_t state = 1;
-  while ((ik_read(l, IK_STATE, &state) == 0 && state != 0) && now_s() < deadline) sleep_s(0.05);
-  const int all[4] = {0, 1, 2, 3};
-  if (!wait_idle(l, all, 4, 3.0)) printf("pulse: not all wheels IDLE; defaults may not be restored (esc_tool set)\n");
-  for (int i = 0; i < IK_WHEELS; i++)
-    for (int k = 0; k < 4; k++) (void)send_config(l, IK_WHEEL_SELECT[i], PULSE_KEYS[k], defaults[k]);
+  if (a->log && !err) pulse_log_write(a->log, &res);
 
-  if (a->log) write_pulse_log(a->log, log, n);
-  esc_log_entry_t *entries = malloc((n + 1) * sizeof *entries);
-  for (size_t i = 0; i < n; i++) entries[i] = log[i].e;
+  esc_log_entry_t *entries = malloc((res.n + 1) * sizeof *entries);
+  for (size_t i = 0; i < res.n; i++) entries[i] = res.log[i].e;
   esc_start_t starts[16];
-  size_t n_starts = esc_breakaways(entries, n, 40, 1.0, starts, 16);
+  size_t n_starts = esc_breakaways(entries, res.n, 40, 1.0, starts, 16);
   esc_breakaway_summary_t s;
   esc_breakaway_summary(starts, n_starts, &s);
   char faults[96] = "";
   double vmin = 1e9;
-  for (size_t i = 0; i < n; i++)
+  for (size_t i = 0; i < res.n; i++)
     for (int w = 0; w < 4; w++) {
-      if (log[i].e.faults[w][0] && !strstr(faults, log[i].e.faults[w]))
-        snprintf(faults + strlen(faults), sizeof faults - strlen(faults), "%s%s", faults[0] ? "," : "", log[i].e.faults[w]);
-      if (log[i].vbus_v[w] > 0) vmin = fmin(vmin, log[i].vbus_v[w]);
+      const char *f = res.log[i].e.faults[w];
+      if (f[0] && !strstr(faults, f))
+        snprintf(faults + strlen(faults), sizeof faults - strlen(faults), "%s%s", faults[0] ? "," : "", f);
+      if (res.log[i].vbus_v[w] > 0) vmin = fmin(vmin, res.log[i].vbus_v[w]);
     }
-  if (aborted[0]) printf("ABORTED: %s\n", aborted);
+  if (res.aborted[0]) printf("ABORTED: %s\n", res.aborted);
   printf("pulse %s %g m/s x%d (kp %d ki %d ff %d/%d mA): faults %s, Vbus min %.2f V\n", a->axis, a->speed, a->reps,
          used[0], used[1], used[2], used[3], faults[0] ? faults : "-", vmin > 1e8 ? 0.0 : vmin);
   for (int i = 0; i < IK_WHEELS; i++) {
@@ -490,7 +352,7 @@ static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
     snprintf(sw, sizeof sw, "%.0f", s.spread_worst_s * 1000);
   }
   printf("  spread between wheels: median %s ms worst %s ms\n", sm, sw);
-  free(log);
+  pulse_result_free(&res);
   free(entries);
   free(plan);
   free(twists);

@@ -1,10 +1,13 @@
 host_test(test_ik_drive
-  SOURCES src/nucleo/CM7/Core/Src/ik_drive.c src/shared/src/rover_kinematics.c
-  INCLUDES src/nucleo/CM7/Core/Inc src/shared/inc src/shared/can
+  SOURCES src/nucleo/CM7/Core/Src/ik_drive.c src/shared/src/rover_kinematics.c src/shared/src/friction_ff.c
+          src/shared/src/motor_protocol.c src/esc/motor_config/Src/motor_cmd.c
+  INCLUDES src/nucleo/CM7/Core/Inc src/shared/inc src/shared/can src/esc/motor_config/Inc
   LIBS m)
 
 # Each drive case needs the firmware's initial static state.
 foreach(case
+    needs_enable_and_heartbeat
+    links_then_starts_together
     streams_and_slews_to_target
     release_brakes_then_stops
     lost_heartbeat_brakes_then_stops
@@ -13,10 +16,13 @@ foreach(case
     bad_input_and_saturation
     raw_frames_only_when_stopped
     tx_failures_counted
-    custom_acceleration)
+    custom_acceleration
+    lost_wheel_stops_the_robot
+    faulted_wheel_stops_until_cleared
+    resyncs_a_moved_baseline
+    feed_forward_rides_in_speed_frames)
   add_test(NAME test_ik_drive.${case} COMMAND test_ik_drive ${case})
 endforeach()
-
 host_test(test_ik_telemetry
   SOURCES src/nucleo/CM7/Core/Src/ik_telemetry.c
   INCLUDES src/nucleo/CM7/Core/Inc src/shared/can)

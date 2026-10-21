@@ -112,6 +112,28 @@ static int can_send4(uint32_t id, const uint8_t data[4])
 {
   return can_send(id, data, FDCAN_DLC_BYTES_4);
 }
+
+/* ik_drive's sender: 4-byte service frames and 8-byte protocol frames. */
+static int can_send_len(uint32_t id, const uint8_t *data, uint32_t len)
+{
+  return can_send(id, data, len == 8U ? FDCAN_DLC_BYTES_8 : FDCAN_DLC_BYTES_4);
+}
+
+/* Microsecond clock from the core cycle counter, for timing ESC replies (the
+ * synchronization metric needs better than the 1 ms HAL tick). Accumulated per
+ * call so it wraps at 2^32 us, not when CYCCNT wraps; the main loop calls it far
+ * more often than the 26 s CYCCNT period at 160 MHz. */
+static uint32_t now_us(void)
+{
+  static uint32_t last_cycles, rem_cycles, us;
+  const uint32_t per_us = SystemCoreClock / 1000000U;
+  const uint32_t cycles = DWT->CYCCNT;
+  rem_cycles += cycles - last_cycles;
+  last_cycles = cycles;
+  us += rem_cycles / per_us;
+  rem_cycles %= per_us;
+  return us;
+}
 #else
 static int can_send8(uint32_t id, const uint8_t data[8])
 {
@@ -225,6 +247,10 @@ Error_Handler();
 #if !NUCLEO_DRIVE
   const struct can_fwu_transport fwu_io = { can_send8, can_poll_last, can_abort_last };
   fwu_updater_init(&fwu_io, HAL_GetTick);
+#else
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk; /* cycle counter for now_us() */
+  DWT->CYCCNT = 0U;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 #endif
 /* USER CODE END 2 */
 
@@ -243,7 +269,8 @@ Error_Handler();
     }
 #if NUCLEO_DRIVE
     (void)ik_drive_abi; /* keep the debugger-visible ABI word through linker GC */
-    ik_drive_tick(now, can_send4);
+    (void)now_us(); /* keep the microsecond clock accumulating while the bus is quiet */
+    ik_drive_tick(now, can_send_len);
     const uint32_t poll_id = ik_telemetry_poll_due(now);
     if (poll_id != 0U) {
       const uint8_t zero[4] = {0};
@@ -271,7 +298,8 @@ Error_Handler();
       if (can_rx_header.IdType != FDCAN_STANDARD_ID || can_rx_header.RxFrameType != FDCAN_DATA_FRAME ||
           can_rx_header.DataLength != FDCAN_DLC_BYTES_8) continue;
 #if NUCLEO_DRIVE
-      (void)ik_telemetry_rx(can_rx_header.Identifier, can_rx_data, now);
+      if (!ik_drive_rx(can_rx_header.Identifier, can_rx_data, 8U, now_us()))
+        (void)ik_telemetry_rx(can_rx_header.Identifier, can_rx_data, now);
 #else
       fwu_updater_rx(can_rx_header.Identifier, can_rx_data, HAL_GetTick());
 #endif

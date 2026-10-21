@@ -85,6 +85,8 @@ else()
         Core/Src/ik_drive.c
         Core/Src/ik_telemetry.c
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/rover_kinematics.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/friction_ff.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/motor_protocol.c
     )
 endif()
 

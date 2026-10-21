@@ -141,7 +141,8 @@ static void test_links_then_starts_together(void)
   /* Command-apply skew on the Nucleo clock: the fake ESCs answer 100 us apart. */
   uint32_t lo = UINT32_MAX, hi = 0;
   for (unsigned i = 0; i < 4; ++i) {
-    const uint32_t t = ik_drive_link[i].start_reply_us;
+    const uint32_t t = ik_drive_link[i].first_start_reply_us;
+    CHECK(t == ik_drive_link[i].start_reply_us);
     lo = t < lo ? t : lo; hi = t > hi ? t : hi;
   }
   CHECK(hi - lo == 300U);
@@ -185,11 +186,15 @@ static void test_lost_heartbeat_brakes_then_stops(void)
 static void test_reverses_without_stop(void)
 {
   drive_forward();
+  uint32_t first[4];
+  for (unsigned i = 0; i < 4; ++i) first[i] = ik_drive_link[i].first_start_reply_us;
   const unsigned mark = count;
   ik_drive_vy_mmps = -1000; run(1000, 1);
   for (unsigned i = 0; i < 4; ++i) {
     CHECK(last_rpm(i) == -fwd1[i] && ik_drive_link[i].start_count == 2U); /* a reversal is a new start */
     CHECK(esc[i].lifecycle == MOTOR_LC_RUNNING);
+    CHECK(ik_drive_link[i].first_start_reply_us == first[i]);  /* the session's first start is kept */
+    CHECK(ik_drive_link[i].start_reply_us > first[i]);         /* the latest start moved on */
   }
   CHECK(count_disable_all(mark) == 0);
 }

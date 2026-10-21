@@ -53,11 +53,13 @@ struct ik_drive_link {
   uint32_t reply_us;       /**< Nucleo microsecond clock at the last reply */
   uint32_t misses;         /**< periods in a row whose frame got no reply */
   uint32_t rejects;        /**< REJECTED replies */
-  uint32_t start_count;    /**< starts (target leaving zero) seen on this wheel */
-  uint32_t start_reply_us; /**< Nucleo microsecond clock of the reply to the first frame of the current start */
+  uint32_t start_count;    /**< starts (target leaving zero or reversing) in this drive session */
+  uint32_t start_reply_us; /**< Nucleo microsecond clock of the reply to the first frame of the latest start */
+  uint32_t first_start_reply_us; /**< same, for the session's first start (valid once start_count >= 1 and
+                                      the reply arrived); move_test records that start */
 };
 /** @brief Words per ::ik_drive_link row. */
-#define IK_DRIVE_LINK_WORDS 16U
+#define IK_DRIVE_LINK_WORDS 17U
 
 /** @brief ABI tag, equals ::IK_DRIVE_ABI. */
 extern volatile const uint32_t ik_drive_abi;

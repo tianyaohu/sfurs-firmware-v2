@@ -107,6 +107,7 @@ int ik_drive_rx(uint32_t id, const uint8_t *data, uint32_t len, uint32_t now_us)
   if (wheel[w].start_pending && r.request_seq == wheel[w].start_seq &&
       (r.outcome == MOTOR_OUT_APPLIED || r.outcome == MOTOR_OUT_INHIBITED)) {
     l->start_reply_us = now_us;
+    if (l->start_count == 1U) l->first_start_reply_us = now_us;
     wheel[w].start_pending = 0U;
   }
   link_close(w);
@@ -215,6 +216,7 @@ static void begin_session(uint32_t now)
     link_open(w);
     ik_drive_link[w].lifecycle = IK_LINK_NONE;
     ik_drive_link[w].misses = 0U;
+    ik_drive_link[w].start_count = 0U;
     link_close(w);
     command[w] = 0.0f;
   }

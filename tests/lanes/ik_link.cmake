@@ -12,3 +12,7 @@ host_test(test_esc_ops
 host_test(test_esc_defaults
   SOURCES src/tools/lib/esc_defaults.c src/tools/lib/ik_link.c src/tools/lib/ocd.c src/tools/lib/elfsym.c
   INCLUDES src/tools/lib src/shared/can)
+host_test(test_sweep
+  SOURCES src/tools/sweep.c src/tools/lib/ik_link.c src/tools/lib/ocd.c src/tools/lib/elfsym.c
+          src/tools/lib/pulse_run.c src/tools/lib/esc_ops.c src/tools/lib/esc_defaults.c
+  INCLUDES src/tools/lib src/shared/can DEFS main=sweep_main LIBS m)

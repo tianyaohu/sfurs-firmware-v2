@@ -83,6 +83,7 @@ enum motor_reason {
   MOTOR_R_FF_UNUSED = 18,       /**< INHIBITED: feed-forward not applied by the active loop */
   MOTOR_R_CONFLICT = 19,        /**< same sequence as the last accepted frame, different payload */
   MOTOR_R_BAD_LENGTH = 20,      /**< DLC is not 8: counted, never replied to */
+  MOTOR_R_UNSUPPORTED = 21,     /**< valid mode this firmware does not implement yet */
   MOTOR_R_FAULT_MCSDK = 32,     /**< MCSDK protection (over-current, voltage, temperature, start timeout) */
   MOTOR_R_FAULT_STALL = 33,     /**< sustained current with no Hall progress */
   MOTOR_R_FAULT_HALL_LOST = 34, /**< speed estimate lost after valid motion */

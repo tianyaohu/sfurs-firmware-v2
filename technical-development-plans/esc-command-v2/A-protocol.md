@@ -110,7 +110,8 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 - INHIBITED: applied, but the output cannot follow. Reasons: LIMITED (effective limit below the request), STARTING
   (MCSDK start in progress), FF_UNUSED (Stage 2 adapter: the old loop drops ff while its startup loop is on), and
   the FAULTED reasons.
-- Pending replies sit in a 4-entry ring; overflow drops the oldest and counts it (`reply_dropped`, in DIAG).
+- Pending replies sit in a 4-entry ring; when it is full the newest is dropped and counted (`reply_dropped`, ESC
+  state over SWD); see [B](B-lifecycle.md) for why.
 - The Nucleo timestamps each reply on receipt. Command-apply skew across wheels is the spread of those receipt
   times within one 20 ms cycle, with error = reply queueing (bounded, measured at H2).
 
@@ -131,6 +132,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 10 | SEQ_AMBIGUOUS | 35 | TIMEOUT |
 | 11 | SEQ_JUMP | 36 | LIFECYCLE_OVERFLOW |
 | 19 | CONFLICT | 20 | BAD_LENGTH (DLC != 8 or wrong ID base; counted, never sent) |
+| 21 | UNSUPPORTED (valid mode this firmware does not implement yet) | | |
 
 Codes 32 and up are latched causes, also reported in DIAG until cleared.
 

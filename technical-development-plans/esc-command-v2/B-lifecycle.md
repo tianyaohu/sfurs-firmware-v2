@@ -60,19 +60,35 @@ Notes:
 
 ## Ordering of received frames (ISR -> tick)
 
-- The ISR decodes and structurally validates each frame, stamps it with a monotonically increasing ordinal and the
-  1 kHz receive time, then publishes it under a short critical section (interrupts off around a copy of under 16
-  bytes):
-  - DISABLE, ARM and CLEAR_FAULT go into a 4-entry ordered FIFO. When it is full, the ISR sets an overflow flag
-    instead (tick: forced DISABLE + disarm).
-  - SPEED and CURRENT go into one motion slot (latest wins). Overwriting an unconsumed motion frame records its
-    seq for a SUPERSEDED reply.
-  - Structural rejects go straight to the reply ring with outcome REJECTED.
-- The tick drains the lifecycle FIFO in order, then takes the motion slot. A motion frame whose ordinal is lower
-  than that of the last consumed DISABLE is discarded (outcome SUPERSEDED), so "motion, DISABLE" never ends moving,
-  and nothing re-arms after a stop.
+Refined during implementation (2026-10-21); same guarantees as the approved draft, fewer mechanisms:
+- The ISR decodes and structurally validates each frame, stamps it with the 1 kHz receive time, and appends it,
+  rejects included, to one 8-entry ordered inbox. The inbox is a single-producer (ISR) / single-consumer (tick) ring
+  with C11 release/acquire indices, so no interrupt masking is needed whichever context preempts the other. When the
+  inbox is full the ISR sets an overflow flag; the tick then forces DISABLE + disarm (LIFECYCLE_OVERFLOW). At 50 Hz per
+  wheel it holds about one frame, so only a faulty sender fills it.
+- The tick drains the inbox in arrival order every 1 ms. Lifecycle frames take effect in that order. An accepted
+  motion frame becomes the candidate target; a later accepted motion frame in the same drain replaces it, and a later
+  DISABLE or ARM cancels it (the replaced or cancelled frame is answered SUPERSEDED). After the drain the candidate,
+  if any, is applied. So "motion, DISABLE" never ends moving, and nothing re-arms after a stop.
 - A motion frame whose receive age is >= 100 ms when the tick reaches it expires (REJECTED, reason TIMEOUT) and does
   not refresh the watchdog.
+- Replies go into a 4-entry single-producer (tick) / single-consumer (main loop) ring; when it is full the newest reply
+  is dropped and counted (dropping the oldest would need the producer to move the consumer's index). The next reply,
+  20 ms later, carries the current state.
+- ARM starts the watchdog clock; after that only fresh accepted motion frames refresh it. An armed ESC that receives
+  no motion for 100 ms disarms.
+- CLEAR_FAULT does not check the session: it can only lead to DISARMED, never to motion.
+
+## Implemented per stage
+
+| Behaviour | Stage 2 (old speed loop underneath) | Stage 4a |
+|---|---|---|
+| Parking | RUNNING -> READY, output off (old parking, kept so nominal traces compare) | RUNNING -> HOLD |
+| Old startup loop FAILED (DSC) | FAULTED(FAULT_STALL) (was a latch cleared by any zero command) | DSC deleted |
+| Stall monitor, HALL_LOST | not yet | yes |
+| CURRENT mode | REJECTED(UNSUPPORTED) | Stage 5 |
+| Feed-forward field | accepted, not applied: INHIBITED(FF_UNUSED) | applied |
+| Counters (rejects, dropped replies, overflow) | ESC state, readable over SWD | same |
 
 ## Retired behaviour
 

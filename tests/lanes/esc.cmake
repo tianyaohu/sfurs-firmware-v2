@@ -71,3 +71,8 @@ foreach(target test_esc_drive_app test_esc_drive_app_se test_esc_drive_app_sw
     test_esc_blink_can esc_blink_image)
   set_target_properties(${target} PROPERTIES C_EXTENSIONS OFF)
 endforeach()
+
+# Protocol v1 command lifecycle (pure; no MCSDK fakes needed).
+host_test(test_motor_cmd
+  SOURCES src/esc/motor_config/Src/motor_cmd.c src/shared/src/motor_protocol.c
+  INCLUDES src/esc/motor_config/Inc src/shared/inc)

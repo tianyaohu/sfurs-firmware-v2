@@ -52,7 +52,8 @@ slew 900 RPM/s, on the mat, from rest; 20 starts x 6 = 120 starts at the final g
 initial Hall state logged per start.
 
 ## Design contracts (frozen in Stage 1 as artifacts, before firmware C)
-Artifacts in `architecture/`: (A) `protocol.md`; (B) `command-lifecycle.md`; (C) control-path ownership diagram;
+Artifacts in `esc-command-v2/` next to this plan (they move to `architecture/` in the stage that implements them, since
+`architecture/` describes the system as it is): (A) protocol; (B) lifecycle; (C) control-path ownership;
 (D) `acceptance-matrix.md` (metrics above, exact pass rules, tolerances). Stage 2 starts after you approve A-D.
 
 - **C1 Outcomes/replies.** REJECTED(reason), ACCEPTED, APPLIED (used by the controller, not "speed achieved"),

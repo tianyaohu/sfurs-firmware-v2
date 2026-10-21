@@ -1,0 +1,81 @@
+# D. Acceptance metrics and stage gates (design, for review)
+
+Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2.md). The startup definition is
+the user's (2026-10-21); this file makes it computable.
+
+## Measurement facts that shape the rules
+
+- 8 pole pairs (`POLE_PAIR_NUM`, consistent with the alignment sweep: 2 electrical turns ~ 1/4 wheel turn), so
+  6 x 8 = 48 Hall transitions per wheel turn, nominally 7.5 deg apart. Stage 0 confirms by counting edges over one
+  marked turn.
+- The Hall state tells which of the 6 electrical sectors the rotor is in, never which pole pair. So the calibration
+  is per wheel and per electrical sector (6 widths, averaged over the 8 pole pairs). The pole-pair spread of each
+  width is measured and becomes part of the tolerance.
+- The rotor's position inside its starting sector is unknown.
+- Edge times come from the ESC recorder at 1 kHz (+-1 ms). The Stage 2 firmware adds the Hall state at the start and
+  each edge's direction and sector to the record. Until then (Stage 0 baseline) sectors are taken as nominal 7.5 deg
+  and the tolerance is widened by the width spread measured in Stage 0.
+
+## Startup tracking (per active wheel, per start)
+
+Inputs: applied reference r(t) (RPM, the ESC's interpolated reference), Hall transitions with times and directions,
+starting sector s0, calibrated widths w[0..5].
+- Reference angle travelled since apply: theta_r(t) = integral of |r| dt (commanded direction).
+- Boundary k (k = 1, 2, ...) ahead of the start in the commanded direction lies at distance D_k - u from the start,
+  where D_k = sum of the widths from the start of sector s0 up to boundary k (known) and u in [0, w_s0] is the
+  unknown offset.
+- Deadline for transition k: T_k = t_ref(D_k) + 20 ms, where t_ref(x) is when theta_r reaches x. Taking u = 0 makes
+  the deadline the latest the reference can cross that boundary, so a wheel that follows the reference exactly
+  always meets it.
+- Tolerance of transition k: tol_k = t_ref(D_k) - t_ref(D_k - w_s0 - delta_w), where delta_w is the measured width
+  spread. It is the most by which a wheel can lag and still meet T_k. It shrinks as the reference speeds up.
+- A transition is *measurable* when tol_k <= 20 ms. At 120 RPM with 900 RPM/s these are about k >= 3 (k = 1: ~53 ms,
+  k = 2: ~22 ms, k = 3: ~17 ms, k = 4: ~14 ms, then decreasing).
+
+**Pass, per wheel per start:** every transition k = 1..8 occurs by its deadline T_k, in the commanded direction;
+and at least 3 of them are measurable. Missing any deadline fails, measurable or not (a stuck wheel fails early).
+A start with fewer than 3 measurable transitions is "not measurable", never a pass.
+
+## Synchronization
+
+Command-apply skew: for the first non-zero CONTROL cycle of a start, skew = max - min over active wheels of the
+Nucleo receipt times of their APPLIED replies. **Pass: skew <= 2 ms.** Error budget: replies leave on the tick that
+applied the frame; 4 replies queue behind each other at about 0.25 ms each. Measured at H2 (p99 of reply latency).
+
+## Overshoot
+
+Measured speed = calibrated edge-interval speed (sector width / time between consecutive transitions), independent of
+the firmware's estimator; valid only between two transitions in the same direction. **Pass: max over the first 500 ms
+after the first transition <= 1.3 x the steady commanded wheel speed** (the Nucleo target, 120 RPM at the gate).
+
+## Other failures (any one fails the start)
+
+MCSDK fault, I2T derate, FAULTED(STALL / HALL_LOST), REJECTED or LOST on a motion frame, a transition against the
+commanded direction before the first transition along it.
+
+## Low-speed operating points
+
+Where the startup tracking metric is not measurable (e.g. wz 1 rad/s, about 25 RPM per wheel), the report says "not
+measured by Hall". Such points need an independently validated estimator (the AS5047P `wheel_encoder` driver, if fitted,
+or the rig repo's poses) before anything can be claimed. They are not part of the gate.
+
+## Gate operating points
+
+120 RPM peak wheel speed per axis: vx ~ 0.72 m/s, vy ~ 0.47 m/s, wz ~ 4.8 rad/s, each sign; Nucleo slew 900 RPM/s;
+on the mat; from rest (wheels in HOLD from Stage 4a on, motor off before); out and back so the robot stays on the
+mat. Logged per start: Vbus, temperature class (cold: first 5 min; warm after), starting Hall state, firmware hashes.
+
+## Stage gates
+
+| Gate | Where | Must show | Starts |
+|---|---|---|---|
+| H0 | raised, then mat; current firmware | C tools work on the robot; IDLE Iq reading explained; 48 transitions per marked turn; sector-width spread; MCSDK start latency; baseline of all metrics above | 5 per axis/sign (30) |
+| H1 | none (host) | design approved; codec golden vectors pass | - |
+| H2 | raised, then mat | every reject reason produced on purpose and seen at the Nucleo; watchdog trips at 4 lost frames and not at 3; LOST disables all four; 5 min with no false trip; reply p99 and bus load; nominal traces match H0; metrics no worse than H0 (ff off) | 30 |
+| H3 | raised | every CONFIG key set and read back on all four wheels; refused when not IDLE; effective limit tracks I2T | - |
+| H4a | raised, then mat | new loop: metrics no worse than H0 with ff off; HOLD idle current, noise and temperature acceptable; stall and Hall-loss faults triggered on purpose | 30 |
+| H5 | mat | current-mode roll-outs per axis and sign; friction fit with residuals; Ke fit | per fit |
+| H6 | mat | full set: startup tracking, synchronization, overshoot, other failures; ff on with H5 values | 20 per axis/sign (120) |
+
+A gate's result file in `hardware-test-results/` lists every start's verdict and the counts; counts are reported as
+counts (120 starts is an agreed gate, not a reliability estimate).

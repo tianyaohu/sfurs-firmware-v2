@@ -49,3 +49,9 @@ what someone does next; this is not a log.
   the fit is degenerate). the rig's `rig_calibrate.py solve` warns about both.
 - **Single-frame tag orientation is noisy by several degrees.** Average it; that
   removed a -1% distance bias in the rig's `rig_measure.py`.
+- **Do not judge a start by "first Hall edge within N ms".** The rotor starts anywhere inside a 7.5 deg
+  sector, so a wheel tracking a 900 RPM/s reference perfectly meets a 20 ms first-edge bar only ~14 % of
+  the time. Judge each calibrated Hall boundary against the reference instead
+  (`technical-development-plans/esc-command-v2/D-acceptance.md`).
+- **A deterministic session byte is guessable.** Independent tests armed a wheel after an inbox overflow by
+  queueing frames with the next session; frames drained in the tick of a session change must not use it.

@@ -1,30 +1,8 @@
-#!/usr/bin/env python3
-"""Compile the real drive_speed_ctrl.c with the real MCSDK pid_regulator.c on
-the host and check the startup speed loop (notes/ff-design.md, stage 1)."""
-import pathlib
-import shutil
-import subprocess
-import tempfile
-import unittest
-
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-MC = ROOT / "src/esc/motor_config"
-SDK = MC / "MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any"
-
-MC_TYPE_STUB = r'''
-#pragma once
-#include <stdint.h>
-#include <stdbool.h>
-#define __weak __attribute__((weak))
-#define MC_NULL ((void *)0)
-'''
-
-HARNESS = r'''
 #include "drive_speed_ctrl.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-#define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
+#include "check.h"
 
 static PID_Handle_t pid;
 static dsc_cfg_t cfg;
@@ -710,7 +688,7 @@ static void test_edge_rpm(void)
   CHECK(f.period == 1 && dsc_edge_rpm(&f) == 1250);
 }
 
-int main(void)
+static void test_controller(void)
 {
   test_ramp_and_failed_start();
   test_ramp_respects_limit();
@@ -748,33 +726,10 @@ int main(void)
   test_preload_from_learned();
   test_edge_rpm();
   puts("OK");
+}
+
+int main(void)
+{
+  test_controller();
   return 0;
 }
-'''
-
-
-@unittest.skipUnless(shutil.which("gcc"), "gcc not installed")
-class SpeedCtrl(unittest.TestCase):
-    def test_controller(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = pathlib.Path(tmp)
-            (tmp / "mc_type.h").write_text(MC_TYPE_STUB)
-            (tmp / "harness.c").write_text(HARNESS)
-            exe = tmp / "harness"
-            cmd = ["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wconversion",
-                   "-Wno-sign-conversion", "-fsanitize=undefined,address",
-                   "-I", str(tmp), "-I", str(MC / "Inc"), "-I", str(SDK / "Inc"),
-                   str(tmp / "harness.c"), str(MC / "Src/drive_speed_ctrl.c"),
-                   str(SDK / "Src/pid_regulator.c"), "-o", str(exe)]
-            build = subprocess.run(cmd, capture_output=True, text=True)
-            if build.returncode:  # the SDK file is not -Wconversion clean; retry it relaxed
-                cmd = [c for c in cmd if c not in ("-Werror",)]
-                build = subprocess.run(cmd, capture_output=True, text=True)
-            self.assertEqual(build.returncode, 0, build.stderr)
-            run = subprocess.run([str(exe)], capture_output=True, text=True)
-            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-            self.assertIn("OK", run.stdout)
-
-
-if __name__ == "__main__":
-    unittest.main()

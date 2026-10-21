@@ -18,6 +18,7 @@ Src/mc_tasks.c
 Src/mc_tasks_foc.c
 Src/mcp.c
 Src/mcp_config.c
+Src/motor_cmd.c
 Src/motorcontrol.c
 Src/pwm_common.c
 Src/pwm_curr_fdbk.c
@@ -74,3 +75,5 @@ MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Src/virtual_speed_sensor.c
 STM32CubeIDE/Application/User/syscalls.c
 STM32CubeIDE/Application/User/sysmem.c
 STM32CubeIDE/Application/Startup/startup_stm32g431cbux.s
+# Shared with the Nucleo and the PC tools (paths relative to src/esc/motor_config).
+../../shared/src/motor_protocol.c

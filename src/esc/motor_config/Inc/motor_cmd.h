@@ -26,6 +26,10 @@ extern "C" {
 #define MOTOR_CMD_INBOX 8U          /**< received frames buffered between two ticks */
 #define MOTOR_CMD_REPLIES 4U        /**< replies buffered between two main-loop polls */
 #define MOTOR_CMD_START_TIMEOUT_MS 500U /**< STARTING without MCSDK RUN for this long -> FAULTED, ms */
+/* Parking. The Nucleo slews to 0, so by the time the target is 0 the wheel is nearly
+ * stopped. Holding zero speed on the Hall estimate only buzzed (0.2-0.6 A average, peaks
+ * 3.9 A): a wheel rocks across one edge and the estimate reads +-25-32 RPM, its smallest
+ * non-zero value, so anything below MOTOR_CMD_PARK_RPM counts as standstill. */
 #define MOTOR_CMD_PARK_MS 150U      /**< zero target below ::MOTOR_CMD_PARK_RPM for this long -> park, ms */
 #define MOTOR_CMD_PARK_RPM 45       /**< standstill threshold of the Hall speed estimate, RPM */
 
@@ -76,7 +80,7 @@ struct motor_cmd_inputs {
 struct motor_cmd_actions {
   uint8_t abort_busy;  /**< abort Hall alignment or capture */
   uint8_t stop;        /**< switch the output off (MC_StopMotor1) */
-  uint8_t stop_cause;  /**< ::motor_cmd_stop, valid with stop or a disarm */
+  uint8_t stop_cause;  /**< ::motor_cmd_stop of this stop; ::MOTOR_CMD_STOP_NONE when stop is 0 */
   uint8_t ack_fault;   /**< acknowledge the MCSDK fault (MC_AcknowledgeFaultMotor1) */
   uint8_t set_target;  /**< (re)program the target below */
   uint8_t start;       /**< start the motor (MC_StartMotor1), after programming the target */

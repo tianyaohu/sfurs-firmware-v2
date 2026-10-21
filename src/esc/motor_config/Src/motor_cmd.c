@@ -114,9 +114,11 @@ static void clear_target(struct motor_cmd *m)
   m->first_edge = 0U;
 }
 
+/* A cause is reported only with a real switch-off, so STATUS keeps the last one that happened. */
 static void stop_output(struct motor_cmd *m, struct motor_cmd_actions *out, enum motor_cmd_stop cause)
 {
-  if (output_on(m->lifecycle)) out->stop = 1U;
+  if (!output_on(m->lifecycle)) return;
+  out->stop = 1U;
   out->stop_cause = (uint8_t)cause;
 }
 
@@ -307,7 +309,7 @@ static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
     case MOTOR_LC_RUNNING:
       if (in->loop_failed) {
         fault(m, out, MOTOR_R_FAULT_STALL);
-        out->stop_cause = MOTOR_CMD_STOP_LOOP_FAILED;
+        out->stop_cause = MOTOR_CMD_STOP_LOOP_FAILED; /* RUNNING: the output was on, so stop is set */
       } else if (in->mc != MOTOR_CMD_MC_RUN) { /* MCSDK left RUN on its own */
         fault(m, out, MOTOR_R_FAULT_MCSDK);
       } else if (m->setpoint == 0 && in->rpm < MOTOR_CMD_PARK_RPM && in->rpm > -MOTOR_CMD_PARK_RPM) {

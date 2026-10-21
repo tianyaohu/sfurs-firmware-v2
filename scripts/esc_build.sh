@@ -40,10 +40,10 @@ compile() {
   for inc in Inc Drivers/STM32G4xx_HAL_Driver/Inc Drivers/STM32G4xx_HAL_Driver/Inc/Legacy \
       Drivers/CMSIS/Device/ST/STM32G4xx/Include Drivers/CMSIS/Include Drivers/CMSIS/DSP/Include \
       MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any/Inc \
-      MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/G4xx/Inc ../Inc ../../shared/can; do
+      MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/G4xx/Inc ../Inc ../../shared/can ../../shared/inc; do
     set -- "$@" "-I$root/$inc"
   done
-  if [ "$offset" = 1 ]; then set -- "$@" -DESC_BOOT_OFFSET_APP "-I$repo/src/shared/inc"; fi
+  if [ "$offset" = 1 ]; then set -- "$@" -DESC_BOOT_OFFSET_APP; fi
   if [ -n "$hall_shift" ]; then set -- "$@" "-DHALL_PHASE_SHIFT_OVERRIDE=$hall_shift"; fi
   run arm-none-eabi-gcc "$@" -c "$root/$source" -o "$object"
 }

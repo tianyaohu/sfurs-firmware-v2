@@ -1,24 +1,23 @@
 #ifndef DRIVE_APP_H
 #define DRIVE_APP_H
 #include <stdint.h>
+#include "motor_cmd.h"
 
 /** @file drive_app.h
- * @brief Wheel drive application on top of MCSDK (protocol: can_datatypes.h).
+ * @brief Wheel drive application on top of MCSDK (protocols: motor_protocol.h, can_datatypes.h).
  *
- * Contexts: drive_app_can_rx() runs in the FDCAN ISR and only latches
- * commands. All motor-control calls happen in the 1 kHz MCSDK medium
- * frequency hook. drive_app_poll() runs in the main loop and sends replies.
+ * Contexts: drive_app_can_rx() runs in the FDCAN ISR and only queues frames.
+ * All motor-control calls happen in the 1 kHz MCSDK medium frequency hook.
+ * drive_app_poll() runs in the main loop and sends replies.
  *
- * Protections, in addition to MCSDK hardware over-current, over/under
- * voltage and over-temperature:
- *  - command watchdog: no SPEED_WRITE for ESC_COMMAND_TIMEOUT_MS -> stop;
+ * Motion is commanded by protocol v1 CONTROL frames. Their lifecycle (arming,
+ * session and sequence checks, watchdog, faults, parking) lives in ::drive_cmd
+ * (motor_cmd.c); this file executes its actions on MCSDK and feeds it the
+ * motor state. Protections, in addition to MCSDK hardware over-current,
+ * over/under voltage and over-temperature:
+ *  - command watchdog (motor_cmd): no fresh CONTROL frame for MOTOR_WATCHDOG_MS -> off, disarmed;
  *  - I2T: sustained current above nominal derates the current limit;
- *  - a fault while driving latches off until STOP or a command gap.
- *
- * Parking: a wheel commanded to 0 RPM that has been at standstill (below
- * PARK_RPM) for PARK_MS is switched off (coasts, no current) instead of holding zero speed;
- * at standstill the Hall speed estimate is too coarse to regulate on and the
- * PI only buzzes. The next non-zero SPEED_WRITE starts it again (~30 ms).
+ *  - any fault latches the wheel off until DISABLE + CLEAR_FAULT and a new ARM.
  *
  * Friction feed-forward: in speed mode the Iq reference is the speed PI
  * output plus sign(speed ref) * ff, where ff is ff_static at standstill and
@@ -29,12 +28,10 @@
 
 /** @brief Application state, readable over SWD for diagnostics. */
 struct drive_app_state {
-  uint32_t now_ms;          /**< application time, ms */
-  uint32_t last_command_ms; /**< time of the last SPEED_WRITE, ms */
-  uint32_t active;          /**< motor started by SPEED_WRITE, not yet stopped */
+  uint32_t now_ms;          /**< application time, ms (first field: tools resolve it by symbol) */
+  uint32_t active;          /**< output on under the command lifecycle (STARTING, RUNNING, HOLD) */
   uint32_t aligned;         /**< Hall shift built in or measured: driving allowed */
-  uint32_t fault_latched;   /**< a fault while driving latched the motor off */
-  uint32_t stop_reason;     /**< ESC_STOP_* */
+  uint32_t stop_reason;     /**< ESC_STOP_* of the last switch-off */
   uint32_t derated;         /**< I2T has lowered the current limit */
   float i2t_a2s;            /**< I2T accumulator, A^2*s */
   int32_t iq_limit_counts;  /**< current speed-loop output limit */
@@ -49,15 +46,13 @@ struct drive_app_state {
   uint32_t capture_status;  /**< ESC_CAPTURE_* */
   int32_t ff_static_counts; /**< friction feed-forward at standstill, Iq counts */
   int32_t ff_kinetic_counts; /**< friction feed-forward once moving, Iq counts */
-  int32_t command_rpm;      /**< last SPEED_WRITE target */
-  uint32_t park_ms;         /**< time at zero command and standstill */
-  uint32_t speed_commands;  /**< SPEED_WRITE frames accepted */
   uint32_t status_replies;  /**< status replies sent */
-  uint32_t rejected;        /**< commands rejected as invalid or not allowed */
-  uint32_t start_failed;    /**< ESC_STOP_START_FAILED latch */
+  uint32_t rejected;        /**< non-CONTROL commands rejected (CONTROL rejects: drive_cmd.count) */
 };
 /** @brief The application state. */
 extern volatile struct drive_app_state drive_app;
+/** @brief Protocol v1 command lifecycle of this wheel (readable over SWD). */
+extern struct motor_cmd drive_cmd;
 
 /** Forced electrical angle for Hall alignment and capture, read by
  * FOC_CurrControllerM1: nonzero @c drive_align_force overrides the Hall angle. */

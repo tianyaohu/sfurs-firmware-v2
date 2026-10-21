@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 typedef struct { int16_t q, d; } qd_t;
-enum { IDLE = 0, CHARGE_BOOT_CAP = 16, OFFSET_CALIB = 17, RUN = 6, STOP = 8,
+enum { IDLE = 0, CHARGE_BOOT_CAP = 16, OFFSET_CALIB = 17, RUN = 6, STOP = 8, WAIT_STOP_MOTOR = 20,
        FAULT_NOW = 10, FAULT_OVER = 11 };
 #define MC_NO_FAULTS 0U
 #define U_RPM 60

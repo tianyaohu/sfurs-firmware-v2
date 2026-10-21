@@ -30,13 +30,6 @@
 #define STARTUP_MAX_RATIO_PCT 150
 #define STARTUP_MARGIN_RPM 10
 
-/* Parking (drive_app.h). The Nucleo slews to 0, so by the time the command is
- * 0 the wheel is nearly stopped. Holding zero, a wheel rocks across one Hall
- * edge and the estimate reads +-25-32 RPM (its smallest non-zero value), so
- * anything below PARK_RPM counts as standstill. */
-#define PARK_MS 150U
-#define PARK_RPM 45
-
 /* Hall alignment: hold the rotor with d-axis current at a forced angle, sweep
  * the angle slowly forward then back, and compare it with the angle the Hall
  * decoder assigns at each edge. Averaging both directions cancels rotor lag. */
@@ -67,16 +60,17 @@ enum { CAPTURE_IDLE, CAPTURE_STARTING, CAPTURE_RAMP, CAPTURE_HOLD, CAPTURE_RUN,
 #endif
 
 volatile struct drive_app_state drive_app;
+struct motor_cmd drive_cmd;
 volatile uint8_t drive_align_force;
 volatile int16_t drive_align_angle;
 
-/* ISR -> tick mailbox. Each payload is one word, published before its count. */
-static volatile uint32_t rx_speed_word, rx_speed_count, rx_stop_count;
+/* ISR -> tick mailbox for the 4-byte service commands. Each payload is one
+ * word, published before its count. CONTROL frames go to drive_cmd instead. */
 static volatile uint32_t rx_align_count, rx_config_word, rx_config_count;
 static volatile uint32_t rx_capture_word, rx_capture_count;
 static volatile uint32_t rx_read_word, rx_read_count;
 static volatile uint8_t status_pending, diag_pending, ident_pending;
-static uint32_t seen_speed, seen_stop, seen_align, seen_config, seen_capture, seen_read;
+static uint32_t seen_align, seen_config, seen_capture, seen_read;
 
 /* FOC ISR <-> tick: the tick arms, the ISR records and disarms when full. */
 /* Shared by the current-loop capture and the speed-loop recorder. */
@@ -143,15 +137,25 @@ void drive_app_init(void)
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by scripts/esc_build.sh --hall-shift */
 #endif
+  /* The boot session needs no randomness: after boot the wheel is DISARMED and only an
+   * ARM sent in answer to its own reply (which carries the session) can arm it. */
+  const struct motor_cmd_config cfg = {
+    .select = MOTOR_CAN_ID, .max_rpm = MAX_APPLICATION_SPEED_RPM, .max_ma = (int16_t)(IQMAX_A * 1000),
+    .ff_supported = 0U,      /* the current speed loops do not take a commanded feed-forward */
+    .current_supported = 0U  /* current mode arrives with Stage 5 */ };
+  motor_cmd_init(&drive_cmd, &cfg, MOTOR_CAN_ID);
 }
 
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length)
 {
-  if (length != 4U || (id & MOTOR_CAN_ID) == 0U) return;
+  if ((id & MOTOR_CAN_ID) == 0U) return; /* the hardware filter does this too; keep it explicit */
+  if ((id & MOTOR_CAN_ID_BASE_MASK) == MOTOR_CAN_ID_CONTROL) {
+    motor_cmd_rx(&drive_cmd, id, data, length, drive_app.now_ms);
+    return;
+  }
+  if (length != 4U) return;
   const uint32_t word = CAN_U32_FROM_PAYLOAD(data);
   switch (CAN_COMMAND_FROM_ID(id)) {
-    case SPEED_WRITE: rx_speed_word = word; ++rx_speed_count; break;
-    case MOTOR_STOP: ++rx_stop_count; break;
     case STATUS_READ: status_pending = 1U; break;
     case DIAG_READ: diag_pending = 1U; break;
     case HALL_ALIGN: if (word == HALL_ALIGN_MAGIC) ++rx_align_count; break;
@@ -331,13 +335,6 @@ static uint32_t vbus_centivolts(void)
 {
   return (uint32_t)VBS_GetAvBusVoltage_d(&BusVoltageSensor_M1._Super) *
          BusVoltageSensor_M1._Super.ConversionFactor * 100U / 65536U;
-}
-
-static void stop(uint32_t reason)
-{
-  (void)MC_StopMotor1();
-  drive_app.active = 0U;
-  drive_app.stop_reason = reason;
 }
 
 static int16_t s16_degrees(int32_t s16)
@@ -624,53 +621,70 @@ static void apply_config(uint32_t word)
   }
 }
 
-static void speed_command(uint32_t word, uint16_t state)
+static uint8_t mc_state(uint16_t state)
 {
-  int32_t rpm = (int16_t)(word & 0xFFFFU);
-  const uint16_t ramp_ms = (uint16_t)(word >> 16);
-  if (rpm > MAX_APPLICATION_SPEED_RPM) rpm = MAX_APPLICATION_SPEED_RPM;
-  if (rpm < -MAX_APPLICATION_SPEED_RPM) rpm = -MAX_APPLICATION_SPEED_RPM;
-  ++drive_app.speed_commands;
-  drive_app.last_command_ms = drive_app.now_ms;
-  drive_app.command_rpm = rpm;
-  if (drive_app.fault_latched) return;
-  if (drive_app.start_failed) { /* no automatic retry: wait for a zero command */
-    if (rpm == 0) drive_app.start_failed = 0U;
-    return;
-  }
-  if (!drive_app.aligned) { ++drive_app.rejected; return; }
-  if (drive_app.active) {
-    MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(rpm), ramp_ms);
-    return;
-  }
-  if (state == FAULT_OVER && MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS) {
-    (void)MC_AcknowledgeFaultMotor1();
-    state = MC_GetSTMStateMotor1();
-  }
-  if (state != IDLE || rpm == 0) return;
-  MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(rpm), ramp_ms);
-  if (MC_StartMotor1()) {
-    dsc_reset(&drive_dsc); /* a FAILED attempt must not outlive the stop */
-    dsc_rev_rebase(&drive_rev, HALL_M1.EdgesPos, HALL_M1.EdgesNeg, HALL_M1.Captures);
-    drive_app.active = 1U;
-    drive_app.stop_reason = ESC_STOP_NONE;
-  } else {
-    ++drive_app.rejected;
+  switch (state) {
+    case IDLE: return MOTOR_CMD_MC_IDLE;
+    case RUN: return MOTOR_CMD_MC_RUN;
+    case STOP: case WAIT_STOP_MOTOR: return MOTOR_CMD_MC_STOPPING;
+    case FAULT_NOW: case FAULT_OVER: return MOTOR_CMD_MC_FAULT;
+    default: return MOTOR_CMD_MC_STARTING; /* boot-cap charge, offset calibration, start-up */
   }
 }
 
-static void park_tick(uint16_t state)
+static uint32_t esc_stop_reason(uint8_t cause)
 {
-  const int32_t rpm = SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
-  if (!drive_app.active || state != RUN || drive_app.command_rpm != 0 ||
-      rpm > PARK_RPM || rpm < -PARK_RPM) {
-    drive_app.park_ms = 0U;
-    return;
+  switch (cause) {
+    case MOTOR_CMD_STOP_DISABLE: return ESC_STOP_COMMAND;
+    case MOTOR_CMD_STOP_TIMEOUT: case MOTOR_CMD_STOP_OVERFLOW: return ESC_STOP_TIMEOUT;
+    case MOTOR_CMD_STOP_FAULT: return ESC_STOP_FAULT;
+    case MOTOR_CMD_STOP_PARKED: return ESC_STOP_PARKED;
+    case MOTOR_CMD_STOP_LOOP_FAILED: return ESC_STOP_START_FAILED;
+    default: return ESC_STOP_NONE;
   }
-  if (++drive_app.park_ms >= PARK_MS) {
-    drive_app.park_ms = 0U;
-    stop(ESC_STOP_PARKED);
+}
+
+static int busy(void)
+{
+  return drive_app.align_phase != ALIGN_IDLE || drive_app.capture_phase != CAPTURE_IDLE;
+}
+
+/* Run the command lifecycle for this tick and carry out what it decided, in its field order. */
+static void command_tick(uint16_t state)
+{
+  const qd_t iqd = MC_GetIqdMotor1();
+  const struct motor_cmd_inputs in = {
+    .now_ms = drive_app.now_ms, .mc = mc_state(state),
+    .mc_fault_present = MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS,
+    .aligned = drive_app.aligned != 0U, .busy = (uint8_t)busy(),
+    .loop_failed = drive_dsc_cfg.enable && drive_dsc.state == DSC_FAILED,
+    .rpm = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1()),
+    .iq_ma = (int16_t)((int32_t)iqd.q * 1000 / (int32_t)CURRENT_CONV_FACTOR),
+    .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg };
+  struct motor_cmd_actions act;
+  motor_cmd_tick(&drive_cmd, &in, &act);
+  if (act.abort_busy) {
+    if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING)
+      align_finish(ESC_ALIGN_ABORTED);
+    else if (drive_app.capture_phase != CAPTURE_IDLE && drive_app.capture_phase != CAPTURE_STOPPING)
+      capture_finish(ESC_CAPTURE_ABORTED);
   }
+  if (act.stop) {
+    (void)MC_StopMotor1();
+    drive_app.stop_reason = esc_stop_reason(act.stop_cause);
+  }
+  if (act.ack_fault) (void)MC_AcknowledgeFaultMotor1();
+  /* Stage 2 adapter: the old speed loop with the same 20 ms MCSDK ramp it always had,
+   * which also reconstructs the Nucleo's 50 Hz trajectory between frames. */
+  if (act.set_target && act.mode == MOTOR_MODE_SPEED)
+    MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(act.setpoint), (uint16_t)MOTOR_PROTOCOL_PERIOD_MS);
+  if (act.start) {
+    dsc_reset(&drive_dsc); /* a FAILED attempt must not outlive the stop */
+    dsc_rev_rebase(&drive_rev, HALL_M1.EdgesPos, HALL_M1.EdgesNeg, HALL_M1.Captures);
+    drive_app.stop_reason = ESC_STOP_NONE;
+    (void)MC_StartMotor1(); /* refused only off IDLE, which motor_cmd waits for; its start timeout covers the rest */
+  }
+  drive_app.active = motor_cmd_output_on(&drive_cmd) ? 1U : 0U;
 }
 
 static void i2t_tick(uint16_t state)
@@ -694,55 +708,32 @@ static void i2t_tick(uint16_t state)
   }
 }
 
+/* Service commands (align, capture, config) need the motor off and not latched in a fault. */
+static int service_allowed(uint16_t state)
+{
+  return !busy() && motor_cmd_output_off(&drive_cmd) && drive_cmd.lifecycle != MOTOR_LC_FAULTED &&
+         state == IDLE;
+}
+
 void drive_app_tick(void)
 {
-  const uint32_t now = ++drive_app.now_ms;
-  uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
-  const uint32_t speed_count = rx_speed_count, stop_count = rx_stop_count;
+  ++drive_app.now_ms;
+  const uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
   const uint32_t align_count = rx_align_count, config_count = rx_config_count;
   const uint32_t capture_count = rx_capture_count, record_count = rx_record_count;
-  const int stop_received = stop_count != seen_stop;
-  const int speed_received = speed_count != seen_speed;
-  seen_stop = stop_count;
-  seen_speed = speed_count;
 
-  if (drive_app.active && (state == FAULT_NOW || state == FAULT_OVER || state == IDLE)) {
-    drive_app.active = 0U;
-    drive_app.fault_latched = 1U;
-    drive_app.stop_reason = ESC_STOP_FAULT;
-  }
-  if (stop_received) {
-    drive_app.fault_latched = 0U;
-    drive_app.start_failed = 0U;
-    if (drive_app.align_phase != ALIGN_IDLE && drive_app.align_phase != ALIGN_STOPPING) {
-      align_finish(ESC_ALIGN_ABORTED);
-    } else if (drive_app.capture_phase != CAPTURE_IDLE &&
-               drive_app.capture_phase != CAPTURE_STOPPING) {
-      capture_finish(ESC_CAPTURE_ABORTED);
-    } else if (state == FAULT_OVER) {
-      /* Clear a fault whose cause is gone (e.g. undervolt latched on USB power
-       * before the battery came on); align and boot entry need IDLE. */
-      if (MC_GetCurrentFaultsMotor1() == MC_NO_FAULTS) (void)MC_AcknowledgeFaultMotor1();
-      state = (uint16_t)MC_GetSTMStateMotor1();
-    } else if (state != IDLE) {
-      stop(ESC_STOP_COMMAND);
-    }
-    drive_app.active = 0U;
-  }
+  command_tick(state);
   align_tick(state);
   capture_tick(state);
 
-  const int idle = drive_app.align_phase == ALIGN_IDLE &&
-                   drive_app.capture_phase == CAPTURE_IDLE && !drive_app.active;
   if (align_count != seen_align) {
     seen_align = align_count;
-    if (idle && state == IDLE && !stop_received) align_begin();
+    if (service_allowed(state)) align_begin();
     else ++drive_app.rejected;
   }
   if (capture_count != seen_capture) {
     seen_capture = capture_count;
-    if (idle && state == IDLE && !stop_received && drive_app.align_phase == ALIGN_IDLE &&
-        rec_status != ESC_RECORD_ARMED && rec_status != ESC_RECORD_TRIGGERED) {
+    if (service_allowed(state) && rec_status != ESC_RECORD_ARMED && rec_status != ESC_RECORD_TRIGGERED) {
       capture_begin(rx_capture_word & 0xFFFFU);
     } else {
       drive_app.capture_status = ESC_CAPTURE_REJECTED;
@@ -755,31 +746,16 @@ void drive_app_tick(void)
   }
   if (config_count != seen_config) {
     seen_config = config_count;
-    if (idle && state == IDLE) apply_config(rx_config_word);
+    if (service_allowed(state)) apply_config(rx_config_word);
     else ++drive_app.rejected;
   }
-  if (speed_received && drive_app.align_phase == ALIGN_IDLE &&
-      drive_app.capture_phase == CAPTURE_IDLE && !stop_received)
-    speed_command(rx_speed_word, state);
-
-  if (drive_app.active && drive_dsc_cfg.enable && drive_dsc.state == DSC_FAILED) {
-    stop(ESC_STOP_START_FAILED);
-    drive_app.start_failed = 1U;
-  }
-  if ((uint32_t)(now - drive_app.last_command_ms) >= ESC_COMMAND_TIMEOUT_MS) {
-    drive_app.fault_latched = 0U;
-    drive_app.start_failed = 0U;
-    if (drive_app.active) stop(ESC_STOP_TIMEOUT);
-  }
-  park_tick(state);
   i2t_tick(state);
   record_sample();
 }
 
 int drive_app_idle(void)
 {
-  return !drive_app.active && drive_app.align_phase == ALIGN_IDLE &&
-         drive_app.capture_phase == CAPTURE_IDLE && rx_speed_count == seen_speed &&
+  return motor_cmd_output_off(&drive_cmd) && !busy() &&
          rx_align_count == seen_align && rx_capture_count == seen_capture;
 }
 
@@ -821,6 +797,13 @@ static void capture_frame(uint8_t data[8], uint32_t i)
 void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
 {
   uint8_t data[8];
+  uint32_t reply_id;
+  /* CONTROL replies first: the Nucleo times command application by them. A full
+   * TX FIFO leaves the reply queued for the next poll. */
+  while (motor_cmd_reply_peek(&drive_cmd, &reply_id, data)) {
+    if (!send(reply_id, data)) break;
+    motor_cmd_reply_pop(&drive_cmd);
+  }
   if (status_pending) {
     const int16_t rpm = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
     const qd_t iqd = MC_GetIqdMotor1(), ref = MC_GetIqdrefMotor1();

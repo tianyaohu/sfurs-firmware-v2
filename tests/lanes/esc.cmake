@@ -27,8 +27,9 @@ foreach(wheel NE SE SW NW)
     set(app_test test_esc_drive_app_${suffix})
   endif()
   host_test(${app_test}
-    SOURCES src/esc/motor_config/Src/drive_app.c
-    INCLUDES tests/esc_drive_app_fakes src/esc/motor_config/Inc src/esc/Inc src/shared/can
+    SOURCES src/esc/motor_config/Src/drive_app.c src/esc/motor_config/Src/motor_cmd.c
+            src/shared/src/motor_protocol.c
+    INCLUDES tests/esc_drive_app_fakes src/esc/motor_config/Inc src/esc/Inc src/shared/can src/shared/inc
     DEFS MOTOR_${wheel} DRIVE_APP_VALIDITY=fake_validity
     LIBS m)
   target_compile_options(${app_test} PRIVATE

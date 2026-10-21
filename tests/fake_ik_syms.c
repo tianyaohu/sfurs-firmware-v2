@@ -1,0 +1,10 @@
+/* Host ELF carrying the ik_drive_* symbols of the Nucleo streaming IK image, so
+ * ik_link.c can resolve addresses exactly as it does from the firmware ELF. */
+#include <stdint.h>
+
+#define SYM(name) uint32_t ik_drive_##name
+SYM(abi); SYM(vx_mmps); SYM(vy_mmps); SYM(omega_mradps); SYM(enable); SYM(heartbeat); SYM(accel_rpmps);
+SYM(raw_id); SYM(raw_data); SYM(raw_seq); SYM(state); SYM(raw_done); SYM(tx_count); SYM(tx_fail);
+SYM(bad_input); SYM(telem_now); SYM(target_rpm)[4]; SYM(rpm)[4]; SYM(telem)[4 * 19]; SYM(capture)[5 + 3 * 512];
+
+int main(void) { return 0; }

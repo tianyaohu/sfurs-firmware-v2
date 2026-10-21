@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 #define EOM 0x1a
-#define SLOTS 64
+#define SLOTS 256
 
 static struct { unsigned long addr, value; } mem[SLOTS];
 static int used;
@@ -20,6 +20,16 @@ static unsigned long load(unsigned long addr, unsigned width)
   for (int i = 0; i < used; i++)
     if (mem[i].addr == addr) return mem[i].value;
   return addr & (width == 32 ? 0xFFFFFFFFUL : 0xFFUL); /* unwritten memory reads as its own address */
+}
+
+static void store(unsigned long addr, unsigned long value)
+{
+  for (int i = 0; i < used; i++)
+    if (mem[i].addr == addr) {
+      mem[i].value = value;
+      return;
+    }
+  if (used < SLOTS) mem[used].addr = addr, mem[used++].value = value;
 }
 
 int main(int argc, char **argv)
@@ -41,6 +51,15 @@ int main(int argc, char **argv)
     if (!strncmp(argv[i], "tcl_port ", 9)) port = atoi(argv[i] + 9);
   }
   if (af) fclose(af);
+  /* FAKE_OCD_MEM="hexaddr=hexvalue,..." preloads memory (an unwritten word reads as its own address). */
+  const char *preset = getenv("FAKE_OCD_MEM");
+  while (preset && *preset) {
+    unsigned long a, v;
+    int used_chars;
+    if (sscanf(preset, "%lx=%lx%n", &a, &v, &used_chars) != 2) break;
+    store(a, v);
+    preset += used_chars + (preset[used_chars] == ',');
+  }
 
   int srv = socket(AF_INET, SOCK_STREAM, 0);
   struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons((uint16_t)port),
@@ -67,7 +86,7 @@ int main(int argc, char **argv)
           strcat(reply, item);
         }
       } else if (sscanf(buf, "mww %lx %lx", &addr, &value) == 2) {
-        if (used < SLOTS) mem[used].addr = addr, mem[used++].value = value;
+        store(addr, value);
       } else if (!strcmp(buf, "shutdown")) {
         send(conn, "\x1a", 1, 0);
         return 0;

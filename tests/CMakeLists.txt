@@ -34,6 +34,8 @@ function(host_test name)
   add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
+add_executable(fake_openocd fake_openocd.c)
+
 # One lanes/<area>.cmake per area calls host_test(); keeps parallel work conflict-free.
 file(GLOB lane_files ${CMAKE_CURRENT_SOURCE_DIR}/lanes/*.cmake)
 foreach(f ${lane_files})

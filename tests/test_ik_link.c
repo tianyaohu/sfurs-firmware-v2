@@ -1,0 +1,168 @@
+/* ik_link.c: command words, config frames, telemetry decode, and the SWD
+ * mailbox through the fake OpenOCD with a host ELF that carries the ik_drive_*
+ * symbols. Ports tests/test_ik_link_record.py (the header-drift checks are now
+ * compile-time: ik_link.c includes can_datatypes.h). */
+#include <stdlib.h>
+#include <string.h>
+
+#include "can_datatypes.h"
+#include "check.h"
+#include "elfsym.h"
+#include "ik_link.h"
+
+static void test_record_words(void)
+{
+  uint32_t w;
+  CHECK_EQ(ik_record_start_word(50, 1000, &w), 0);
+  CHECK_EQ(w, 0x5EU << 24 | 1000U << 9 | 50);
+  CHECK_EQ(ik_record_read_word(0, 32, 32, true, &w), 0);
+  CHECK_EQ(w, 0x3DU << 24 | 1U << 18 | 32U << 10 | 32);
+  CHECK_EQ(ik_record_read_word(1, 0, 1, false, &w), 0);
+  CHECK_EQ(w, 0x3DU << 24 | 1U << 16 | 1U << 10);
+  CHECK(ik_record_start_word(384, 0, &w) != 0);
+  CHECK(ik_record_start_word(-1, 0, &w) != 0);
+  CHECK(ik_record_start_word(0, 4096, &w) != 0);
+  CHECK(ik_record_read_word(1, 0, 1, true, &w) != 0); /* ch67 only on bank 0 */
+  CHECK(ik_record_read_word(2, 0, 1, false, &w) != 0);
+}
+
+static void test_capture_words(void)
+{
+  uint32_t w;
+  CHECK_EQ(ik_capture_start_word(3000, &w), 0);
+  CHECK_EQ(w, 0xC5U << 24 | 3000);
+  CHECK(ik_capture_start_word(6001, &w) != 0);
+  CHECK_EQ(ik_capture_read_word(3, 0, 1, &w), 0); /* info bank */
+  CHECK_EQ(w, 0x3DU << 24 | 3U << 16 | 1U << 10);
+  CHECK(ik_capture_read_word(2, 0, 1, &w) != 0);
+  CHECK(ik_capture_read_word(0, 512, 1, &w) != 0);
+  CHECK(ik_capture_read_word(0, 0, 33, &w) != 0);
+}
+
+static void test_config_frames_for_all_wheels(void)
+{
+  for (int i = 0; i < IK_WHEELS; i++) {
+    uint32_t id, word;
+    CHECK_EQ(ik_config_frame(IK_WHEEL_SELECT[i], "kp", -2, &id, &word), 0);
+    CHECK_EQ(id, CONFIG_SET | IK_WHEEL_SELECT[i]);
+    CHECK_EQ(word, 1U | 0xFFFEU << 16); /* int16 two's complement in the high half */
+  }
+  uint32_t id, word;
+  CHECK(ik_config_frame(1, "nope", 0, &id, &word) != 0);
+  CHECK(ik_config_frame(1, "kp", 40000, &id, &word) != 0);
+  int number;
+  size_t dsc = 0;
+  for (size_t k = 0; k < ik_config_key_count(); k++)
+    if (!strncmp(ik_config_key_name(k, &number), "dsc_", 4)) dsc++;
+  CHECK_EQ(dsc, 14); /* every ESC_CFG_DSC_* key of can_datatypes.h */
+  CHECK_EQ(ESC_CFG_DSC_ENABLE, 9);
+}
+
+static void test_unpack_record(void)
+{
+  unsigned packed = 2 | 2 << 2 | 0x40 | 0x80 | 3 << 8 | 5 << 12 | 1 << 15;
+  ik_record_sample_t s = {51, 40, 272, 0, 326, 598, -544, (int16_t)packed};
+  ik_record_unpacked_t u;
+  ik_unpack_record(&s, &u);
+  CHECK(!strcmp(u.state, "running") && !strcmp(u.reason, "edge"));
+  CHECK(u.capped && u.dsc && u.loop);
+  CHECK_EQ(u.edges_mod16, 3);
+  CHECK_EQ(u.captures_mod8, 5);
+  CHECK_NEAR(u.p_a, 0.5, 1e-9);
+  CHECK_NEAR(u.iq_a, -1.0, 1e-9);
+}
+
+static void test_decode_row(void)
+{
+  uint32_t w[IK_ROW_WORDS] = {2, (uint32_t)-60, (uint32_t)(-544), 1088, 6, 0x10 | 0x80 | 2, 0, 0, 1210, 0x42,
+                              (uint32_t)-30, 1, 0, 0, 0, 0, 0, 0, 0};
+  ik_row_t r;
+  ik_decode_row(w, &r);
+  CHECK_EQ(r.rpm, -60);
+  CHECK_NEAR(r.iq_a, -1.0, 1e-9);
+  CHECK_NEAR(r.iq_ref_a, 2.0, 1e-9);
+  CHECK_NEAR(r.vbus_v, 12.1, 1e-9);
+  CHECK(!strcmp(r.mc_state, "RUN") && !strcmp(r.stop_reason, "timeout") && !strcmp(r.align, "ok"));
+  CHECK(r.active && r.aligned && !r.derated && !r.aligning);
+  CHECK(!strcmp(r.fault_names, "overvolt overcurrent"));
+  CHECK_EQ(r.hall_shift_deg, -30);
+}
+
+static uint32_t sym(const char *name)
+{
+  uint32_t a;
+  char full[64];
+  snprintf(full, sizeof full, "ik_drive_%s", name);
+  CHECK_EQ(elfsym_lookup(FAKE_ELF, full, &a, NULL), 0);
+  return a;
+}
+
+static void set_mem(const char *spec) { setenv("FAKE_OCD_MEM", spec, 1); }
+
+static void test_mailbox_over_fake_openocd(void)
+{
+  setenv("OPENOCD", FAKE_OCD, 1);
+  char mem[512];
+  ik_link_t l;
+  /* wrong ABI word: refuse to talk to an unknown image */
+  set_mem("");
+  CHECK(ik_link_open(&l, "SN", FAKE_ELF) != 0);
+  CHECK(strstr(l.err, "flash"));
+
+  snprintf(mem, sizeof mem, "%x=%x,%x=0,%x=5,%x=6", sym("abi"), IK_ABI, sym("state"), sym("raw_seq"),
+           sym("raw_done"));
+  set_mem(mem);
+  CHECK_EQ(ik_link_open(&l, "SN", FAKE_ELF), 0);
+  CHECK_EQ(ik_drive(&l, 200, -100, 300, true), 0);
+  uint32_t v;
+  CHECK_EQ(ik_read(&l, IK_VX_MMPS, &v), 0);
+  CHECK_EQ((int32_t)v, 200);
+  CHECK_EQ(ik_read(&l, IK_VY_MMPS, &v), 0);
+  CHECK_EQ((int32_t)v, -100);
+  CHECK_EQ(ik_read(&l, IK_ENABLE, &v), 0);
+  CHECK_EQ(v, 1);
+  uint32_t hb;
+  CHECK_EQ(ik_read(&l, IK_HEARTBEAT, &hb), 0);
+  CHECK_EQ(ik_drive(&l, 0, 0, 0, false), 0);
+  CHECK_EQ(ik_read(&l, IK_HEARTBEAT, &v), 0);
+  CHECK_EQ(v, hb + 1); /* every setpoint bumps the heartbeat */
+  /* raw frame: raw_done == raw_seq + 1 in the preset, so the Nucleo "sent" it */
+  CHECK_EQ(ik_send_raw(&l, CAPTURE | MOTOR_NE_CAN_ID, 0x12345678U, 0.5), 0);
+  CHECK_EQ(ik_read(&l, IK_RAW_ID, &v), 0);
+  CHECK_EQ(v, CAPTURE | MOTOR_NE_CAN_ID);
+  /* a second frame never completes: raw_done stays 6, expected 7 */
+  CHECK(ik_send_raw(&l, CAPTURE, 1, 0.05) != 0);
+  CHECK(strstr(l.err, "not sent"));
+  ik_link_close(&l);
+
+  /* raw frames are refused unless the drive is STOPPED */
+  snprintf(mem, sizeof mem, "%x=%x,%x=1", sym("abi"), IK_ABI, sym("state"));
+  set_mem(mem);
+  CHECK_EQ(ik_link_open(&l, "SN", FAKE_ELF), 0);
+  CHECK(ik_send_raw(&l, CAPTURE, 1, 0.05) != 0);
+  CHECK(strstr(l.err, "not stopped"));
+  ik_link_close(&l);
+  set_mem("");
+}
+
+static void test_missing_symbols_are_reported(void)
+{
+  uint32_t addr[IK_SYM_COUNT];
+  char err[128];
+  CHECK(ik_resolve("/nonexistent.elf", addr, err, sizeof err) != 0);
+  CHECK(ik_resolve("/etc/hostname", addr, err, sizeof err) != 0); /* not an ELF */
+  CHECK(strstr(err, "missing"));
+}
+
+int main(void)
+{
+  test_record_words();
+  test_capture_words();
+  test_config_frames_for_all_wheels();
+  test_unpack_record();
+  test_decode_row();
+  test_mailbox_over_fake_openocd();
+  test_missing_symbols_are_reported();
+  printf("ok\n");
+  return 0;
+}

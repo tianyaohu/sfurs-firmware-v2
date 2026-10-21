@@ -25,3 +25,8 @@ host_test(test_rover_kinematics
   SOURCES src/shared/src/rover_kinematics.c
   INCLUDES src/shared/inc
   LIBS m)
+
+host_test(test_friction_ff
+  SOURCES src/shared/src/friction_ff.c src/shared/src/rover_kinematics.c
+  INCLUDES src/shared/inc
+  LIBS m)

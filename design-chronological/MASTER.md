@@ -55,3 +55,18 @@ Append only; format in design/README.md.
   recorded Python outputs (`tests/golden/`) at 1e-9; every ported test was mutation-checked. Not verified on
   hardware: everything that drives or programs a board (only read-only OpenOCD attach to the Nucleo was run).
 - Touches: all of `src/tools/`, `tests/`, `scripts/`, CI, Dockerfile, docs.
+
+## 2026-10-21  Motor command protocol v1 and a staged rewrite of the ESC command + speed layer  (who: Frank H + claude)
+- Decision: replace `SPEED_WRITE`/`MOTOR_STOP` with one fixed 8-byte CONTROL frame (version, mode speed/current/disable,
+  setpoint, feed-forward mA, sequence, ESC-issued session) and a reply to every frame (outcome, reason, lifecycle);
+  one shared codec (`motor_protocol.c`); an explicit ESC lifecycle (DISARMED, READY, STARTING, RUNNING, HOLD, FAULTED)
+  with ARM, 100 ms watchdog that disarms, and ordered lifecycle frames; later a P + feed-forward speed loop replacing
+  the startup state machine, zero-current HOLD instead of output-off parking. Design artifacts A-D in
+  `technical-development-plans/esc-command-v2/`, approved by Frank H on this date.
+- Why: the old path grew by patching (three byte layouts, three feed-forwards, three speed estimators, a torn command
+  read, rejected frames feeding the watchdog, no command feedback); the code goes to an outside reviewer. Startup is
+  judged by per-boundary Hall tracking deadlines, because a wheel that tracks its reference perfectly fails a raw
+  "first edge within 20 ms" bar about 86 % of the time (the first edge can be a whole 7.5 deg sector away).
+- Rejected: keeping the 4/8-byte SPEED_WRITE (length changes meaning, no version); separate frames for speed and
+  feed-forward (they can disagree); copying TIGERs' SPI struct (unverified, different transport, licence).
+- Touches: `src/shared/`, `src/esc/motor_config/`, `src/nucleo/CM7/`, `src/tools/`, tests, `architecture/`.

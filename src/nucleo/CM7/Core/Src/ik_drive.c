@@ -107,7 +107,10 @@ int ik_drive_rx(uint32_t id, const uint8_t *data, uint32_t len, uint32_t now_us)
   if (wheel[w].start_pending && r.request_seq == wheel[w].start_seq &&
       (r.outcome == MOTOR_OUT_APPLIED || r.outcome == MOTOR_OUT_INHIBITED)) {
     l->start_reply_us = now_us;
-    if (l->start_count == 1U) l->first_start_reply_us = now_us;
+    if (l->start_count == 1U) {
+      l->first_start_reply_us = now_us;
+      l->first_start_valid = 1U;
+    }
     wheel[w].start_pending = 0U;
   }
   link_close(w);
@@ -217,6 +220,7 @@ static void begin_session(uint32_t now)
     ik_drive_link[w].lifecycle = IK_LINK_NONE;
     ik_drive_link[w].misses = 0U;
     ik_drive_link[w].start_count = 0U;
+    ik_drive_link[w].first_start_valid = 0U;
     link_close(w);
     command[w] = 0.0f;
   }
@@ -230,10 +234,14 @@ static void check_replies(void)
   for (unsigned w = 0; w < 4U; ++w) {
     if (!wheel[w].sent) continue;
     link_open(w);
-    ik_drive_link[w].misses = wheel[w].replied ? 0U : ik_drive_link[w].misses + 1U;
-    if (ik_drive_link[w].misses >= IK_DRIVE_LOST_PERIODS) ik_drive_fault |= 1U << (4U + w);
+    volatile struct ik_drive_link *l = &ik_drive_link[w];
+    l->misses = wheel[w].replied ? 0U : l->misses + 1U;
+    const uint32_t had = ik_drive_fault & ((1U << w) | (1U << (4U + w)));
+    if (l->misses >= IK_DRIVE_LOST_PERIODS) ik_drive_fault |= 1U << (4U + w);
+    if (l->lifecycle == MOTOR_LC_FAULTED) ik_drive_fault |= 1U << w;
+    if (!had && (ik_drive_fault & ((1U << w) | (1U << (4U + w)))))
+      l->fault_reason = l->lifecycle == MOTOR_LC_FAULTED ? l->reason : 0U; /* keep the cause */
     link_close(w);
-    if (ik_drive_link[w].lifecycle == MOTOR_LC_FAULTED) ik_drive_fault |= 1U << w;
   }
 }
 

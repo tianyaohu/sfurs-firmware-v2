@@ -142,7 +142,7 @@ static void test_links_then_starts_together(void)
   uint32_t lo = UINT32_MAX, hi = 0;
   for (unsigned i = 0; i < 4; ++i) {
     const uint32_t t = ik_drive_link[i].first_start_reply_us;
-    CHECK(t == ik_drive_link[i].start_reply_us);
+    CHECK(t == ik_drive_link[i].start_reply_us && ik_drive_link[i].first_start_valid == 1U);
     lo = t < lo ? t : lo; hi = t > hi ? t : hi;
   }
   CHECK(hi - lo == 300U);
@@ -272,6 +272,7 @@ static void test_lost_wheel_stops_the_robot(void)
     drop_replies[w] = 1;
     run(20 * (IK_DRIVE_LOST_PERIODS + 1U), 1);
     CHECK(ik_drive_fault == (1U << (4U + w)) && ik_drive_link[w].misses >= IK_DRIVE_LOST_PERIODS);
+    CHECK(ik_drive_link[w].fault_reason == 0U); /* LOST has no ESC reason */
     const unsigned mark = count;
     run(200, 1);
     CHECK(ik_drive_state == IK_STOPPED && count_disable_all(mark) >= 2U);
@@ -291,6 +292,7 @@ static void test_faulted_wheel_stops_until_cleared(void)
     run(60, 1);
     CHECK(ik_drive_fault == (1U << w) && esc[w].lifecycle == MOTOR_LC_FAULTED);
     run(200, 1); CHECK(ik_drive_state == IK_STOPPED);
+    CHECK(ik_drive_link[w].fault_reason == MOTOR_R_FAULT_MCSDK); /* kept while later replies arrive */
     ik_drive_enable = 0; run(20, 1); CHECK(ik_drive_fault == 0U);
     ++ik_drive_clear_seq; run(5, 1); /* cause still present: the ESC refuses */
     CHECK(ik_drive_clear_done == ik_drive_clear_seq && esc[w].lifecycle == MOTOR_LC_FAULTED);

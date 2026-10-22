@@ -94,8 +94,8 @@ int drive_settings_defaults(drive_settings_t *s)
 
 int drive_setting_set(drive_settings_t *s, const char *key, int value)
 {
-  uint32_t id, word;
-  if (ik_config_frame(IK_WHEEL_SELECT[0], key, value, &id, &word)) return -1;
+  uint16_t id;
+  if (ik_config_key(key, &id) || value < INT16_MIN || value > INT16_MAX) return -1;
   for (int k = 0; k < DRIVE_KEYS; k++) if (!strcmp(key, DRIVE_SETTING_KEYS[k])) {
     for (int w = 0; w < 4; w++) s->value[w][k] = value;
     return 0;

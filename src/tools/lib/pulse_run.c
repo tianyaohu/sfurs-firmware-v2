@@ -32,12 +32,17 @@ int pulse_wait_idle(ik_link_t *l, const int *idx, int n, double timeout_s)
 
 static int send_config(ik_link_t *l, uint32_t sel, const char *key, int value)
 {
-  uint32_t id, word;
-  if (ik_config_frame(sel, key, value, &id, &word)) {
-    snprintf(l->err, sizeof l->err, "bad config %s=%d", key, value);
+  uint16_t id;
+  if (ik_config_key(key, &id)) {
+    snprintf(l->err, sizeof l->err, "unknown CONFIG key %s", key);
     return -1;
   }
-  return ik_send_raw(l, id, word, 1.0);
+  for (int w = 0; w < IK_WHEELS; w++) if (IK_WHEEL_SELECT[w] == sel) {
+    struct motor_config_reply reply;
+    return ik_config_exchange(l, w, MOTOR_CONFIG_SET, id, value, 1.0, &reply);
+  }
+  snprintf(l->err, sizeof l->err, "CONFIG requires one wheel");
+  return -1;
 }
 
 void pulse_json_names(FILE *f, const char *names)
@@ -84,7 +89,7 @@ int pulse_run(ik_link_t *l, const esc_move_t *plan, size_t n_moves, double durat
   esc_guard_t guard;
   esc_guard_init(&guard);
   uint32_t last_counts[IK_WHEELS];
-  int have_last = 0, err = 0;
+  int have_last = 0, err = ik_set_mode(l, IK_MODE_SPEED);
   int32_t twist[3] = {0, 0, 0};
   out->t0_monotonic_s = pulse_now_s();
   for (int i = 0; !err && i < IK_WHEELS; i++)
@@ -149,7 +154,11 @@ int pulse_run(ik_link_t *l, const esc_move_t *plan, size_t n_moves, double durat
   for (int i = 0; i < IK_WHEELS; i++)
     for (size_t k = 0; k < settings->n_keys; k++) {
       int def;
-      if (esc_default(settings->keys[k], &def) == 0) (void)send_config(l, IK_WHEEL_SELECT[i], settings->keys[k], def);
+      if (esc_default(settings->keys[k], &def) == 0 && send_config(l, IK_WHEEL_SELECT[i], settings->keys[k], def)) {
+        fprintf(stderr, "restore: %s\n", l->err);
+        if (!err) snprintf(err_text, sizeof err_text, "%s", l->err);
+        err = -1;
+      }
     }
   if (err) {
     snprintf(l->err, sizeof l->err, "%s", err_text);

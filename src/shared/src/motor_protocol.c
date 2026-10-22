@@ -124,3 +124,62 @@ uint8_t motor_session_next(uint8_t prev, uint32_t entropy)
   /* Step 1..254 places around the 255 nonzero values: never 0, never prev. */
   return (uint8_t)(1U + ((uint32_t)(prev - 1U) + 1U + entropy % 254U) % 255U);
 }
+
+static enum motor_reason config_check(const struct motor_config *c, uint32_t select)
+{
+  if (c->op != MOTOR_CONFIG_SET && c->op != MOTOR_CONFIG_GET) return MOTOR_R_BAD_MODE;
+  if (c->op == MOTOR_CONFIG_GET && c->value != 0) return MOTOR_R_RESERVED_NONZERO;
+  /* One wheel per frame: the reply then names the only ESC that could have applied it. */
+  if ((select & ~MOTOR_CAN_SELECT_MASK) != 0U || !one_bit(select)) return MOTOR_R_BAD_SELECT;
+  return MOTOR_R_NONE;
+}
+
+enum motor_reason motor_config_decode(uint32_t id, const uint8_t *data, uint32_t dlc, struct motor_config *out)
+{
+  if (data == NULL || out == NULL || dlc != MOTOR_PROTOCOL_DLC ||
+      (id & MOTOR_CAN_ID_BASE_MASK) != MOTOR_CAN_ID_CONFIG)
+    return MOTOR_R_BAD_LENGTH;
+  out->op = data[0] & 0x0FU;
+  out->seq = data[1];
+  out->key = (uint16_t)get16(&data[2]);
+  out->value = get16(&data[4]);
+  if ((data[0] >> 4) != MOTOR_PROTOCOL_VERSION) return MOTOR_R_BAD_VERSION;
+  if (data[6] != 0U || data[7] != 0U) return MOTOR_R_RESERVED_NONZERO;
+  return config_check(out, id & MOTOR_CAN_SELECT_MASK);
+}
+
+enum motor_reason motor_config_encode(const struct motor_config *c, uint32_t select, uint32_t *id,
+                                      uint8_t data[MOTOR_PROTOCOL_DLC])
+{
+  if (c == NULL || id == NULL || data == NULL) return MOTOR_R_BAD_LENGTH;
+  const enum motor_reason r = config_check(c, select);
+  if (r != MOTOR_R_NONE) return r;
+  *id = MOTOR_CAN_ID_CONFIG | select;
+  data[0] = (uint8_t)((MOTOR_PROTOCOL_VERSION << 4) | c->op);
+  data[1] = c->seq;
+  put16(&data[2], (int16_t)c->key);
+  put16(&data[4], c->value);
+  data[6] = 0U;
+  data[7] = 0U;
+  return MOTOR_R_NONE;
+}
+
+void motor_config_reply_encode(const struct motor_config_reply *r, uint8_t data[MOTOR_PROTOCOL_DLC])
+{
+  data[0] = r->seq;
+  data[1] = r->status;
+  put16(&data[2], (int16_t)r->key);
+  put16(&data[4], r->stored);
+  put16(&data[6], r->effective);
+}
+
+enum motor_reason motor_config_reply_decode(const uint8_t *data, uint32_t dlc, struct motor_config_reply *out)
+{
+  if (data == NULL || out == NULL || dlc != MOTOR_PROTOCOL_DLC) return MOTOR_R_BAD_LENGTH;
+  out->seq = data[0];
+  out->status = data[1];
+  out->key = (uint16_t)get16(&data[2]);
+  out->stored = get16(&data[4]);
+  out->effective = get16(&data[6]);
+  return MOTOR_R_NONE;
+}

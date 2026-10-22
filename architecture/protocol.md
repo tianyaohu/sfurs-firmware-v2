@@ -22,12 +22,12 @@ Slots 0 and 8 are free; like the firmware-update protocol, they use bits 6-4 as 
 | ID | Name | Direction | Note |
 |---|---|---|---|
 | `0x010 \| sel` | CONTROL | Nucleo -> ESC | highest bus priority of all traffic |
-| `0x020 \| sel` | CONFIG | Nucleo -> ESC | Stage 3 |
+| `0x020 \| sel` | CONFIG | Nucleo -> ESC | one wheel; IDLE only |
 | `0x410 \| sel` | CONTROL_REPLY | ESC -> Nucleo | one per received CONTROL frame |
-| `0x420 \| sel` | CONFIG_REPLY | ESC -> Nucleo | Stage 3 |
+| `0x420 \| sel` | CONFIG_REPLY | ESC -> Nucleo | one per CONFIG |
 
-Retired in Stage 2 and never reused: `SPEED_WRITE 0x080` (replaced by CONTROL), `MOTOR_STOP 0x780` (replaced by a
-broadcast DISABLE). Retired in Stage 3: `CONFIG_SET 0x500` (replaced by CONFIG). Unchanged: STATUS, DIAG, IDENT,
+Retired and never reused: `SPEED_WRITE 0x080` (replaced by CONTROL), `MOTOR_STOP 0x780` (replaced by a broadcast
+DISABLE), `CONFIG_SET 0x500` (replaced by CONFIG). Unchanged: STATUS, DIAG, IDENT,
 HALL_ALIGN, CAPTURE/record, firmware update, boot request. An old-protocol frame can never decode as a new one:
 the IDs differ.
 
@@ -140,7 +140,7 @@ Codes 32 and up are latched causes. While FAULTED every reply carries the cause 
 it as `ik_drive_link.fault_reason`). The cause of the last disarm (timeout, overflow) is kept in the ESC's
 `drive_cmd.disarm_cause` until the next ARM, readable over SWD. DIAG is unchanged (its 8 bytes are full).
 
-## CONFIG and CONFIG_REPLY (Stage 3; layout frozen now)
+## CONFIG and CONFIG_REPLY
 
 CONFIG: byte 0 version (bits 7-4) | op (bits 3-0: 1 SET, 2 GET); byte 1 config seq; bytes 2-3 u16 key; bytes 4-5
 int16 value (SET; 0 for GET); bytes 6-7 reserved 0. Accepted only when the motor is IDLE (lifecycle DISARMED or
@@ -148,9 +148,22 @@ READY, MCSDK IDLE, output off); a CONFIG can never start or arm the motor.
 CONFIG_REPLY: byte 0 config seq; byte 1 status (0 OK, else a reason code above or 64 UNKNOWN_KEY, 65 BAD_VALUE
 (range or cross-key check)); bytes 2-3 key; bytes 4-5 stored value; bytes 6-7 effective value (for a limit key: the
 limit in force after I2T derate; else equal to the stored value).
-Keys: `0x0001-0x00FF` limits (IQ_LIMIT_MA <= IQMAX, HALL_SHIFT_DEG), `0x0100-0x01FF` tuning (speed Kp/Ki, current
-Kp/Ki, ff slew, stall time). RAM only: compiled defaults on every boot. The exact key table is fixed in Stage 3,
-after Stage 4a decides which loop parameters exist.
+Keys: `0x0001-0x00FF` limits, `0x0100-0x01FF` tuning. RAM only: compiled defaults on every boot. A CONFIG goes to
+exactly one wheel (BAD_SELECT otherwise). Retires the 4-byte `CONFIG_SET 0x500`.
+
+| Key | Name | Unit, range |
+|---|---|---|
+| `0x0001` | IQ_LIMIT_MA | mA, 1..6000 (IQMAX); effective = min(stored, I2T derate) |
+| `0x0002` | HALL_SHIFT_DEG | electrical degrees, -359..359; a SET marks the wheel aligned |
+| `0x0100` | SPEED_KP | counts per RPM x 256, 0..32767 |
+| `0x0101` | SPEED_KI | counts per RPM per ms x 16384, 0..32767 |
+| `0x0102` | CURRENT_KP | MCSDK units (Iq and Id), 0..32767 |
+| `0x0103` | CURRENT_KI | MCSDK units (Iq and Id), 0..32767 |
+| `0x0104` | STALL_RAMP_MA_PER_S | mA/s, 2000..30000 |
+| `0x0105` | STALL_MS | ms, 200..2000 |
+
+Reply status order: structural reason, then NOT_IDLE (15), then UNKNOWN_KEY, then BAD_VALUE. A refused SET leaves the
+stored value unchanged and the reply carries it.
 
 ## Golden vectors (CTest, shared by the ESC, Nucleo and tool tests)
 
@@ -171,6 +184,12 @@ after Stage 4a decides which loop parameters exist.
 | DISABLE with setpoint | `0x011` | `10 00 01 00 00 00 05 3C` | RESERVED_NONZERO |
 | SPEED broadcast | `0x013` | `11 00 78 00 00 00 05 3C` | BAD_SELECT |
 | reply: seq 5 applied, RUNNING, first edge, 118 RPM, 1.25 A | `0x411` | `05 05 43 00 3C 76 00 19` | ok |
+| CONFIG SET IQ_LIMIT_MA 4000, FR, seq 7 | `0x021` | `11 07 01 00 A0 0F 00 00` | ok |
+| CONFIG GET SPEED_KP, FL, seq 8 | `0x028` | `12 08 00 01 00 00 00 00` | ok |
+| CONFIG op 3 | `0x021` | `13 07 01 00 A0 0F 00 00` | BAD_MODE |
+| CONFIG GET with a value | `0x021` | `12 08 00 01 05 00 00 00` | RESERVED_NONZERO |
+| CONFIG to two wheels | `0x023` | `11 07 01 00 A0 0F 00 00` | BAD_SELECT |
+| CONFIG_REPLY seq 7 OK, IQ_LIMIT 4000 stored, 3000 effective | `0x421` | `07 00 01 00 A0 0F B8 0B` | ok |
 
 Sequence cases (last_seq = 250): 251 ok, 10 ok (d = 16), 11 SEQ_JUMP (d = 17), 250 DUPLICATE or CONFLICT,
 249 STALE, 122 SEQ_AMBIGUOUS (d = -128).

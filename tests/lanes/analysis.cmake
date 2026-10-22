@@ -9,3 +9,5 @@ foreach(boundary ik_link_open ik_link_close drive_preflight ik_write ik_record_s
                  drive_stage_run drive_records_read ik_record_read)
   target_link_options(test_startup_metrics PRIVATE -Wl,--wrap=${boundary})
 endforeach()
+host_test(test_friction_fit
+  SOURCES src/tools/lib/friction_fit.c INCLUDES src/tools/lib LIBS m)

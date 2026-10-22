@@ -21,6 +21,8 @@ volatile int32_t ik_drive_ff_coulomb_xy_mn, ik_drive_ff_viscous_xy_mn_per_mps;
 volatile int32_t ik_drive_ff_coulomb_w_mnm, ik_drive_ff_viscous_w_mnm_per_radps;
 volatile int32_t ik_drive_ff_a_per_nm_milli;
 volatile int32_t ik_drive_ff_scale_pct[4] = {100, 100, 100, 100};
+volatile uint32_t ik_drive_mode;
+volatile int32_t ik_drive_current_ma[4];
 volatile uint32_t ik_drive_state, ik_drive_raw_done, ik_drive_fault, ik_drive_armed;
 volatile int32_t ik_drive_target_rpm[4], ik_drive_rpm[4], ik_drive_ff_ma[4];
 volatile struct ik_drive_link ik_drive_link[4];
@@ -41,6 +43,7 @@ static struct {
 } wheel[4];
 
 static uint32_t tick_us;
+static uint8_t session_mode; /* MOTOR_MODE_SPEED or MOTOR_MODE_CURRENT, fixed per drive session */
 static uint32_t last_heartbeat, heartbeat_tick, period_tick, hold_tick, stop_frames;
 static int heartbeat_seen;
 static float command[4];
@@ -84,12 +87,36 @@ static int armed_lifecycle(uint32_t lc)
   return lc == MOTOR_LC_READY || lc == MOTOR_LC_STARTING || lc == MOTOR_LC_RUNNING || lc == MOTOR_LC_HOLD;
 }
 
+static unsigned wheel_of(uint32_t id)
+{
+  for (unsigned i = 0; i < 4U; ++i)
+    if ((id & MOTOR_CAN_SELECT_MASK) == SELECT[i]) return i;
+  return 4U;
+}
+
+/* CONFIG replies only land in the link row: the drive loop never sends CONFIG itself. */
+static int config_reply_rx(uint32_t id, const uint8_t *data, uint32_t len)
+{
+  const unsigned w = wheel_of(id);
+  struct motor_config_reply r;
+  if (w == 4U || motor_config_reply_decode(data, len, &r) != MOTOR_R_NONE) return 1; /* ours, but malformed */
+  volatile struct ik_drive_link *l = &ik_drive_link[w];
+  link_open(w);
+  l->cfg_seq = r.seq;
+  l->cfg_status = r.status;
+  l->cfg_key = r.key;
+  l->cfg_stored = r.stored;
+  l->cfg_effective = r.effective;
+  ++l->cfg_count;
+  link_close(w);
+  return 1;
+}
+
 int ik_drive_rx(uint32_t id, const uint8_t *data, uint32_t len, uint32_t now_us)
 {
+  if ((id & MOTOR_CAN_ID_BASE_MASK) == MOTOR_CAN_ID_CONFIG_REPLY) return config_reply_rx(id, data, len);
   if ((id & MOTOR_CAN_ID_BASE_MASK) != MOTOR_CAN_ID_CONTROL_REPLY) return 0;
-  unsigned w = 4U;
-  for (unsigned i = 0; i < 4U; ++i)
-    if ((id & MOTOR_CAN_SELECT_MASK) == SELECT[i]) w = i;
+  const unsigned w = wheel_of(id);
   struct motor_reply r;
   if (w == 4U || motor_reply_decode(data, len, &r) != MOTOR_R_NONE) return 1; /* ours, but malformed */
   volatile struct ik_drive_link *l = &ik_drive_link[w];
@@ -235,6 +262,18 @@ static void begin_session(uint32_t now)
   }
   ik_drive_armed = 0U;
   hold_tick = now;
+  /* The ESC latches its mode at the start and refuses another until DISABLE, so the session does too. */
+  if (ik_drive_mode > IK_MODE_CURRENT) ++ik_drive_bad_input;
+  session_mode = ik_drive_mode == IK_MODE_CURRENT ? MOTOR_MODE_CURRENT : MOTOR_MODE_SPEED;
+}
+
+static int16_t current_target(int go, unsigned w)
+{
+  if (!go) return 0;
+  int32_t ma = ik_drive_current_ma[w];
+  if (ma > IK_DRIVE_MAX_CURRENT_MA) ma = IK_DRIVE_MAX_CURRENT_MA;
+  if (ma < -IK_DRIVE_MAX_CURRENT_MA) ma = -IK_DRIVE_MAX_CURRENT_MA;
+  return (int16_t)ma;
 }
 
 /* Count the replies to last period's frames; a wheel that keeps missing them is lost. */
@@ -258,7 +297,7 @@ static void check_replies(void)
   }
 }
 
-static void send_wheel(ik_send_fn send, unsigned w, int16_t rpm, int16_t ff_ma)
+static void send_wheel(ik_send_fn send, unsigned w, uint8_t mode, int16_t setpoint, int16_t ff_ma)
 {
   const uint32_t lc = ik_drive_link[w].lifecycle;
   struct motor_control c = { .session = (uint8_t)ik_drive_link[w].session };
@@ -270,11 +309,11 @@ static void send_wheel(ik_send_fn send, unsigned w, int16_t rpm, int16_t ff_ma)
     if (lc == IK_LINK_NONE) c.session = 0U;
     wheel[w].rearm = 0U;
   } else {
-    c.mode = MOTOR_MODE_SPEED;
-    c.setpoint = rpm;
-    c.ff_ma = ff_ma;
+    c.mode = mode;
+    c.setpoint = setpoint;
+    c.ff_ma = mode == MOTOR_MODE_SPEED ? ff_ma : 0;
     c.seq = ++wheel[w].seq;
-    const int8_t sign = (int8_t)((rpm > 0) - (rpm < 0));
+    const int8_t sign = (int8_t)((setpoint > 0) - (setpoint < 0));
     if (sign != 0 && sign != wheel[w].sign) { /* a start from zero or a reversal */
       wheel[w].start_seq = c.seq;
       wheel[w].start_pending = 1U;
@@ -337,16 +376,18 @@ void ik_drive_tick(uint32_t now, uint32_t now_us, ik_send_fn send)
 
   /* Motion only once every wheel is armed, so all four start from the same frame. */
   const int go = drive && ik_drive_armed == 0xFU;
+  const int current = session_mode == MOTOR_MODE_CURRENT;
   float target[4];
-  targets(go, target);
+  targets(go && !current, target);
   slew(target);
   int32_t ff_ma[4];
-  feed_forward(go && ik_drive_ff_enable != 0U, ff_ma);
+  feed_forward(go && !current && ik_drive_ff_enable != 0U, ff_ma);
   int moving = drive;
   for (unsigned w = 0; w < 4U; ++w) {
     ik_drive_ff_ma[w] = ff_ma[w];
-    send_wheel(send, w, (int16_t)ik_drive_rpm[w], (int16_t)ff_ma[w]);
-    moving |= ik_drive_rpm[w] != 0;
+    const int16_t setpoint = current ? current_target(go, w) : (int16_t)ik_drive_rpm[w];
+    send_wheel(send, w, session_mode, setpoint, (int16_t)ff_ma[w]);
+    moving |= setpoint != 0;
   }
   if (moving) {
     hold_tick = now;

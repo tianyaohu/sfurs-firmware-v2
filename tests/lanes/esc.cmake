@@ -15,6 +15,7 @@ set(esc_app_cases
   test_speed_config_keys
   test_holds_at_zero_command
   test_speed_loop_drives_and_faults
+  test_current_mode_drives_q_current
   test_speed_loop_recorder
   test_recorder_idle_arm_and_early_stop)
 

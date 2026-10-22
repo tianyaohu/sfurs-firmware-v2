@@ -56,8 +56,7 @@
  * shift is applied in RAM (lost on reset). Read the result with DIAG_READ. */
 #define HALL_ALIGN   (9U << 7)
 #define HALL_ALIGN_MAGIC 0x4E4C4148U /**< "HALN" */
-/** CONFIG_SET: uint16 key (ESC_CFG_*), int16 value. IDLE only, RAM only. */
-#define CONFIG_SET   (10U << 7)
+/* (10U << 7) was CONFIG_SET: retired, replaced by protocol v1 CONFIG (motor_protocol.h); never reuse. */
 /** IDENT_READ (any payload) -> IDENT_REPLY: uint32 app CRC32, uint32 app size,
  * from the bootloader's validity record. The bootloader checks the flash
  * against that record before every jump, so a running app is that image. */
@@ -113,14 +112,6 @@ enum { ESC_REC_MODE_OFF = 0, ESC_REC_MODE_RUN = 1, ESC_REC_MODE_HOLD = 2, ESC_RE
 
 #define ESC_COUNTS_PER_AMP 544 /**< MCSDK current counts per ampere */
 
-/** CONFIG_SET keys. SPEED_KP/KI: motor_speed gains (counts per RPM x 256, counts per RPM per ms
- * x 16384). CURRENT_KP/KI set both the Iq and Id PI gains (dividers TF_KPDIV/TF_KIDIV).
- * STALL_RAMP_MA_PER_S: integrator slope while the wheel is stuck (2000..30000 mA/s); STALL_MS:
- * high current without Hall progress this long faults the wheel (200..2000 ms). Keys 7-24
- * (old friction feed-forward and startup loop) are retired: rejected, numbers never reused. */
-enum { ESC_CFG_SPEED_KP = 1, ESC_CFG_SPEED_KI = 2, ESC_CFG_HALL_SHIFT_DEG = 3,
-       ESC_CFG_IQ_MAX_MA = 4, ESC_CFG_CURRENT_KP = 5, ESC_CFG_CURRENT_KI = 6,
-       ESC_CFG_STALL_RAMP_MA_PER_S = 25, ESC_CFG_STALL_MS = 26 };
 /** STATUS stop reasons; 6 and 7 (old parking and startup-loop failure) are retired. */
 enum { ESC_STOP_NONE = 0, ESC_STOP_COMMAND = 1, ESC_STOP_TIMEOUT = 2,
        ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5 };

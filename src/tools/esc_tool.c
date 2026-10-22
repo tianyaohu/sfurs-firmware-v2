@@ -3,7 +3,8 @@
  *
  *   esc_tool [--elf F] [--sn SERIAL] status
  *   esc_tool align FR|BR|BL|FL|NE|SE|SW|NW|all   measure + apply Hall phase shift (RAM)
- *   esc_tool set WHEEL KEY VALUE                 CONFIG_SET key (RAM), see ik_link.c for keys
+ *   esc_tool set WHEEL KEY VALUE                 CONFIG key (RAM), acknowledged readback, see ik_link.c for keys
+ *   esc_tool get WHEEL [KEY|all]                  read stored/effective values (all keys by default)
  *   esc_tool capture WHEEL [--step-ma 3000] [--out f.json]
  *                                                current-loop step test: R, L, step response, PI gains
  *   esc_tool reject WHEEL [--json F]              zero-motion protocol cases, DISABLE on exit
@@ -15,6 +16,8 @@
  *   esc_tool pulse [--axis vy|vx] [--speed 0.2] [--accel RPMPS] [--seconds 1.5] [--reps 3]
  *                  [--kp N --ki N] [--log f.jsonl]
  *                                                scripted ground drive out and back (motion!)
+ * CONFIG keys: iq_limit_ma, hall_shift_deg, kp, ki, current_kp, current_ki, stall_ramp_ma_per_s, stall_ms.
+ *
  *   esc_tool stop                                broadcast DISABLE
  *   esc_tool clear                               clear latched ESC faults while stopped
  *
@@ -31,6 +34,8 @@
  * have nonzero speed setpoints. stream preserves enable=1 for the fault hold so the fault latch
  * and all four replies can be inspected, then acknowledges it with enable=0. Both emit JSON on request.
  */
+#include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -83,12 +88,17 @@ static int pick_wheels(const char *arg, wheel_t out[IK_WHEELS])
 
 static int send_config(ik_link_t *l, uint32_t sel, const char *key, int value)
 {
-  uint32_t id, word;
-  if (ik_config_frame(sel, key, value, &id, &word)) {
-    snprintf(l->err, sizeof l->err, "bad config %s=%d", key, value);
+  uint16_t id;
+  if (ik_config_key(key, &id)) {
+    snprintf(l->err, sizeof l->err, "unknown CONFIG key %s", key);
     return -1;
   }
-  return ik_send_raw(l, id, word, 1.0);
+  for (int w = 0; w < IK_WHEELS; w++) if (IK_WHEEL_SELECT[w] == sel) {
+    struct motor_config_reply reply;
+    return ik_config_exchange(l, w, MOTOR_CONFIG_SET, id, value, 1.0, &reply);
+  }
+  snprintf(l->err, sizeof l->err, "CONFIG requires one wheel");
+  return -1;
 }
 
 static int cmd_status(ik_link_t *l)
@@ -341,8 +351,8 @@ read_spin_reply:
   if (gains) {
     const int idx[1] = {w->index};
     if (!pulse_wait_idle(l, idx, 1, 3.0)) printf("%s: not IDLE; speed gains may not be restored (esc_tool set)\n", w->name);
-    (void)send_config(l, w->sel, "kp", kp0);
-    (void)send_config(l, w->sel, "ki", ki0);
+    if (send_config(l, w->sel, "kp", kp0)) { fprintf(stderr, "%s\n", l->err); err = 1; }
+    if (send_config(l, w->sel, "ki", ki0)) { fprintf(stderr, "%s\n", l->err); err = 1; }
   }
   if (a->log) {
     FILE *f = fopen(a->log, "w");
@@ -590,6 +600,7 @@ static int cmd_stream(ik_link_t *l, uint32_t rx_addr, const stream_args_t *a)
   uint32_t state;
   if (ik_read(l, IK_STATE, &state)) return die("%s", l->err);
   if (state != 0) return die("stream: drive must be stopped");
+  if (ik_set_mode(l, IK_MODE_SPEED)) return die("%s", l->err);
   FILE *f = a->json ? fopen(a->json, "w") : NULL;
   if (a->json && !f) return die("cannot write %s", a->json);
   ik_counters_t before, after;
@@ -714,7 +725,7 @@ static int cmd_stream(ik_link_t *l, uint32_t rx_addr, const stream_args_t *a)
 
 static int usage(void)
 {
-  return die("usage: esc_tool [--elf F] [--sn SERIAL] status|stop|clear|align W|set W KEY VALUE|capture W [--step-ma N] [--out F]|"
+  return die("usage: esc_tool [--elf F] [--sn SERIAL] status|stop|clear|align W|set W KEY VALUE|get W [KEY|all]|capture W [--step-ma N] [--out F]|"
              "spin W --rpm N [--seconds T] [--gap-ms N [--gap-at S]] [...]|reject W [--json F]|"
              "stream --seconds T [--hold-fault-s 2] [--json F]|pulse [...]  (see the header of src/tools/esc_tool.c)");
 }
@@ -746,8 +757,22 @@ int main(int argc, char **argv)
   if (!strcmp(cmd, "set")) {
     if (i + 1 >= argc) return usage();
     key = argv[i];
-    set_value = atoi(argv[i + 1]);
+    char *end;
+    errno = 0;
+    long parsed_value = strtol(argv[i + 1], &end, 0);
+    if (errno || !*argv[i + 1] || *end || parsed_value < INT16_MIN || parsed_value > INT16_MAX)
+      return die("CONFIG value must be a signed 16-bit integer");
+    set_value = (int)parsed_value;
     i += 2;
+  }
+  if (!strcmp(cmd, "get")) {
+    key = i < argc ? argv[i++] : "all";
+    if (i != argc) return usage();
+  }
+  if (!strcmp(cmd, "set") || (!strcmp(cmd, "get") && strcmp(key, "all"))) {
+    uint16_t id;
+    if (ik_config_key(key, &id)) return die("unknown CONFIG key %s", key);
+    if (i != argc) return usage();
   }
   for (; i < argc; i++) {
     const char *o = argv[i];
@@ -803,10 +828,20 @@ int main(int argc, char **argv)
     rc = cmd_stream(&link, rx_addr, &stream);
   } else if (!strcmp(cmd, "pulse")) {
     rc = cmd_pulse(&link, &pa);
-  } else if (!strcmp(cmd, "set")) {
-    for (int k = 0; k < nw && !rc; k++) {
-      if (send_config(&link, w[k].sel, key, set_value)) rc = die("%s", link.err);
-      else printf("%s: %s = %d (RAM)\n", w[k].name, key, set_value);
+  } else if (!strcmp(cmd, "set") || !strcmp(cmd, "get")) {
+    bool get = !strcmp(cmd, "get");
+    size_t keys = get && !strcmp(key, "all") ? ik_config_key_count() : 1;
+    for (int k = 0; k < nw; k++) for (size_t j = 0; j < keys; j++) {
+      const char *name = get && !strcmp(key, "all") ? ik_config_key_name(j, NULL) : key;
+      uint16_t id;
+      struct motor_config_reply reply;
+      if (ik_config_key(name, &id)) { rc = die("unknown CONFIG key %s", name); continue; }
+      int failed = ik_config_exchange(&link, w[k].index, get ? MOTOR_CONFIG_GET : MOTOR_CONFIG_SET,
+                                     id, get ? 0 : set_value, 1.0, &reply);
+      if (!failed || reply.status)
+        printf("%s: %s status=%s stored=%d effective=%d (RAM)\n", w[k].name, name,
+               ik_config_status_name(reply.status), reply.stored, reply.effective);
+      if (failed) rc = die("%s", link.err);
     }
   } else {
     rc = usage();

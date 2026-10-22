@@ -20,9 +20,9 @@ int main(void)
   /* Every default is a settable CONFIG key. */
   const char *const restored[] = {"kp", "ki", "stall_ramp_ma_per_s", "stall_ms"};
   for (size_t k = 0; k < sizeof restored / sizeof restored[0]; k++) {
-    uint32_t id, word;
+    uint16_t id;
     CHECK(esc_default(restored[k], &value) == 0);
-    CHECK_EQ(ik_config_frame(IK_WHEEL_SELECT[0], restored[k], value, &id, &word), 0);
+    CHECK_EQ(ik_config_key(restored[k], &id), 0);
   }
   CHECK(esc_default("current_kp", &value) != 0); /* not RAM-restored by the tools */
   CHECK(esc_default("ff_static_ma", &value) != 0); /* retired */

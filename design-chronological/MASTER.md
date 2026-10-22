@@ -93,3 +93,22 @@ Append only; format in design/README.md.
 - Rejected: the DSC STARTING state machine (14 keys, hand-off hold, same 2.25x overshoot), Ki 0, chasing D's
   tracking deadlines before Stage 5 measures friction ff.
 - Touches: src/esc/motor_config/, src/tools/, tests, architecture/drive.md, command-lifecycle.md.
+
+## 2026-10-22  Build Stages 3, 5 and the review pack before the hardware gates  (who: Frank H + claude)
+- Decision: skip the hardware gates for now and build the rest (Stage 3 config ack/readback, Stage 5 current mode and
+  the friction/Ke fit tools, H6 tool prep, Stage 8 review pack); run H4a, H3, H5 and H6 together in one hardware session.
+- Why: hardware time is available as one block (2026-10-23); host work does not need the robot.
+- Risk accepted: a loop problem found at H4a may force rework in later stages; those stages touch mostly separate code
+  (config path, current mode, PC tools). Friction values for the ff stay unmeasured until that session.
+
+## 2026-10-22  Stage 3 CONFIG keys and Stage 5 measurement in current units; Ke fit deferred  (who: claude)
+- Decision: CONFIG v1 key table = 2 limits (IQ_LIMIT_MA, HALL_SHIFT_DEG) and 6 tuning keys (speed Kp/Ki, current Kp/Ki,
+  stall ramp, stall time); one wheel per frame; refusals in the order structure, NOT_IDLE, UNKNOWN_KEY, BAD_VALUE. The
+  Nucleo stores CONFIG_REPLY in the link row (mailbox ABI 8). Current mode: the Nucleo latches ik_drive_mode per session
+  and sends per-wheel CURRENT frames; the ESC clamps to the effective limit (INHIBITED(LIMITED)), no HOLD or stall monitor.
+  Friction is measured as the steady q-current each wheel needs at several speeds (Iq = Ic*sign(v) + b*v per wheel),
+  plus breakaway current from a current-mode ramp.
+- Why: the feed-forward is sent in mA, so measuring friction in mA needs neither Kt nor the robot's mass or wheel radius;
+  the body-frame model (friction_ff.c) can be fitted to these numbers later. Ke needs Vq, which no CAN channel carries
+  (the recorder's 8 channels are full), so a Ke fit would mean a new telemetry path; not needed for the ff.
+- Touches: src/shared (codec), src/esc (drive_app, motor_cmd), src/nucleo (ik_drive), src/tools (friction_map).

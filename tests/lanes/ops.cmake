@@ -1,4 +1,5 @@
 set(ops_sources
+  src/shared/src/motor_protocol.c src/tools/lib/ik_config.c
   src/tools/lib/drive_ops.c src/tools/lib/drive_keyboard.c src/tools/lib/drive_record.c
   src/tools/lib/pulse_run.c src/tools/lib/esc_ops.c src/tools/lib/tune_analysis.c
   src/tools/lib/esc_defaults.c src/tools/lib/ik_link.c src/tools/lib/ocd.c src/tools/lib/elfsym.c
@@ -28,3 +29,30 @@ add_test(NAME test_drive_stage.rpc COMMAND test_drive_stage --rpc)
 add_test(NAME test_drive_cli.rpc COMMAND test_drive_cli --rpc)
 set_tests_properties(test_drive_stage.rpc test_drive_cli.rpc PROPERTIES SKIP_RETURN_CODE 77)
 target_link_options(test_startup_metrics PRIVATE -Wl,--wrap=ik_link_rows)
+host_test(test_friction_run
+  SOURCES src/tools/lib/friction_run.c src/tools/lib/friction_fit.c
+  LIBS ops_test_tools)
+foreach(boundary pulse_now_s pulse_sleep_s ik_set_mode ik_drive ik_drive_current ik_write ik_read
+                 ik_status ik_check_fault ik_link_rows ik_rows)
+  target_link_options(test_friction_run PRIVATE -Wl,--wrap=${boundary})
+endforeach()
+add_executable(ops_friction_map ${REPO}/src/tools/friction_map.c
+  ${REPO}/src/tools/lib/friction_run.c ${REPO}/src/tools/lib/friction_fit.c)
+target_link_libraries(ops_friction_map PRIVATE ops_test_tools)
+add_executable(ops_esc_tool ${REPO}/src/tools/esc_tool.c
+  ${REPO}/src/tools/lib/esc_ctl.c ${REPO}/src/tools/lib/capture_analysis.c)
+target_link_libraries(ops_esc_tool PRIVATE ops_test_tools)
+host_test(test_friction_cli
+  LIBS ops_test_tools
+  DEFS FRICTION_TOOL="$<TARGET_FILE:ops_friction_map>" ESC_TOOL="$<TARGET_FILE:ops_esc_tool>"
+  DEPENDS ops_friction_map ops_esc_tool)
+host_test(test_pulse_config LIBS ops_test_tools)
+foreach(boundary ik_config_exchange ik_set_mode ik_read ik_write ik_check_fault ik_rows)
+  target_link_options(test_pulse_config PRIVATE -Wl,--wrap=${boundary})
+endforeach()
+host_test(test_friction_map
+  SOURCES src/tools/lib/friction_fit.c LIBS ops_test_tools)
+foreach(boundary ik_link_open ik_link_close ik_read drive_preflight friction_stop ik_set_mode
+                 pulse_now_s pulse_sleep_s friction_speed_move friction_breakaway_run)
+  target_link_options(test_friction_map PRIVATE -Wl,--wrap=${boundary})
+endforeach()

@@ -113,6 +113,41 @@ struct motor_reply {
   int16_t iq_ma;       /**< measured q-axis current, mA, carried in 50 mA steps (+-6350 mA) */
 };
 
+/** @brief CONFIG byte 0 bits 3-0. */
+enum motor_config_op { MOTOR_CONFIG_SET = 1, MOTOR_CONFIG_GET = 2 };
+
+/** @brief CONFIG keys. 0x0001-0x00FF limits, 0x0100-0x01FF tuning. RAM only: compiled defaults on every boot. */
+enum motor_config_key {
+  MOTOR_CFG_IQ_LIMIT_MA = 0x0001,          /**< q-current limit, mA, 1..IQMAX; effective value includes the I2T derate */
+  MOTOR_CFG_HALL_SHIFT_DEG = 0x0002,       /**< Hall phase shift, electrical degrees, -359..359; marks the wheel aligned */
+  MOTOR_CFG_SPEED_KP = 0x0100,             /**< speed loop Kp, counts per RPM x 256, 0..32767 */
+  MOTOR_CFG_SPEED_KI = 0x0101,             /**< speed loop Ki, counts per RPM per ms x 16384, 0..32767 */
+  MOTOR_CFG_CURRENT_KP = 0x0102,           /**< current loop Kp (Iq and Id), MCSDK units, 0..32767 */
+  MOTOR_CFG_CURRENT_KI = 0x0103,           /**< current loop Ki (Iq and Id), MCSDK units, 0..32767 */
+  MOTOR_CFG_STALL_RAMP_MA_PER_S = 0x0104,  /**< stuck-wheel integrator slope, mA/s, 2000..30000 */
+  MOTOR_CFG_STALL_MS = 0x0105              /**< stall fault time, ms, 200..2000 */
+};
+
+/** @brief CONFIG_REPLY status beyond the ::motor_reason codes. */
+enum { MOTOR_CFG_UNKNOWN_KEY = 64, MOTOR_CFG_BAD_VALUE = 65 };
+
+/** @brief Decoded CONFIG frame. */
+struct motor_config {
+  uint8_t op;    /**< ::motor_config_op */
+  uint8_t seq;   /**< config sequence, echoed in the reply */
+  uint16_t key;  /**< ::motor_config_key */
+  int16_t value; /**< SET: new value; GET: 0 */
+};
+
+/** @brief Decoded CONFIG_REPLY frame. */
+struct motor_config_reply {
+  uint8_t seq;       /**< seq of the CONFIG answered */
+  uint8_t status;    /**< 0 OK, a ::motor_reason (e.g. NOT_IDLE), ::MOTOR_CFG_UNKNOWN_KEY or ::MOTOR_CFG_BAD_VALUE */
+  uint16_t key;      /**< key of the CONFIG answered */
+  int16_t stored;    /**< value the ESC holds after the frame (unchanged on a refused SET) */
+  int16_t effective; /**< value in force: the derated limit for IQ_LIMIT_MA, else equal to stored */
+};
+
 /** @brief Result of comparing a received sequence with the last accepted one. */
 enum motor_seq_class {
   MOTOR_SEQ_NEXT = 0,      /**< 1..::MOTOR_SEQ_WINDOW ahead: fresh */
@@ -169,6 +204,38 @@ void motor_reply_encode(const struct motor_reply *r, uint8_t data[MOTOR_PROTOCOL
  *         lifecycle/outcome value outside its enum)
  */
 enum motor_reason motor_reply_decode(const uint8_t *data, uint32_t dlc, struct motor_reply *out);
+
+/**
+ * @brief Decode and structurally check a received CONFIG frame.
+ * @param id   11-bit CAN ID (must be ::MOTOR_CAN_ID_CONFIG | one select bit)
+ * @param data payload bytes
+ * @param dlc  payload length, bytes
+ * @param out  decoded fields; filled whenever dlc is 8 and the ID base is CONFIG (the reply needs seq and key)
+ * @return ::MOTOR_R_NONE, ::MOTOR_R_BAD_LENGTH (dlc != 8 or another ID base: no reply), ::MOTOR_R_BAD_VERSION,
+ *         ::MOTOR_R_BAD_MODE (op), ::MOTOR_R_RESERVED_NONZERO (bytes 6-7, or a GET with a value) or
+ *         ::MOTOR_R_BAD_SELECT (not exactly one select bit)
+ */
+enum motor_reason motor_config_decode(uint32_t id, const uint8_t *data, uint32_t dlc, struct motor_config *out);
+
+/**
+ * @brief Encode a CONFIG frame; refuses one the receiver would reject structurally.
+ * @param c      fields to send
+ * @param select one wheel select bit
+ * @param id     out: 11-bit CAN ID
+ * @param data   out: 8 payload bytes
+ * @return ::MOTOR_R_NONE or the reason (id and data then untouched)
+ */
+enum motor_reason motor_config_encode(const struct motor_config *c, uint32_t select, uint32_t *id,
+                                      uint8_t data[MOTOR_PROTOCOL_DLC]);
+
+/** @brief Encode a CONFIG_REPLY payload. */
+void motor_config_reply_encode(const struct motor_config_reply *r, uint8_t data[MOTOR_PROTOCOL_DLC]);
+
+/**
+ * @brief Decode a CONFIG_REPLY payload.
+ * @return ::MOTOR_R_NONE or ::MOTOR_R_BAD_LENGTH
+ */
+enum motor_reason motor_config_reply_decode(const uint8_t *data, uint32_t dlc, struct motor_config_reply *out);
 
 /**
  * @brief Classify a received sequence against the last accepted one (signed 8-bit difference).

@@ -15,7 +15,10 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
    sends one protocol v1 CONTROL frame to each ESC ([protocol.md](protocol.md)). Every frame
    is answered; the answers land in `ik_drive_link[4]` for the tools, and the time from the
    drive tick that queued a frame to its reply goes into a per-wheel histogram
-   (`ik_drive_reply_lat_hist`, 250 µs bins, mailbox ABI 7).
+   (`ik_drive_reply_lat_hist`, 250 µs bins). For measurements the session can instead run in
+   current mode (`ik_drive_mode`, latched at the session start): each wheel gets its own
+   q-current setpoint (`ik_drive_current_ma`) in CURRENT frames, with the same heartbeat,
+   LOST and stop handling. Mailbox ABI 8.
 3. Each ESC runs MCSDK FOC with Hall sensors (16 kHz current loop) in torque mode.
    `motor_cmd.c` owns the command lifecycle (arming, session and sequence checks, watchdog,
    faults, HOLD; [command-lifecycle.md](command-lifecycle.md)); `motor_speed.c` is the 1 kHz
@@ -34,10 +37,11 @@ Service commands (`src/shared/can/can_datatypes.h`), 4-byte requests, ID = comma
 | `0x100` → `0x280` STATUS | poll/reply | i16 RPM, i16 Iq, i16 Iq ref (544 counts/A), u8 MCSDK state, u8 flags |
 | `0x300` → `0x380` DIAG | poll/reply | u16 Vbus cV, u16 occurred faults, i16 Hall shift °, u8 align result, u8 I²t % |
 | `0x480` HALL_ALIGN | → ESC | `"HALN"` |
-| `0x500` CONFIG_SET | → ESC | u16 key (1 Kp, 2 Ki, 3 Hall shift °, 4 Iq max mA, 5/6 current Kp/Ki, 25 stall ramp mA/s, 26 stall time ms; 7-24 retired), i16 value |
 | `0x600–0x6FF` | | firmware update ([CAN_FWU.md](can-fwu.md)) |
 
-`0x080` (old SPEED_WRITE) and `0x780` (old STOP) are retired and ignored.
+Configuration: protocol v1 CONFIG `0x020` / CONFIG_REPLY `0x420`, one wheel per frame, IDLE only, every SET
+acknowledged with the stored and effective value, every key readable (GET); key table in [protocol.md](protocol.md).
+`0x080` (old SPEED_WRITE), `0x500` (old CONFIG_SET) and `0x780` (old STOP) are retired and ignored.
 STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault, 4 align,
 5 capture),
 `0x10` output on, `0x20` I²t derated, `0x40` aligning, `0x80` Hall shift known.

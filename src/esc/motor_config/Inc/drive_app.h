@@ -32,7 +32,8 @@ struct drive_app_state {
   uint32_t derated;         /**< I2T has lowered the current limit */
   float i2t_a2s;            /**< I2T accumulator, A^2*s */
   int32_t iq_limit_counts;  /**< speed-loop current limit L (configured or I2T-derated), counts */
-  int32_t iq_max_counts;    /**< configured (non-derated) limit */
+  int32_t iq_max_counts;    /**< configured (non-derated) limit, counts */
+  int32_t iq_max_ma;        /**< configured (non-derated) limit as set over CONFIG, mA */
   uint32_t align_phase;     /**< Hall alignment sequencer phase */
   uint32_t align_result;    /**< Hall alignment result code */
   uint32_t align_edges_fwd; /**< Hall edges counted in the forward sweep */

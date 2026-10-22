@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "check.h"
+#include "ik_link.h"
 
 int sweep_main(int argc, char **argv);
 #undef main
@@ -29,6 +30,29 @@ static int run(char *out, size_t cap, int argc, char **argv)
   close(fd);
   unlink(path);
   return rc;
+}
+
+static bool mode_selected, disabled, drove;
+int __wrap_ik_link_open(ik_link_t *l, const char *sn, const char *elf)
+{ (void)sn; (void)elf; memset(l, 0, sizeof *l); return 0; }
+void __wrap_ik_link_close(ik_link_t *l) { (void)l; }
+int __wrap_ik_read(ik_link_t *l, ik_sym_t sym, uint32_t *value)
+{ (void)l; CHECK(sym == IK_STATE || sym == IK_FAULT); *value = 0; return 0; }
+int __wrap_ik_write(ik_link_t *l, ik_sym_t sym, uint32_t value)
+{ (void)l; CHECK_EQ(sym, IK_ENABLE); CHECK_EQ(value, 0); disabled = true; return 0; }
+int __wrap_ik_set_mode(ik_link_t *l, unsigned mode)
+{ (void)l; CHECK_EQ(mode, IK_MODE_SPEED); mode_selected = true; return 0; }
+int __wrap_ik_check_fault(ik_link_t *l, uint32_t value) { (void)l; CHECK_EQ(value, 0); return 0; }
+int __wrap_ik_rows(ik_link_t *l, ik_row_t rows[4])
+{
+  (void)l;
+  for (int w = 0; w < 4; w++) rows[w] = (ik_row_t){.valid = true, .mc_state = "IDLE", .aligned = true};
+  return 0;
+}
+int __wrap_ik_drive(ik_link_t *l, int32_t x, int32_t y, int32_t z, bool enable)
+{
+  (void)x; (void)y; (void)z; CHECK(enable); CHECK(mode_selected); drove = true;
+  strcpy(l->err, "scripted stop before motion"); return -1;
 }
 
 int main(void)
@@ -54,6 +78,11 @@ int main(void)
   CHECK_EQ(run(out, sizeof out, 3, a5), 2);
   char *a6[] = {"sweep", "--execute"};
   CHECK_EQ(run(out, sizeof out, 2, a6), 2); /* --execute needs --out */
+  char path[] = "/tmp/sweep-execute-XXXXXX";
+  int fd = mkstemp(path); CHECK(fd >= 0); close(fd);
+  char *execute[] = {"sweep", "--execute", "--out", path};
+  CHECK_EQ(run(out, sizeof out, 4, execute), 1);
+  CHECK(mode_selected && drove && disabled); CHECK_EQ(unlink(path), 0);
   printf("ok\n");
   return 0;
 }

@@ -1,5 +1,6 @@
 #include "ik_link.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,13 +21,13 @@ static const char *const SYM_NAMES[IK_SYM_COUNT] = {
     "target_rpm", "rpm", "telem", "capture", "raw_data_hi", "raw_len", "clear_seq", "clear_done",
     "fault", "armed", "link", "ff_enable", "ff_coulomb_xy_mn", "ff_viscous_xy_mn_per_mps",
     "ff_coulomb_w_mnm", "ff_viscous_w_mnm_per_radps", "ff_a_per_nm_milli", "ff_scale_pct", "ff_ma",
-    "reply_lat_hist", "reply_lat_max_us"};
+    "reply_lat_hist", "reply_lat_max_us", "mode", "current_ma"};
 
 static const struct { const char *name; int number; } CONFIG_KEYS[] = {
-    {"kp", ESC_CFG_SPEED_KP}, {"ki", ESC_CFG_SPEED_KI}, {"shift", ESC_CFG_HALL_SHIFT_DEG},
-    {"iqmax_ma", ESC_CFG_IQ_MAX_MA}, {"current_kp", ESC_CFG_CURRENT_KP},
-    {"current_ki", ESC_CFG_CURRENT_KI}, {"stall_ramp_ma_per_s", ESC_CFG_STALL_RAMP_MA_PER_S},
-    {"stall_ms", ESC_CFG_STALL_MS}};
+    {"kp", MOTOR_CFG_SPEED_KP}, {"ki", MOTOR_CFG_SPEED_KI}, {"hall_shift_deg", MOTOR_CFG_HALL_SHIFT_DEG},
+    {"iq_limit_ma", MOTOR_CFG_IQ_LIMIT_MA}, {"current_kp", MOTOR_CFG_CURRENT_KP},
+    {"current_ki", MOTOR_CFG_CURRENT_KI}, {"stall_ramp_ma_per_s", MOTOR_CFG_STALL_RAMP_MA_PER_S},
+    {"stall_ms", MOTOR_CFG_STALL_MS}};
 
 static const char *const STOP_REASONS[] = {"-", "stop", "timeout", "fault", "align", "capture"};
 static const char *const ALIGN_RESULTS[] = {"-", "ok", "REVERSED", "NO_EDGES", "aborted", "running"};
@@ -238,7 +239,9 @@ void ik_decode_link_row(const uint32_t w[IK_LINK_WORDS], ik_link_row_t *r)
     .reason = w[3], .session = w[4], .request_seq = w[5], .applied_seq = w[6], .first_edge = w[7],
     .rpm = (int32_t)w[8], .iq_ma = (int32_t)w[9], .reply_count = w[10], .reply_us = w[11],
     .misses = w[12], .rejects = w[13], .start_count = w[14], .start_reply_us = w[15],
-    .first_start_reply_us = w[16], .first_start_valid = w[17] != 0, .fault_reason = w[18]};
+    .first_start_reply_us = w[16], .first_start_valid = w[17] != 0, .fault_reason = w[18],
+    .cfg_count = w[19], .cfg_seq = w[20], .cfg_status = w[21], .cfg_key = w[22],
+    .cfg_stored = (int32_t)w[23], .cfg_effective = (int32_t)w[24]};
   r->lifecycle_name = r->lifecycle < ARRAY_LEN(lifecycle) ? lifecycle[r->lifecycle] :
                       r->lifecycle == IK_LINK_NONE ? "NO_REPLY" : "UNKNOWN";
   r->outcome_name = r->outcome < ARRAY_LEN(outcome) ? outcome[r->outcome] : "UNKNOWN";
@@ -367,17 +370,47 @@ int ik_record_read_word(int bank, int first, int count, bool ch67, uint32_t *wor
   return 0;
 }
 
-int ik_config_frame(uint32_t selector, const char *key, int value, uint32_t *can_id, uint32_t *word)
+int ik_config_key(const char *key, uint16_t *id)
 {
-  if (value < -32768 || value > 32767) return -1;
-  for (size_t i = 0; i < ARRAY_LEN(CONFIG_KEYS); i++) {
-    if (!strcmp(CONFIG_KEYS[i].name, key)) {
-      *can_id = CONFIG_SET | selector;
-      *word = (uint32_t)CONFIG_KEYS[i].number | (((uint32_t)value & 0xFFFFU) << 16);
-      return 0;
-    }
+  if (!key || !*key || !id) return -1;
+  for (size_t i = 0; i < ARRAY_LEN(CONFIG_KEYS); i++)
+    if (!strcmp(CONFIG_KEYS[i].name, key)) { *id = (uint16_t)CONFIG_KEYS[i].number; return 0; }
+  char *end;
+  errno = 0;
+  unsigned long n = strtoul(key, &end, 0);
+  if (errno || *end || key[0] == '-' || n > UINT16_MAX) return -1;
+  *id = (uint16_t)n;
+  return 0;
+}
+
+const char *ik_config_status_name(uint32_t status)
+{
+  if (!status) return "OK";
+  if (status == MOTOR_CFG_UNKNOWN_KEY) return "UNKNOWN_KEY";
+  if (status == MOTOR_CFG_BAD_VALUE) return "BAD_VALUE";
+  return ik_reason_name(status);
+}
+
+int ik_set_mode(ik_link_t *l, unsigned mode)
+{
+  uint32_t state;
+  if (mode > IK_MODE_CURRENT) return fail(l, "invalid drive mode %u", mode);
+  if (ik_read(l, IK_STATE, &state)) return -1;
+  if (state != 0) return fail(l, "drive not stopped; mode change refused");
+  return ik_write(l, IK_MODE, mode);
+}
+
+int ik_drive_current(ik_link_t *l, const int32_t current_ma[IK_WHEELS], bool enable)
+{
+  if (!current_ma) return fail(l, "current setpoints required");
+  for (int w = 0; w < IK_WHEELS; w++) {
+    int32_t ma = current_ma[w];
+    if (ma > 6000) ma = 6000;
+    if (ma < -6000) ma = -6000;
+    if (ocd_write32(l->ocd, l->addr[IK_CURRENT_MA] + (uint32_t)w * 4U, (uint32_t)ma))
+      return fail(l, "%s", ocd_error(l->ocd));
   }
-  return -1;
+  return ik_drive(l, 0, 0, 0, enable);
 }
 
 size_t ik_config_key_count(void) { return ARRAY_LEN(CONFIG_KEYS); }

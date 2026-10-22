@@ -535,6 +535,53 @@ static void test_session_next(void)
   }
 }
 
+/* CONFIG / CONFIG_REPLY golden vectors (architecture/protocol.md), checked byte for byte both ways. */
+static void test_golden_config_vectors(void)
+{
+  static const uint8_t set_bytes[8] = {0x11, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x00, 0x00};
+  static const uint8_t get_bytes[8] = {0x12, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00};
+  struct motor_config c;
+  uint32_t id;
+  uint8_t d[8];
+  CHECK_EQ(motor_config_decode(0x021U, set_bytes, 8U, &c), MOTOR_R_NONE);
+  CHECK(c.op == MOTOR_CONFIG_SET && c.seq == 7 && c.key == MOTOR_CFG_IQ_LIMIT_MA && c.value == 4000);
+  CHECK_EQ(motor_config_encode(&c, 0x1U, &id, d), MOTOR_R_NONE);
+  CHECK(id == 0x021U && memcmp(d, set_bytes, 8) == 0);
+  CHECK_EQ(motor_config_decode(0x028U, get_bytes, 8U, &c), MOTOR_R_NONE);
+  CHECK(c.op == MOTOR_CONFIG_GET && c.seq == 8 && c.key == MOTOR_CFG_SPEED_KP && c.value == 0);
+  CHECK_EQ(motor_config_encode(&c, 0x8U, &id, d), MOTOR_R_NONE);
+  CHECK(id == 0x028U && memcmp(d, get_bytes, 8) == 0);
+
+  static const struct { uint32_t id; uint8_t b[8]; uint32_t dlc; enum motor_reason r; } bad[] = {
+    {0x021U, {0x21, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x00, 0x00}, 8U, MOTOR_R_BAD_VERSION},
+    {0x021U, {0x13, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x00, 0x00}, 8U, MOTOR_R_BAD_MODE},
+    {0x021U, {0x11, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x01, 0x00}, 8U, MOTOR_R_RESERVED_NONZERO},
+    {0x021U, {0x12, 0x08, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00}, 8U, MOTOR_R_RESERVED_NONZERO},
+    {0x023U, {0x11, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x00, 0x00}, 8U, MOTOR_R_BAD_SELECT},
+    {0x020U, {0x11, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x00, 0x00}, 8U, MOTOR_R_BAD_SELECT},
+    {0x021U, {0x11, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x00, 0x00}, 4U, MOTOR_R_BAD_LENGTH},
+    {0x011U, {0x11, 0x07, 0x01, 0x00, 0xA0, 0x0F, 0x00, 0x00}, 8U, MOTOR_R_BAD_LENGTH},
+  };
+  for (unsigned i = 0; i < ARRAY_COUNT(bad); ++i) CHECK_EQ(motor_config_decode(bad[i].id, bad[i].b, bad[i].dlc, &c), bad[i].r);
+  for (unsigned w = 0; w < ARRAY_COUNT(wheel_selects); ++w) { /* every wheel, round trip */
+    const struct motor_config in = {MOTOR_CONFIG_SET, (uint8_t)(200 + w), MOTOR_CFG_STALL_MS, (int16_t)-1234};
+    struct motor_config out;
+    CHECK_EQ(motor_config_encode(&in, wheel_selects[w], &id, d), MOTOR_R_NONE);
+    CHECK_EQ(motor_config_decode(id, d, 8U, &out), MOTOR_R_NONE);
+    CHECK(out.op == in.op && out.seq == in.seq && out.key == in.key && out.value == in.value);
+  }
+  const struct motor_config get_value = {MOTOR_CONFIG_GET, 1, MOTOR_CFG_SPEED_KI, 3};
+  CHECK_EQ(motor_config_encode(&get_value, 0x1U, &id, d), MOTOR_R_RESERVED_NONZERO);
+
+  static const uint8_t reply_bytes[8] = {0x07, 0x00, 0x01, 0x00, 0xA0, 0x0F, 0xB8, 0x0B};
+  struct motor_config_reply r;
+  CHECK_EQ(motor_config_reply_decode(reply_bytes, 8U, &r), MOTOR_R_NONE);
+  CHECK(r.seq == 7 && r.status == 0 && r.key == MOTOR_CFG_IQ_LIMIT_MA && r.stored == 4000 && r.effective == 3000);
+  motor_config_reply_encode(&r, d);
+  CHECK(memcmp(d, reply_bytes, 8) == 0);
+  CHECK_EQ(motor_config_reply_decode(reply_bytes, 7U, &r), MOTOR_R_BAD_LENGTH);
+}
+
 int main(void)
 {
   test_protocol_constants();
@@ -552,5 +599,6 @@ int main(void)
   test_golden_sequence_cases();
   test_sequence_exhaustive();
   test_session_next();
+  test_golden_config_vectors();
   return 0;
 }

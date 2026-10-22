@@ -48,10 +48,14 @@ int main(int argc, char **argv)
     fprintf(stderr, "--startup-metrics requires --record; sector spread must be finite and nonnegative\n");
     return 1;
   }
-  if (!out || !(speed_mps > 0 && speed_mps <= 2) || !(distance_m > 0 && distance_m <= 1) ||
+  /* wz is in rad/s and rad; the acceptance gate needs 4.8 rad/s (120 RPM peak wheel), within the Nucleo's 6. */
+  const int yaw = axis && !strcmp(axis, "wz");
+  const double max_speed = yaw ? 6.0 : 2.0, max_distance = yaw ? 3.0 : 1.0;
+  if (!out || !(speed_mps > 0 && speed_mps <= max_speed) || !(distance_m > 0 && distance_m <= max_distance) ||
       reps < 1 || reps > 3 || distance_m / speed_mps > 5 || pause_s < 0 || min_vbus_v < 0 ||
       accel_rpmps < 0 || (strcmp(axis, "vx") && strcmp(axis, "vy") && strcmp(axis, "wz"))) {
-    fprintf(stderr, "require --out, vx/vy/wz, 0 < speed <= 2, 0 < distance <= 1, 1 <= reps <= 3, distance/speed <= 5; nonnegative pause/accel/Vbus\n");
+    fprintf(stderr, "require --out, vx/vy/wz, 0 < speed <= 2 m/s (wz 6 rad/s), 0 < distance <= 1 m (wz 3 rad), "
+                    "1 <= reps <= 3, distance/speed <= 5; nonnegative pause/accel/Vbus\n");
     return 1;
   }
   uint32_t record_word;

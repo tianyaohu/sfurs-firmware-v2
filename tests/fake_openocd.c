@@ -87,6 +87,21 @@ int main(int argc, char **argv)
         }
       } else if (sscanf(buf, "mww %lx %lx", &addr, &value) == 2) {
         store(addr, value);
+        /* Script memory side effects at a documented write boundary; no target or plant model.
+         * FAKE_OCD_ON_WRITE="trigger_addr>dest_addr=value,dest_addr=value,...". */
+        const char *script = getenv("FAKE_OCD_ON_WRITE");
+        unsigned long trigger;
+        int consumed = 0;
+        if (script && sscanf(script, "%lx>%n", &trigger, &consumed) == 1 && consumed > 0 && addr == trigger) {
+          script += consumed;
+          while (*script) {
+            unsigned long dest, data;
+            if (sscanf(script, "%lx=%lx%n", &dest, &data, &consumed) != 2) break;
+            store(dest, data);
+            script += consumed;
+            if (*script == ',') ++script; else break;
+          }
+        }
       } else if (!strcmp(buf, "shutdown")) {
         send(conn, "\x1a", 1, 0);
         return 0;

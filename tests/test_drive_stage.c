@@ -68,7 +68,7 @@ static void test_defaults_and_settings_all_wheels(void)
   CHECK_EQ(drive_setting_set(&settings, "stall_ramp_ma_per_s", 12000), 0);
   for (int w = 0; w < 4; w++) CHECK_EQ(settings.value[w][2], 12000);
   CHECK(drive_setting_set(&settings, "ff_static_ma", 1234) != 0); /* retired */
-  CHECK(drive_setting_set(&settings, "shift", 10) != 0); /* valid CONFIG key, not a drive setting */
+  CHECK(drive_setting_set(&settings, "hall_shift_deg", 10) != 0); /* valid CONFIG key, not a drive setting */
   CHECK(drive_setting_set(&settings, "not_a_setting", 1) != 0);
   CHECK(drive_setting_set(&settings, "kp", 32768) != 0);
   CHECK_EQ(drive_setting_set(&settings, "kp", -32768), 0);

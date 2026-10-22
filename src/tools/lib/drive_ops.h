@@ -36,7 +36,7 @@ int drive_preflight_rows(const ik_row_t before[4], const ik_row_t rows[4], doubl
 int drive_preflight(ik_link_t *link, double min_vbus_v);
 /** @brief Initialize every ground-tool tunable (DRIVE_SETTING_KEYS) from firmware defaults. */
 int drive_settings_defaults(drive_settings_t *settings);
-/** @brief Override a named tunable on all four wheels, validating CONFIG_SET range. */
+/** @brief Override a named tunable on all four wheels, validating CONFIG range. */
 int drive_setting_set(drive_settings_t *settings, const char *key, int value);
 /** @brief Analyze a pulse result, retaining per-wheel faults and minimum Vbus. */
 int drive_stage_analyze(drive_stage_t *stage);

@@ -23,7 +23,7 @@
  * ::MOTOR_WATCHDOG_MS after the stream stops. All words are 32 bit for SWD access.
  */
 
-#define IK_DRIVE_ABI 0x494B0007U         /**< ABI tag the host checks before talking */
+#define IK_DRIVE_ABI 0x494B0008U         /**< ABI tag the host checks before talking */
 #define IK_DRIVE_PERIOD_MS 20U           /**< drive loop period, ms (= MOTOR_PROTOCOL_PERIOD_MS) */
 #define IK_DRIVE_HEARTBEAT_MS 300U       /**< heartbeat age that counts as lost, ms */
 #define IK_DRIVE_HOLD_MS 200U            /**< time at zero before DISABLE is sent, ms */
@@ -33,11 +33,14 @@
 #define IK_DRIVE_MAX_LINEAR_MMPS 5000    /**< accepted |vx|, |vy|, mm/s */
 #define IK_DRIVE_MAX_OMEGA_MRADPS 6000   /**< accepted |omega|, mrad/s */
 #define IK_DRIVE_FF_MAX_MA 6000          /**< |feed-forward| sent, mA (the ESC's hard limit) */
+#define IK_DRIVE_MAX_CURRENT_MA 6000     /**< |current setpoint| sent in current mode, mA (the ESC's hard limit) */
 #define IK_LINK_NONE 0xFFU               /**< ik_drive_link.lifecycle before the first reply */
 #define IK_DRIVE_LAT_BINS 16U            /**< reply latency histogram bins per wheel */
 #define IK_DRIVE_LAT_BIN_US 250U         /**< histogram bin width, us; the last bin holds everything above */
 /** @brief Values of ::ik_drive_state. */
 enum { IK_STOPPED, IK_DRIVING, IK_STOPPING };
+/** @brief Values of ::ik_drive_mode. */
+enum { IK_MODE_SPEED = 0, IK_MODE_CURRENT = 1 };
 
 /** @brief Protocol link to one wheel; a seqlocked row the host reads like the telemetry rows. */
 struct ik_drive_link {
@@ -61,9 +64,15 @@ struct ik_drive_link {
   uint32_t first_start_valid; /**< 1 once first_start_reply_us belongs to this session (its reply arrived) */
   uint32_t fault_reason;   /**< motor_reason latched with this wheel's ::ik_drive_fault bit (LOST: 0); kept
                                 until enable goes 0, while later replies overwrite reason */
+  uint32_t cfg_count;      /**< CONFIG_REPLY frames received (the host sends CONFIG through the raw mailbox) */
+  uint32_t cfg_seq;        /**< config seq of the last CONFIG_REPLY */
+  uint32_t cfg_status;     /**< its status: 0 OK, a motor_reason, or MOTOR_CFG_UNKNOWN_KEY / BAD_VALUE */
+  uint32_t cfg_key;        /**< its key */
+  int32_t cfg_stored;      /**< value the ESC holds */
+  int32_t cfg_effective;   /**< value in force (the derated limit for IQ_LIMIT_MA) */
 };
 /** @brief Words per ::ik_drive_link row. */
-#define IK_DRIVE_LINK_WORDS 19U
+#define IK_DRIVE_LINK_WORDS 25U
 
 /** @brief ABI tag, equals ::IK_DRIVE_ABI. */
 extern volatile const uint32_t ik_drive_abi;
@@ -92,6 +101,10 @@ extern volatile int32_t ik_drive_ff_coulomb_w_mnm;            /**< yaw Coulomb t
 extern volatile int32_t ik_drive_ff_viscous_w_mnm_per_radps;  /**< yaw viscous torque, mN*m per rad/s */
 extern volatile int32_t ik_drive_ff_a_per_nm_milli;           /**< motor current per N*m (1/Kt), mA per N*m */
 extern volatile int32_t ik_drive_ff_scale_pct[4];             /**< per-wheel trim, % (100 = nominal) */
+/* Current mode (friction and motor-constant measurement): each wheel gets its own q-current setpoint instead
+ * of the IK speed; no slew, no feed-forward. Latched when a drive session starts. */
+extern volatile uint32_t ik_drive_mode;       /**< IK_MODE_SPEED (twist) or IK_MODE_CURRENT (ik_drive_current_ma) */
+extern volatile int32_t ik_drive_current_ma[4]; /**< FR/BR/BL/FL q-current, mA, clamped to +-IK_DRIVE_MAX_CURRENT_MA */
 /**@}*/
 
 /** @name Firmware to host */
@@ -127,12 +140,12 @@ typedef int (*ik_send_fn)(uint32_t id, const uint8_t *data, uint32_t len);
 void ik_drive_tick(uint32_t now, uint32_t now_us, ik_send_fn send);
 
 /**
- * @brief Take a received CAN frame if it is a CONTROL_REPLY; call for every received frame.
+ * @brief Take a received CAN frame if it is a CONTROL_REPLY or CONFIG_REPLY; call for every received frame.
  * @param id     11-bit CAN ID
  * @param data   payload
  * @param len    payload length, bytes
  * @param now_us Nucleo microsecond clock at reception (wraps)
- * @return 1 if the frame was a CONTROL_REPLY (consumed), else 0
+ * @return 1 if the frame was one of those (consumed), else 0
  */
 int ik_drive_rx(uint32_t id, const uint8_t *data, uint32_t len, uint32_t now_us);
 #endif

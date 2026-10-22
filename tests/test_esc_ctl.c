@@ -40,6 +40,9 @@ static uint32_t inject_fault;
 static bool raw_ack, clear_ack, have_clear_reply;
 static struct motor_reply clear_reply[4];
 static unsigned clear_mask;
+static int config_wheel, config_reads_until_match;
+static bool config_sent;
+static uint32_t config_reply_words[6];
 static struct {
   uint32_t id;
   uint8_t data[8];
@@ -76,7 +79,8 @@ static void reset(void)
   fail_sym = tear_wheel = mutate_wheel = -1;
   tear_reads = sent = script_n = script_pos = 0;
   raw_ack = clear_ack = true; have_clear_reply = false; clear_mask = 15;
-  live_telem = false; inject_fault = 0;
+  live_telem = false; inject_fault = 0; config_wheel = -1;
+  config_sent = false; config_reads_until_match = 0;
   esc_ctl_init(&ctl, &mailbox, 0);
 }
 
@@ -95,6 +99,11 @@ int ocd_read(ocd_t *o, uint32_t addr, unsigned width, size_t count, uint32_t *ou
       addr < mailbox.addr[IK_TELEM] + 4 * IK_ROW_WORDS * 4) {
     word(addr)[7]++;
     word(addr)[8] = 1200;
+  }
+  if (config_sent && config_reads_until_match && count == IK_LINK_WORDS &&
+      addr == mailbox.addr[IK_LINK] + (uint32_t)config_wheel * IK_LINK_WORDS * 4U &&
+      --config_reads_until_match == 0) {
+    word(addr)[0] += 2; word(addr)[20] = 201;
   }
   for (size_t i = 0; i < count; i++) out[i] = *word(addr + (uint32_t)i * 4);
   if (count == IK_LINK_WORDS && addr == mailbox.addr[IK_LINK] + (uint32_t)mutate_wheel * IK_LINK_WORDS * 4) {
@@ -134,6 +143,12 @@ int ocd_write32(ocd_t *o, uint32_t addr, uint32_t value)
         bytes[b] = (uint8_t)(memory[b < 4 ? IK_RAW_DATA : IK_RAW_DATA_HI][0] >> (8 * (b % 4)));
       CHECK_EQ(memcmp(bytes, script[k].data, 8), 0);
       if (script[k].reply) publish(script[k].wheel, &script[k].response);
+    }
+    if (config_wheel >= 0) {
+      uint32_t *row = &memory[IK_LINK][config_wheel * IK_LINK_WORDS];
+      row[0] += 2;
+      memcpy(row + 19, config_reply_words, sizeof config_reply_words);
+      config_sent = true;
     }
     if (raw_ack) memory[IK_RAW_DONE][0] = value;
   }
@@ -553,8 +568,88 @@ static void test_counter_snapshot(void)
   CHECK(ik_counters(&mailbox, mailbox.addr[IK_BAD_INPUT], &after) != 0);
 }
 
+static void test_config_exchange_all_wheels(void)
+{
+  const unsigned statuses[] = {0, MOTOR_R_NOT_IDLE, MOTOR_CFG_UNKNOWN_KEY, MOTOR_CFG_BAD_VALUE, MOTOR_R_BAD_VERSION};
+  for (int w = 0; w < 4; w++) for (size_t k = 0; k < sizeof statuses / sizeof *statuses; k++) {
+    reset(); mailbox.config_seq = 200; config_wheel = w;
+    uint32_t *baseline = &memory[IK_LINK][w * IK_LINK_WORDS];
+    baseline[19] = UINT32_MAX; baseline[20] = 200;
+    uint32_t fixture[] = {0, 201, statuses[k], MOTOR_CFG_HALL_SHIFT_DEG, (uint32_t)-64, (uint32_t)-63};
+    memcpy(config_reply_words, fixture, sizeof fixture);
+    struct motor_config_reply r;
+    CHECK_EQ(ik_config_exchange(&mailbox, w, MOTOR_CONFIG_SET, MOTOR_CFG_HALL_SHIFT_DEG, -64, 0.05, &r), statuses[k] ? -1 : 0);
+    CHECK_EQ(r.status, statuses[k]); CHECK_EQ(r.seq, 201); CHECK_EQ(r.key, MOTOR_CFG_HALL_SHIFT_DEG);
+    CHECK_EQ(r.stored, -64); CHECK_EQ(r.effective, -63);
+    if (statuses[k]) CHECK(strstr(mailbox.err, ik_config_status_name(statuses[k])));
+    CHECK_EQ(memory[IK_RAW_ID][0], MOTOR_CAN_ID_CONFIG | IK_WHEEL_SELECT[w]);
+    CHECK_EQ(memory[IK_RAW_LEN][0], 8); CHECK_EQ(memory[IK_RAW_DATA][0], 0x0002c911);
+    CHECK_EQ(memory[IK_RAW_DATA_HI][0], 0x0000ffc0);
+  }
+  for (int w = 0; w < 4; w++) for (int mismatch = 0; mismatch < 4; mismatch++) {
+    reset(); mailbox.config_seq = 200; config_wheel = mismatch == 3 ? (w + 1) % 4 : w;
+    uint32_t fixture[] = {1, 201, 0, MOTOR_CFG_SPEED_KP, 1234, 1234};
+    if (mismatch == 0) fixture[1] = 202;
+    if (mismatch == 1) fixture[3] = MOTOR_CFG_SPEED_KI;
+    if (mismatch == 2) fixture[0] = 0;
+    memcpy(config_reply_words, fixture, sizeof fixture);
+    struct motor_config_reply r;
+    CHECK_EQ(ik_config_exchange(&mailbox, w, MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0, 0.01, &r), -1);
+    CHECK(strstr(mailbox.err, "timeout")); CHECK_EQ(r.seq, 0);
+  }
+  for (int w = 0; w < 4; w++) {
+    reset(); config_wheel = w; mailbox.config_seq = 255;
+    uint32_t fixture[] = {1, 0, 0, MOTOR_CFG_SPEED_KP, 1234, 1234};
+    memory[IK_LINK][w * IK_LINK_WORDS + 20] = 255;
+    memcpy(config_reply_words, fixture, sizeof fixture);
+    struct motor_config_reply r;
+    CHECK_EQ(ik_config_exchange(&mailbox, w, MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0, 0.05, &r), 0);
+    CHECK_EQ(r.seq, 0); CHECK_EQ(r.stored, 1234);
+    CHECK_EQ(memory[IK_RAW_DATA_HI][0], 0); /* GET value and reserved bytes zero */
+  }
+  for (int w = 0; w < 4; w++) {
+    reset(); mailbox.config_seq = 200; config_wheel = w; config_reads_until_match = 2;
+    uint32_t fixture[] = {1, 202, 0, MOTOR_CFG_SPEED_KP, 1234, 1234};
+    memcpy(config_reply_words, fixture, sizeof fixture);
+    struct motor_config_reply r;
+    CHECK_EQ(ik_config_exchange(&mailbox, w, MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0, 0.05, &r), 0);
+    CHECK_EQ(r.seq, 201); CHECK_EQ(r.stored, 1234);
+    reset(); raw_ack = false;
+    CHECK_EQ(ik_config_exchange(&mailbox, w, MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0, 0.01, &r), -1);
+    CHECK(strstr(mailbox.err, "not sent"));
+    reset(); tear_wheel = w; tear_reads = 3;
+    CHECK_EQ(ik_config_exchange(&mailbox, w, MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0, 0.01, &r), -1);
+    CHECK(strstr(mailbox.err, "baseline")); CHECK_EQ(sent, 0);
+    reset();
+    CHECK_EQ(ik_config_exchange(&mailbox, w, MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 1, 0.01, &r), -1);
+    CHECK(strstr(mailbox.err, "RESERVED_NONZERO")); CHECK_EQ(sent, 0);
+  }
+}
+
+static void test_current_mailbox_helpers(void)
+{
+  reset();
+  CHECK_EQ(ik_set_mode(&mailbox, IK_MODE_CURRENT), 0); CHECK_EQ(memory[IK_MODE][0], IK_MODE_CURRENT);
+  const int32_t currents[] = {INT32_MIN, -500, 500, INT32_MAX};
+  const int32_t expected[] = {-6000, -500, 500, 6000};
+  CHECK_EQ(ik_drive_current(&mailbox, currents, true), 0);
+  for (int w = 0; w < 4; w++) CHECK_EQ((int32_t)memory[IK_CURRENT_MA][w], expected[w]);
+  CHECK_EQ(memory[IK_ENABLE][0], 1); CHECK_EQ(memory[IK_HEARTBEAT][0], 1);
+  for (unsigned state = 1; state <= 2; state++) {
+    memory[IK_STATE][0] = state;
+    CHECK_EQ(ik_set_mode(&mailbox, IK_MODE_SPEED), -1); CHECK(strstr(mailbox.err, "not stopped"));
+    CHECK_EQ(memory[IK_MODE][0], IK_MODE_CURRENT);
+  }
+  memory[IK_STATE][0] = 0;
+  CHECK_EQ(ik_set_mode(&mailbox, 2), -1);
+  fail_sym = IK_CURRENT_MA;
+  CHECK_EQ(ik_drive_current(&mailbox, currents, true), -1);
+  CHECK_EQ(memory[IK_HEARTBEAT][0], 1);
+}
+
 int main(void)
 {
+  test_config_exchange_all_wheels(); test_current_mailbox_helpers();
   test_reject_vectors(); test_h2_arithmetic(); test_counter_snapshot();
   test_arm_speed_disable(); test_arm_failures(); test_spin_stops(); test_clear(); test_raw_mailbox();
   test_link_rows_faults(); test_wrapping_skew(); test_report_skew(); test_drive_fault_stops();

@@ -54,10 +54,11 @@ Programs (one `targets/<tool>.cmake` each):
 | Program | Role |
 |---|---|
 | `esc_update.c` | Install the ESC app over CAN or SWD, per wheel (logic in `lib/flashimg_*.c`) |
-| `esc_tool.c` | ESC setup: status, align, set, capture, spin, pulse, stop, clear |
+| `esc_tool.c` | ESC setup: status, align, acknowledged CONFIG set/get, capture, spin, pulse, stop, clear |
 | `keyboard_drive.c` | WASD/QE drive |
 | `move_test.c` | Scripted straight-line moves, logged with monotonic stamps |
 | `tune_ground.c` | Ground friction identification: breakaway and kinetic current per wheel |
+| `friction_map.c` | Guarded floor SPEED out-and-back friction map and CURRENT breakaway ramps; result.json |
 | `sweep.c` | Oblique out-and-back pulses for friction identification |
 | `fwu_image/fwu_image.c` | ESC app to Nucleo FWU payload (own CMake project) |
 
@@ -67,9 +68,12 @@ Library `lib/` (every file joins library `tools`):
 |---|---|
 | `ocd.c` | OpenOCD session: SWD read/write over its Tcl port, one process per ST-LINK serial |
 | `elfsym.c`, `crc32.c`, `sha256.c` | ELF symbol lookup, CRC-32 (IEEE, = zlib), SHA-256 |
-| `ik_link.c` | Nucleo mailbox: command words, CONFIG_SET, telemetry and protocol-link decode, fault check, capture and recorder readout |
+| `ik_link.c` | Nucleo mailbox: command words, current-mode mailbox helpers, CONFIG key names, telemetry and protocol-link decode, fault check, capture and recorder readout |
 | `esc_ctl.c` | Protocol v1 to single wheels while the drive is stopped: ARM handshake, SPEED, DISABLE, CLEAR_FAULT (frames from `motor_protocol.c`) |
 | `esc_ops.c`, `esc_defaults.c` | Breakaway timing, pulse guard and plan; ESC boot defaults from `drive_parameters.h` (generated header) |
+| `ik_config.c` | Shared CONFIG v1 exchange: fresh per-wheel sequence/key matching, status and stored/effective readback |
+| `friction_fit.c` | Pure steady-segment rejection, per-direction Coulomb/viscous least squares and consecutive motion detection |
+| `friction_run.c` | Guarded friction acquisition: plateau samples, current ramps, telemetry freshness/Vbus/speed checks and stop cleanup |
 | `pulse_run.c` | Run a plan through the Nucleo, guard it, log it, restore defaults |
 | `capture_analysis.c`, `tune_analysis.c` | Current-loop R/L/PI fit; friction fit, overshoot, acceptance |
 | `flashimg_*.c` | ESC update checks (Vbus, flash vs ELF, bus readiness) and install flow |

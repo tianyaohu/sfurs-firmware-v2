@@ -89,10 +89,11 @@ Refined during implementation (2026-10-21); same guarantees as the approved draf
 - HOLD needs the zero target and standstill to hold for 150 ms of elapsed time from the first such tick.
 - A stop cause is reported only with a real switch-off.
 
-## Not implemented yet
+## Limits of the current implementation
 
-- CURRENT mode: REJECTED(UNSUPPORTED) until Stage 5.
 - Counters (rejects, dropped replies, overflow) are ESC state, readable over SWD only.
+- CURRENT mode: the setpoint is the q-current, clamped to the effective limit (reply INHIBITED(LIMITED) when
+  clamped); no HOLD and no stall monitor in this mode; Hall loss still faults.
 
 ## Retired behaviour
 

@@ -466,6 +466,13 @@ static void move_integration(void)
   CHECK_EQ(startup_move_test_main(4, args), 1); /* missing record */
   char *removed[] = {"move_test", "--steady-rpm", "120"};
   CHECK_EQ(startup_move_test_main(3, removed), 1);
+  /* axis-dependent bounds: 2 m/s and 1 m for vx/vy, 6 rad/s and 3 rad for wz (gate point wz 4.8 rad/s) */
+  char *fast_wz[] = {"move_test", "--out", dir, "--axis", "wz", "--speed", "6.1", "--distance", "1"};
+  CHECK_EQ(startup_move_test_main(9, fast_wz), 1);
+  char *far_wz[] = {"move_test", "--out", dir, "--axis", "wz", "--speed", "4.8", "--distance", "3.1"};
+  CHECK_EQ(startup_move_test_main(9, far_wz), 1);
+  char *fast_vx[] = {"move_test", "--out", dir, "--axis", "vx", "--speed", "2.1", "--distance", "0.5"};
+  CHECK_EQ(startup_move_test_main(9, fast_vx), 1);
   CHECK_EQ(opens, 0);
   startup_calibration_t cal = startup_nominal(0);
   trace(1, 0, 0, &cal);

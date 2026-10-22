@@ -51,8 +51,13 @@ int main(int argc, char **argv)
   int rc = ik_link_open(&link, sn, elf);
   bool opened = !rc, raw_enabled = false;
   if (rc) goto done;
-  uint32_t fault;
+  uint32_t fault, state, mode;
   if (ik_read(&link, IK_FAULT, &fault) || ik_check_fault(&link, fault)) { rc = -1; goto done; }
+  if (ik_read(&link, IK_STATE, &state) ||
+      (state == 0 ? ik_set_mode(&link, IK_MODE_SPEED) : ik_read(&link, IK_MODE, &mode))) { rc = -1; goto done; }
+  if (state != 0 && mode != IK_MODE_SPEED) {
+    snprintf(link.err, sizeof link.err, "stop the current-mode session before keyboard drive"); rc = -1; goto done;
+  }
   if (ik_write(&link, IK_ACCEL_RPMPS, (uint32_t)accel_rpmps)) { rc = -1; goto done; }
   struct termios raw = saved;
   raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);

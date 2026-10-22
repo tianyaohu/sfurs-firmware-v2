@@ -72,6 +72,7 @@ static int execute(const char *sn, const char *elf, const char *out, const step_
   ik_row_t rows[IK_WHEELS];
   if (!f) { fprintf(stderr, "cannot write %s\n", out); rc = 1; goto stop; }
   if (ik_read(&l, IK_STATE, &state) || state != 0) { fprintf(stderr, "drive must be stopped before the sweep\n"); rc = 1; goto stop; }
+  if (ik_set_mode(&l, IK_MODE_SPEED)) { fprintf(stderr, "%s\n", l.err); rc = 1; goto stop; }
   uint32_t fault;
   if (ik_read(&l, IK_FAULT, &fault) || ik_check_fault(&l, fault)) {
     fprintf(stderr, "%s\n", l.err); rc = 1; goto stop;

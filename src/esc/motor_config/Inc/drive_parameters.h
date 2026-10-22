@@ -61,7 +61,7 @@
  * (Kp = L*wc, Ki = R*wc): 1 -> 3 A step rises in 188-250 us, ~2 %
  * overshoot, settled in ~0.4 ms. The Workbench values (3391/3343, for a
  * generic 0.22 Ohm / 110 uH motor) rose in 250-375 us. Tunable over CAN:
- * CONFIG_SET current_kp / current_ki. */
+ * CONFIG CURRENT_KP / CURRENT_KI (motor_protocol.h). */
 #define PID_TORQUE_KP_DEFAULT               4000
 #define PID_TORQUE_KI_DEFAULT               4400
 #define PID_TORQUE_KD_DEFAULT               100
@@ -84,7 +84,7 @@
  * Provisional, wheels raised (2026-10-16): 4096/4424 limit-cycled at +-6 A
  * (+-300 RPM at a 60 RPM command); these hold the command with Iq ~0.1 A.
  * Retune after the current loop and on the ground. Tunable over CAN
- * CONFIG_SET without reflashing. Positive: +Iq accelerates in +Hall
+ * CONFIG (motor_protocol.h) without reflashing. Positive: +Iq accelerates in +Hall
  * direction once HALL_PHASE_SHIFT is measured (CAN HALL_ALIGN). */
 #define PID_SPEED_KP_DEFAULT                1024
 #define PID_SPEED_KI_DEFAULT                553
@@ -93,7 +93,7 @@
 /* Speed loop stall handling (motor_speed.h, technical-development-plans/esc-command-v2/E-speed-loop.md).
  * Mat 2026-10-21: breakaway took 3.3-4.7 A; at 10 A/s the stuck-wheel ramp reaches 3.3 A in ~0.3 s.
  * STALL_MS: >= 80 % of the current limit with no Hall progress this long -> FAULTED(STALL).
- * CAN CONFIG_SET ESC_CFG_STALL_RAMP_MA_PER_S / ESC_CFG_STALL_MS. */
+ * CONFIG STALL_RAMP_MA_PER_S / STALL_MS (motor_protocol.h). */
 #define SPEED_STALL_RAMP_MA_PER_S_DEFAULT   10000
 #define SPEED_STALL_MS_DEFAULT              500
 

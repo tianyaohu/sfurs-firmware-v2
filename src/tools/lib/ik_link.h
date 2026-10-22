@@ -4,7 +4,7 @@
  *
  * Resolves the ik_drive_* mailbox and telemetry rows from the flashed ELF,
  * writes setpoints and the heartbeat, sends one-shot raw ESC frames and decodes
- * per-wheel telemetry. CAN ids and keys come from can_datatypes.h, so a
+ * per-wheel telemetry. CAN IDs and keys come from the shared protocol headers, so a
  * protocol change is a compile error here, not silent drift.
  */
 #ifndef IK_LINK_H
@@ -15,13 +15,14 @@
 #include <stdint.h>
 
 #include "ocd.h"
+#include "motor_protocol.h"
 
-#define IK_ABI 0x494B0007U
+#define IK_ABI 0x494B0008U
 #define IK_WHEELS 4
 #define IK_RECORD_CHANNELS 8
 #define IK_CAPTURE_READ_MAX 32U
 #define IK_ROW_WORDS 19
-#define IK_LINK_WORDS 19
+#define IK_LINK_WORDS 25
 #define IK_LAT_BINS 16
 #define IK_LINK_NONE 0xFFU
 #define IK_DEFAULT_SN "002200364142500620353451"
@@ -40,13 +41,14 @@ typedef enum {
   IK_TELEM, IK_CAPTURE, IK_RAW_DATA_HI, IK_RAW_LEN, IK_CLEAR_SEQ, IK_CLEAR_DONE,
   IK_FAULT, IK_ARMED, IK_LINK, IK_FF_ENABLE, IK_FF_COULOMB_XY_MN,
   IK_FF_VISCOUS_XY_MN_PER_MPS, IK_FF_COULOMB_W_MNM, IK_FF_VISCOUS_W_MNM_PER_RADPS,
-  IK_FF_A_PER_NM_MILLI, IK_FF_SCALE_PCT, IK_FF_MA, IK_REPLY_LAT_HIST, IK_REPLY_LAT_MAX_US, IK_SYM_COUNT
+  IK_FF_A_PER_NM_MILLI, IK_FF_SCALE_PCT, IK_FF_MA, IK_REPLY_LAT_HIST, IK_REPLY_LAT_MAX_US, IK_MODE, IK_CURRENT_MA, IK_SYM_COUNT
 } ik_sym_t;
 
 typedef struct {
   ocd_t *ocd;
   uint32_t addr[IK_SYM_COUNT];
   uint32_t heartbeat;
+  uint8_t config_seq;
   char err[256];
 } ik_link_t;
 
@@ -71,6 +73,8 @@ typedef struct {
   uint32_t reply_count, reply_us, misses, rejects, start_count, start_reply_us, first_start_reply_us;
   bool first_start_valid; /**< first_start_reply_us belongs to this drive session */
   uint32_t fault_reason;  /**< reason latched with the wheel's fault bit (0 for LOST) */
+  uint32_t cfg_count, cfg_seq, cfg_status, cfg_key;
+  int32_t cfg_stored, cfg_effective;
   const char *lifecycle_name, *outcome_name, *reason_name, *fault_reason_name;
 } ik_link_row_t;
 
@@ -140,7 +144,7 @@ int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS]);
 /** @brief Read one seqlocked reply row (wheel 0..3); reply clocks are wrapping microseconds. */
 int ik_link_row(ik_link_t *l, int wheel, ik_link_row_t *row);
 /** @brief Decode IK_LINK_WORDS mailbox words, including stable protocol names.
- * @param words Stable mailbox words, in ABI 7 order; clocks are wrapping microseconds.
+ * @param words Stable mailbox words, in ABI 8 order; clocks are wrapping microseconds.
  * @param row Decoded row; rpm is mechanical RPM and iq_ma is q-current in mA.
  */
 void ik_decode_link_row(const uint32_t words[IK_LINK_WORDS], ik_link_row_t *row);
@@ -161,7 +165,7 @@ int ik_send_raw(ik_link_t *l, uint32_t can_id, uint32_t word, double timeout_s);
 /** @brief Send 8 CAN payload bytes while STOPPED.
  * @param l Open mailbox link.
  * @param can_id 11-bit CAN ID.
- * @param data Eight payload bytes from the shared codec for CONTROL frames.
+ * @param data Eight payload bytes (CONTROL and CONFIG use the shared codec).
  * @param timeout_s Maximum wait for raw_done, seconds.
  * @return 0 on transmission, -1 with l->err on failure.
  */
@@ -172,11 +176,29 @@ int ik_capture_start_word(int step_ma, uint32_t *word);
 int ik_capture_read_word(int bank, int first, int count, uint32_t *word);
 int ik_record_start_word(int pre, int delay_ms, uint32_t *word);
 int ik_record_read_word(int bank, int first, int count, bool ch67, uint32_t *word);
-/** @brief CONFIG_SET frame for a named key. Returns 0, or -1 for an unknown key or value outside int16. */
-int ik_config_frame(uint32_t selector, const char *key, int value, uint32_t *can_id, uint32_t *word);
-/** @brief Number of CONFIG_SET keys and their names (for help text and tests). */
+/** @brief Resolve a canonical CONFIG key name or numeric ID (base 0), or -1. */
+int ik_config_key(const char *key, uint16_t *id);
+/** @brief Number of CONFIG keys and their canonical names. */
 size_t ik_config_key_count(void);
 const char *ik_config_key_name(size_t i, int *number);
+/** @brief CONFIG status name: OK, protocol reason, UNKNOWN_KEY, BAD_VALUE or UNKNOWN. */
+const char *ik_config_status_name(uint32_t status);
+/** @brief Send CONFIG while stopped and wait for a fresh matching wheel/seq/key reply.
+ * @param wheel Mailbox index FR/BR/BL/FL = 0/1/2/3.
+ * @param op MOTOR_CONFIG_SET or MOTOR_CONFIG_GET; GET requires value zero.
+ * @param key Protocol key ID; ik_config_key resolves names and numeric strings.
+ * @param value Signed 16-bit wire value (validated before narrowing).
+ * @param timeout_s Total exchange deadline in seconds.
+ * @param reply Filled on a matching reply, including refused requests; zeroed on transport failure.
+ * @return 0 for status OK; -1 for timeout, transport error or refusal with named status in l->err.
+ */
+int ik_config_exchange(ik_link_t *l, int wheel, int op, uint16_t key, int value,
+                       double timeout_s, struct motor_config_reply *reply);
+/** @brief Select SPEED=0 or CURRENT=1 only while IK_STOPPED; invalid modes are refused. */
+enum { IK_MODE_SPEED = 0, IK_MODE_CURRENT = 1 };
+int ik_set_mode(ik_link_t *l, unsigned mode);
+/** @brief Publish four q-current setpoints (mA, clamped to +/-6000), then bump heartbeat/enable. */
+int ik_drive_current(ik_link_t *l, const int32_t current_ma[IK_WHEELS], bool enable);
 
 /** @brief Decode one recorder sample into physical units. */
 void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u);

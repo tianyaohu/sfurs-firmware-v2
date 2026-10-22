@@ -116,6 +116,30 @@ static void flush(void) { drive_app_poll(send); sent_id = 0; frames = 0; }
 static struct motor_reply last_reply(void) { CHECK(ctl_seen); ctl_seen = 0; return ctl_last; }
 #define last_reply_rpm (ctl_last.rpm)
 static double shift_deg(void) { return HALL_M1.PhaseShift * 360.0 / 65536.0; }
+/* One CONFIG frame (real codec), one tick, then the CONFIG_REPLY it produced. */
+static uint8_t cfg_seq;
+static struct motor_config_reply cfg_raw(uint32_t id, const uint8_t d[8])
+{
+  drive_app_can_rx(id, d, 8); tick(1);
+  frames = 0; drive_app_poll(send);
+  struct motor_config_reply r = { .status = 0xFF };
+  int seen = 0;
+  for (unsigned k = 0; k < frames && k < 64; ++k)
+    if (frame_id[k] == (MOTOR_CAN_ID_CONFIG_REPLY | MOTOR_CAN_ID)) {
+      CHECK(motor_config_reply_decode(frame[k], 8, &r) == MOTOR_R_NONE); ++seen;
+    }
+  CHECK(seen == 1);
+  return r;
+}
+static struct motor_config_reply cfg(uint8_t op, uint16_t key, int16_t value)
+{
+  const struct motor_config c = { op, ++cfg_seq, key, value };
+  uint32_t id; uint8_t d[8];
+  CHECK(motor_config_encode(&c, MOTOR_CAN_ID, &id, d) == MOTOR_R_NONE);
+  const struct motor_config_reply r = cfg_raw(id, d);
+  CHECK(r.seq == cfg_seq && r.key == key);
+  return r;
+}
 
 static void setup(int scenario)
 {
@@ -234,29 +258,46 @@ static void test_i2t_derates_and_recovers(void)
 
 static void test_config_only_when_idle(void)
 {
-  setup(7); /* CONFIG_SET only when idle */
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)5000 << 16) | ESC_CFG_SPEED_KP); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)-30 << 16) | ESC_CFG_HALL_SHIFT_DEG); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)4000 << 16) | ESC_CFG_IQ_MAX_MA); tick(1);
+  setup(7); /* CONFIG: acknowledged, read back, only when idle */
+  struct motor_config_reply r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_SPEED_KP, 5000);
+  CHECK(r.status == 0 && r.stored == 5000 && r.effective == 5000);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_HALL_SHIFT_DEG, -30).stored == -30);
+  r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_IQ_LIMIT_MA, 4000);
+  CHECK(r.status == 0 && r.stored == 4000 && r.effective == 4000);
   CHECK(drive_speed.cfg.kp == 5000 && fabs(shift_deg() + 30.0) < 0.01 && drive_app.aligned);
   CHECK(drive_app.iq_limit_counts == 2176);
   flush(); drive_app_poll(send); CHECK(sent_id == 0); /* nothing unsolicited */
   rx(DIAG_READ | MOTOR_CAN_ID, 0); drive_app_poll(send);
   CHECK(sent_id == (DIAG_REPLY | MOTOR_CAN_ID) && f16(sent + 4) == -30 && sent[6] == ESC_ALIGN_NONE);
   CHECK((sent[0] | sent[1] << 8) == 1236); /* 23831 * 34 * 100 / 65536 centivolts */
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)9000 << 16) | ESC_CFG_IQ_MAX_MA); tick(1);
-  CHECK(drive_app.iq_limit_counts == 2176 && drive_app.rejected == 1);
+  r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_IQ_LIMIT_MA, 9000); /* above IQMAX: refused, nothing changes */
+  CHECK(r.status == MOTOR_CFG_BAD_VALUE && r.stored == 4000 && drive_app.iq_limit_counts == 2176);
+  CHECK(drive_app.rejected == 1);
+  drive_app.derated = 1; /* the effective limit reports the I2T derate */
+  r = cfg(MOTOR_CONFIG_GET, MOTOR_CFG_IQ_LIMIT_MA, 0);
+  CHECK(r.status == 0 && r.stored == 4000 && r.effective == 3000);
+  drive_app.derated = 0;
+  CHECK(cfg(MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0).stored == 5000);
+  CHECK(cfg(MOTOR_CONFIG_SET, 0x0777, 1).status == MOTOR_CFG_UNKNOWN_KEY && drive_app.rejected == 2);
   arm(); speed_cmd(100); tick(3); CHECK(state == RUN);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)7000 << 16) | ESC_CFG_SPEED_KP); tick(1);
-  CHECK(drive_speed.cfg.kp == 5000 && drive_app.rejected == 2);
+  r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_SPEED_KP, 7000); /* running: refused, value reported */
+  CHECK(r.status == MOTOR_R_NOT_IDLE && r.stored == 5000 && drive_speed.cfg.kp == 5000);
+  CHECK(cfg(MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0).status == MOTOR_R_NOT_IDLE && drive_app.rejected == 4);
   rx(HALL_ALIGN | MOTOR_CAN_ID, HALL_ALIGN_MAGIC); tick(1); CHECK(drive_app.align_phase == 0);
   disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)1500 << 16) | ESC_CFG_CURRENT_KP); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)900 << 16) | ESC_CFG_CURRENT_KI); tick(1);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_CURRENT_KP, 1500).status == 0);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_CURRENT_KI, 900).stored == 900);
   CHECK(PIDIqHandle_M1.kp == 1500 && PIDIdHandle_M1.kp == 1500);
   CHECK(PIDIqHandle_M1.ki == 900 && PIDIdHandle_M1.ki == 900);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)-5 << 16) | ESC_CFG_CURRENT_KP); tick(1);
-  CHECK(PIDIqHandle_M1.kp == 1500 && drive_app.rejected == 4);
+  r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_CURRENT_KP, -5);
+  CHECK(r.status == MOTOR_CFG_BAD_VALUE && r.stored == 1500 && PIDIqHandle_M1.kp == 1500);
+  CHECK(drive_app.rejected == 6); /* 4 config refusals + the align refused while running + this */
+  /* structural rejects are answered with their reason; a short frame is not answered at all */
+  const uint8_t bad_op[8] = { 0x13, 0x41, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00 };
+  r = cfg_raw(MOTOR_CAN_ID_CONFIG | MOTOR_CAN_ID, bad_op);
+  CHECK(r.status == MOTOR_R_BAD_MODE && r.seq == 0x41 && r.key == MOTOR_CFG_SPEED_KP && r.stored == 5000);
+  drive_app_can_rx(MOTOR_CAN_ID_CONFIG | MOTOR_CAN_ID, bad_op, 4); tick(1);
+  frames = 0; drive_app_poll(send); CHECK(frames == 0);
 }
 
 static void test_stop_aborts_alignment(void)
@@ -348,25 +389,27 @@ static void test_capture_stop_and_busy(void)
   CHECK(drive_app.capture_status == ESC_CAPTURE_ABORTED && state == IDLE && !drive_align_force);
 }
 
-/* Speed-loop keys 25/26 with their bounds; the retired keys 7-24 are rejected. */
+/* Stall keys with their bounds; the retired 4-byte CONFIG_SET frame is ignored. */
 static void test_speed_config_keys(void)
 {
   setup(13);
-  for (uint32_t key = 7; key <= 24; ++key) { rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | key); tick(1); }
-  CHECK(drive_app.rejected == 18);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (1999U << 16) | ESC_CFG_STALL_RAMP_MA_PER_S); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (30001U << 16) | ESC_CFG_STALL_RAMP_MA_PER_S); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (199U << 16) | ESC_CFG_STALL_MS); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (2001U << 16) | ESC_CFG_STALL_MS); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)-1 << 16) | ESC_CFG_SPEED_KI); tick(1);
-  CHECK(drive_app.rejected == 23);
+  rx((10U << 7) | MOTOR_CAN_ID, (1000U << 16) | 1U); tick(1); /* old CONFIG_SET Kp = 1000 */
+  frames = 0; drive_app_poll(send);
+  CHECK(frames == 0 && drive_speed.cfg.kp == PID_SPEED_KP_DEFAULT && drive_app.rejected == 0);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_STALL_RAMP_MA_PER_S, 1999).status == MOTOR_CFG_BAD_VALUE);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_STALL_RAMP_MA_PER_S, 30001).status == MOTOR_CFG_BAD_VALUE);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_STALL_MS, 199).status == MOTOR_CFG_BAD_VALUE);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_STALL_MS, 2001).status == MOTOR_CFG_BAD_VALUE);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_SPEED_KI, -1).status == MOTOR_CFG_BAD_VALUE);
+  CHECK(drive_app.rejected == 5);
   CHECK(drive_speed.cfg.stall_ramp_ma_per_s == SPEED_STALL_RAMP_MA_PER_S_DEFAULT);
   CHECK(drive_speed.cfg.stall_ms == SPEED_STALL_MS_DEFAULT && drive_speed.cfg.ki == PID_SPEED_KI_DEFAULT);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (12000U << 16) | ESC_CFG_STALL_RAMP_MA_PER_S); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (800U << 16) | ESC_CFG_STALL_MS); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (2048U << 16) | ESC_CFG_SPEED_KP); tick(1);
-  CHECK(drive_app.rejected == 23 && drive_speed.cfg.stall_ms == 800 && drive_speed.cfg.kp == 2048);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_STALL_RAMP_MA_PER_S, 12000).stored == 12000);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_STALL_MS, 800).stored == 800);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_SPEED_KP, 2048).stored == 2048);
+  CHECK(drive_app.rejected == 5 && drive_speed.cfg.stall_ms == 800 && drive_speed.cfg.kp == 2048);
   CHECK(drive_speed.stall_step_q14 == 106955); /* 12 A/s: 12000 * 544 * 16384 / 1e6, rounded */
+  CHECK(cfg(MOTOR_CONFIG_GET, MOTOR_CFG_STALL_RAMP_MA_PER_S, 0).stored == 12000);
 }
 
 /* Zero target at standstill: HOLD keeps the bridge on at Iq 0 and resumes without an MCSDK start. */
@@ -389,6 +432,39 @@ static void test_holds_at_zero_command(void)
   CHECK(drive_cmd.lifecycle == MOTOR_LC_HOLD);
   disable(MOTOR_CAN_ID); tick(3);
   CHECK(state == IDLE && !drive_app.active && drive_app.stop_reason == ESC_STOP_COMMAND);
+}
+
+/* CURRENT mode: the setpoint is the q-current, clamped to the (derated) limit; the speed loop and its stall
+ * monitor stay out, so a wheel held still never faults. */
+static void test_current_mode_drives_q_current(void)
+{
+  setup(19);
+  drive_app.aligned = 1;
+  arm(); ctl(MOTOR_MODE_CURRENT, 0, 1500, ++ctl_seq, MOTOR_CAN_ID); tick(5);
+  CHECK(state == RUN && drive_cmd.lifecycle == MOTOR_LC_RUNNING && drive_cmd.mode == MOTOR_MODE_CURRENT);
+  CHECK(iqdref.q == 1500 * 544 / 1000 && iqdref.d == 0);
+  for (int i = 0; i < 100; ++i) { ctl(MOTOR_MODE_CURRENT, 0, 1500, ++ctl_seq, MOTOR_CAN_ID); tick(20); }
+  CHECK(drive_cmd.lifecycle == MOTOR_LC_RUNNING && iqdref.q == 816); /* 2 s without an edge: no stall */
+  drive_app.iq_limit_counts = 3 * 544; /* as after an I2T derate */
+  ctl(MOTOR_MODE_CURRENT, 0, 5000, ++ctl_seq, MOTOR_CAN_ID); tick(2);
+  CHECK(iqdref.q == 3 * 544 && last_reply().reason == MOTOR_R_LIMITED);
+  ctl(MOTOR_MODE_CURRENT, 0, -5000, ++ctl_seq, MOTOR_CAN_ID); tick(2);
+  CHECK(iqdref.q == -3 * 544);
+  for (int i = 0; i < 10; ++i) { ctl(MOTOR_MODE_CURRENT, 0, 0, ++ctl_seq, MOTOR_CAN_ID); tick(20); }
+  CHECK(drive_cmd.lifecycle == MOTOR_LC_RUNNING && iqdref.q == 0); /* zero current is a command, not HOLD */
+  /* I2T in current mode: a held 6 A request derates the clamp to 3 A on its own, then recovers. */
+  drive_app.iq_limit_counts = drive_app.iq_max_counts; /* undo the manual derate above */
+  iqd.q = 6 * 544; /* what the current loop then measures */
+  int t = 0;
+  while (!drive_app.derated && t < 3000) { ctl(MOTOR_MODE_CURRENT, 0, 6000, ++ctl_seq, MOTOR_CAN_ID); tick(20); t += 20; }
+  printf("current mode derated after %d ms\n", t);
+  CHECK(drive_app.derated && t > 1000 && t < 1400 && iqdref.q == 3 * 544);
+  iqd.q = 2 * 544; t = 0;
+  while (drive_app.derated && t < 10000) { ctl(MOTOR_MODE_CURRENT, 0, 6000, ++ctl_seq, MOTOR_CAN_ID); tick(20); t += 20; }
+  CHECK(!drive_app.derated);
+  ctl(MOTOR_MODE_CURRENT, 0, 6000, ++ctl_seq, MOTOR_CAN_ID); tick(2);
+  CHECK(iqdref.q == 6 * 544); /* full limit back */
+  disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);
 }
 
 /* Torque mode: Iq 0 programmed before the start, the loop's request published in RUN; stall and Hall
@@ -522,6 +598,7 @@ int main(int argc, char **argv)
     { "test_speed_config_keys", test_speed_config_keys },
     { "test_holds_at_zero_command", test_holds_at_zero_command },
     { "test_speed_loop_drives_and_faults", test_speed_loop_drives_and_faults },
+    { "test_current_mode_drives_q_current", test_current_mode_drives_q_current },
     { "test_speed_loop_recorder", test_speed_loop_recorder },
     { "test_recorder_idle_arm_and_early_stop", test_recorder_idle_arm_and_early_stop },
   };

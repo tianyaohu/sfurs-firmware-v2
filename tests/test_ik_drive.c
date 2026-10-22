@@ -65,9 +65,9 @@ static void setup(void)
 {
   for (unsigned w = 0; w < 4U; ++w) {
     const struct motor_cmd_config cfg = { .select = 1U << w, .max_rpm = 2976, .max_ma = 6000,
-                                          .current_supported = 0U };
+                                          .current_supported = 1U };
     motor_cmd_init(&esc[w], &cfg, 100U + w);
-    esc_in[w] = (struct motor_cmd_inputs){ .mc = MOTOR_CMD_MC_IDLE, .aligned = 1U };
+    esc_in[w] = (struct motor_cmd_inputs){ .mc = MOTOR_CMD_MC_IDLE, .aligned = 1U, .limit_ma = 6000 };
   }
 }
 
@@ -357,6 +357,55 @@ static void test_lost_start_reply_stays_invalid(void)
   for (unsigned i = 1; i < 4; ++i) CHECK(ik_drive_link[i].first_start_valid == 1U);
 }
 
+/* Current mode: per-wheel CURRENT frames with the clamped setpoints once all four are armed; 0 on release. */
+static void test_current_mode_frames(void)
+{
+  setup();
+  ik_drive_mode = IK_MODE_CURRENT;
+  const int32_t want[4] = {1000, -1000, 7000, 0}, sent_ma[4] = {1000, -1000, 6000, 0};
+  for (unsigned w = 0; w < 4U; ++w) ik_drive_current_ma[w] = want[w];
+  ik_drive_enable = 1; run(200, 1);
+  for (unsigned w = 0; w < 4U; ++w) {
+    struct motor_control c = {0};
+    unsigned k = count;
+    while (k-- > 0) if (ids[k] == (MOTOR_CAN_ID_CONTROL | (1U << w)) && decode(k, &c) && c.mode != MOTOR_MODE_DISABLE) break;
+    CHECK(c.mode == MOTOR_MODE_CURRENT && c.setpoint == sent_ma[w] && c.ff_ma == 0);
+    CHECK(esc[w].mode == MOTOR_MODE_CURRENT || want[w] == 0);
+  }
+  CHECK(ik_drive_rpm[0] == 0 && ik_drive_bad_input == 0U);
+  ik_drive_enable = 0; run(60, 1);
+  for (unsigned w = 0; w < 4U; ++w) {
+    struct motor_control c = {0};
+    unsigned k = count;
+    while (k-- > 0) if (ids[k] == (MOTOR_CAN_ID_CONTROL | (1U << w)) && decode(k, &c) && c.mode == MOTOR_MODE_CURRENT) break;
+    CHECK(c.setpoint == 0); /* released: zero current before the stop */
+  }
+  ik_drive_mode = IK_MODE_SPEED;
+}
+
+/* CONFIG_REPLY from each wheel lands in that wheel's link row; malformed or foreign replies change nothing. */
+static void test_config_reply_stored(void)
+{
+  setup();
+  for (unsigned w = 0; w < 4U; ++w) {
+    const struct motor_config_reply r = { (uint8_t)(10 + w), w == 2U ? MOTOR_CFG_BAD_VALUE : 0U,
+                                          MOTOR_CFG_IQ_LIMIT_MA, (int16_t)(4000 + w), (int16_t)(3000 + w) };
+    uint8_t d[8];
+    motor_config_reply_encode(&r, d);
+    CHECK(ik_drive_rx(MOTOR_CAN_ID_CONFIG_REPLY | (1U << w), d, 8U, 0U) == 1);
+    CHECK(ik_drive_link[w].cfg_count == 1U && ik_drive_link[w].cfg_seq == 10U + w);
+    CHECK(ik_drive_link[w].cfg_status == (w == 2U ? MOTOR_CFG_BAD_VALUE : 0U));
+    CHECK(ik_drive_link[w].cfg_key == MOTOR_CFG_IQ_LIMIT_MA);
+    CHECK(ik_drive_link[w].cfg_stored == 4000 + (int32_t)w && ik_drive_link[w].cfg_effective == 3000 + (int32_t)w);
+    CHECK((ik_drive_link[w].generation & 1U) == 0U);
+    CHECK(ik_drive_rx(MOTOR_CAN_ID_CONFIG_REPLY | (1U << w), d, 4U, 0U) == 1); /* ours, malformed: ignored */
+    CHECK(ik_drive_link[w].cfg_count == 1U);
+  }
+  uint8_t d[8] = {0};
+  CHECK(ik_drive_rx(MOTOR_CAN_ID_CONFIG_REPLY | 0x3U, d, 8U, 0U) == 1); /* no single wheel */
+  for (unsigned w = 0; w < 4U; ++w) CHECK(ik_drive_link[w].cfg_count == 1U);
+}
+
 static void test_reply_latency_histogram(void)
 {
   setup(); /* each reply lands in its latency bin; replies to other frames are not timed */
@@ -400,6 +449,8 @@ int main(int argc, char **argv)
     { "feed_forward_rides_in_speed_frames", test_feed_forward_rides_in_speed_frames },
     { "lost_start_reply_stays_invalid", test_lost_start_reply_stays_invalid },
     { "reply_latency_histogram", test_reply_latency_histogram },
+    { "config_reply_stored", test_config_reply_stored },
+    { "current_mode_frames", test_current_mode_frames },
   };
   const char *name = argc == 2 ? argv[1] : cases[0].name;
   for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i)

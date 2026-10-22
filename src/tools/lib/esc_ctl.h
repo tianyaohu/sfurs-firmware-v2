@@ -18,7 +18,7 @@ typedef struct {
 
 /** @brief Initialize per-wheel sessions/sequences.
  * @param ctl Control state, owned by the caller.
- * @param link Open ABI 7 mailbox link.
+ * @param link Open ABI 8 mailbox link.
  * @param timeout_s Timeout per mailbox/reply wait, seconds.
  */
 void esc_ctl_init(esc_ctl_t *ctl, ik_link_t *link, double timeout_s);

@@ -14,7 +14,7 @@
 
 #define PULSE_MAX_KEYS 8
 
-/** Per-wheel RAM settings sent before the run (CONFIG_SET keys; defaults restored after). */
+/** Per-wheel RAM settings sent before the run (CONFIG keys; defaults restored after). */
 typedef struct {
   size_t n_keys;
   const char *keys[PULSE_MAX_KEYS];
@@ -42,7 +42,7 @@ double pulse_now_s(void);
 void pulse_sleep_s(double s);
 
 /**
- * @brief Wait until the given wheels report IDLE: CONFIG_SET is dropped in any other
+ * @brief Wait until the given wheels report IDLE: CONFIG is refused in any other
  *        state, and STOP -> IDLE takes ~0.7 s after a parked or aborted run.
  */
 int pulse_wait_idle(ik_link_t *l, const int *wheel_indices, int n, double timeout_s);

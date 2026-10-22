@@ -397,6 +397,36 @@ static void test_holds_at_zero_and_resumes(void)
   CHECK_EQ(m.latched, MOTOR_R_FAULT_MCSDK);
 }
 
+/* CURRENT mode: starts like SPEED, LIMITED above the effective limit (still applied, the caller clamps),
+ * no mode change while running, and no HOLD at zero current (that is a legitimate command). */
+static void test_current_mode(void)
+{
+  const struct motor_cmd_config cfg = { .select = select_bit, .max_rpm = 2976, .max_ma = 6000,
+                                        .current_supported = 1 };
+  motor_cmd_init(&m, &cfg, 1234U);
+  in.limit_ma = 3000;
+  arm(); tick();
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_READY);
+  send(MOTOR_MODE_CURRENT, 0, 1000, 0, ++seq, m.session, select_bit); tick();
+  expect(seq, MOTOR_OUT_INHIBITED, MOTOR_R_STARTING, MOTOR_LC_STARTING);
+  CHECK(act.start && act.mode == MOTOR_MODE_CURRENT && act.setpoint == 1000);
+  settle();
+  send(MOTOR_MODE_CURRENT, 0, 1000, 0, ++seq, m.session, select_bit); tick();
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
+  send(MOTOR_MODE_CURRENT, 0, -4000, 0, ++seq, m.session, select_bit); tick();
+  expect(seq, MOTOR_OUT_INHIBITED, MOTOR_R_LIMITED, MOTOR_LC_RUNNING);
+  CHECK(act.set_target && act.setpoint == -4000 && act.mode == MOTOR_MODE_CURRENT);
+  send(MOTOR_MODE_SPEED, 0, 100, 0, ++seq, m.session, select_bit); tick();
+  expect(seq, MOTOR_OUT_REJECTED, MOTOR_R_MODE_CHANGE, MOTOR_LC_RUNNING);
+  in.standstill = 1U;
+  for (unsigned t = 0; t < 400U; ++t) {
+    if (t % 20U == 0U) send(MOTOR_MODE_CURRENT, 0, 0, 0, ++seq, m.session, select_bit);
+    tick();
+    drain_replies();
+    CHECK_EQ(m.lifecycle, MOTOR_LC_RUNNING);
+  }
+}
+
 static void test_capabilities_and_limits(void)
 {
   arm(); tick(); drain_replies();
@@ -532,6 +562,7 @@ static const struct { const char *name; void (*fn)(void); } cases[] = {
   { "start_timeout_faults", test_start_timeout_faults },
   { "mcsdk_leaving_run_faults", test_mcsdk_leaving_run_faults },
   { "speed_loop_faults", test_speed_loop_faults },
+  { "current_mode", test_current_mode },
   { "holds_at_zero_and_resumes", test_holds_at_zero_and_resumes },
   { "capabilities_and_limits", test_capabilities_and_limits },
   { "not_aligned_and_busy", test_not_aligned_and_busy },

@@ -1,6 +1,9 @@
 /* ik_link.c: command words, config frames, telemetry decode, and the SWD
  * mailbox through the fake OpenOCD with a host ELF that carries the ik_drive_*
  * symbols. The constants cannot drift from the firmware: ik_link.c includes can_datatypes.h. */
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,40 +42,44 @@ static void test_capture_words(void)
   CHECK(ik_capture_read_word(0, 0, 33, &w) != 0);
 }
 
-static void test_config_frames_for_all_wheels(void)
+static void test_config_keys(void)
 {
-  for (int i = 0; i < IK_WHEELS; i++) {
-    uint32_t id, word;
-    CHECK_EQ(ik_config_frame(IK_WHEEL_SELECT[i], "kp", -2, &id, &word), 0);
-    CHECK_EQ(id, CONFIG_SET | IK_WHEEL_SELECT[i]);
-    CHECK_EQ(word, 1U | 0xFFFEU << 16); /* int16 two's complement in the high half */
-  }
-  uint32_t id, word;
-  CHECK(ik_config_frame(1, "nope", 0, &id, &word) != 0);
-  CHECK(ik_config_frame(1, "kp", 40000, &id, &word) != 0);
-  /* Settable keys are exactly can_datatypes.h's ESC_CFG_*; retired 7-24 are not offered. */
   const struct { const char *name; int number; } want[] = {
-      {"kp", ESC_CFG_SPEED_KP}, {"ki", ESC_CFG_SPEED_KI}, {"shift", ESC_CFG_HALL_SHIFT_DEG},
-      {"iqmax_ma", ESC_CFG_IQ_MAX_MA}, {"current_kp", ESC_CFG_CURRENT_KP}, {"current_ki", ESC_CFG_CURRENT_KI},
-      {"stall_ramp_ma_per_s", ESC_CFG_STALL_RAMP_MA_PER_S}, {"stall_ms", ESC_CFG_STALL_MS}};
-  CHECK_EQ(ik_config_key_count(), sizeof want / sizeof want[0]);
+      {"kp", MOTOR_CFG_SPEED_KP}, {"ki", MOTOR_CFG_SPEED_KI}, {"hall_shift_deg", MOTOR_CFG_HALL_SHIFT_DEG},
+      {"iq_limit_ma", MOTOR_CFG_IQ_LIMIT_MA}, {"current_kp", MOTOR_CFG_CURRENT_KP}, {"current_ki", MOTOR_CFG_CURRENT_KI},
+      {"stall_ramp_ma_per_s", MOTOR_CFG_STALL_RAMP_MA_PER_S}, {"stall_ms", MOTOR_CFG_STALL_MS}};
+  CHECK_EQ(ik_config_key_count(), sizeof want / sizeof *want);
   for (size_t k = 0; k < ik_config_key_count(); k++) {
-    int number;
+    int number; uint16_t id;
     CHECK(!strcmp(ik_config_key_name(k, &number), want[k].name));
     CHECK_EQ(number, want[k].number);
-    CHECK(number < 7 || number > 24);
+    CHECK_EQ(ik_config_key(want[k].name, &id), 0); CHECK_EQ(id, number);
   }
+  uint16_t id;
+  CHECK_EQ(ik_config_key("0x0105", &id), 0); CHECK_EQ(id, MOTOR_CFG_STALL_MS);
+  const char *bad[] = {"nope", "", "-1", "65536", "1x", "ff_static_ma", "shift", "iqmax_ma"};
+  for (size_t k = 0; k < sizeof bad / sizeof *bad; k++) CHECK(ik_config_key(bad[k], &id) != 0);
   CHECK(ik_config_key_name(ik_config_key_count(), NULL) == NULL);
-  CHECK_EQ(ESC_CFG_STALL_RAMP_MA_PER_S, 25);
-  CHECK_EQ(ESC_CFG_STALL_MS, 26);
-  for (int i = 0; i < IK_WHEELS; i++) {
-    CHECK_EQ(ik_config_frame(IK_WHEEL_SELECT[i], "stall_ramp_ma_per_s", 30000, &id, &word), 0);
-    CHECK_EQ(id, CONFIG_SET | IK_WHEEL_SELECT[i]);
-    CHECK_EQ(word, 25U | 30000U << 16);
-    CHECK_EQ(ik_config_frame(IK_WHEEL_SELECT[i], "stall_ms", 500, &id, &word), 0);
-    CHECK_EQ(word, 26U | 500U << 16);
+  CHECK(!strcmp(ik_config_status_name(0), "OK"));
+  CHECK(!strcmp(ik_config_status_name(MOTOR_CFG_UNKNOWN_KEY), "UNKNOWN_KEY"));
+  CHECK(!strcmp(ik_config_status_name(MOTOR_CFG_BAD_VALUE), "BAD_VALUE"));
+  CHECK(!strcmp(ik_config_status_name(MOTOR_R_NOT_IDLE), "NOT_IDLE"));
+}
+
+static void test_link_decode(void)
+{
+  CHECK_EQ(IK_ABI, 0x494B0008U); CHECK_EQ(IK_LINK_WORDS, 25);
+  for (int wheel = 0; wheel < 4; wheel++) {
+    uint32_t words[IK_LINK_WORDS] = {0};
+    words[8] = (uint32_t)-123; words[9] = (uint32_t)-450;
+    words[19] = 42 + wheel; words[20] = 255; words[21] = MOTOR_CFG_BAD_VALUE;
+    words[22] = MOTOR_CFG_HALL_SHIFT_DEG; words[23] = (uint32_t)-64; words[24] = (uint32_t)-63;
+    ik_link_row_t row; ik_decode_link_row(words, &row);
+    CHECK(row.valid); CHECK_EQ(row.rpm, -123); CHECK_EQ(row.iq_ma, -450);
+    CHECK_EQ(row.cfg_count, 42 + wheel); CHECK_EQ(row.cfg_seq, 255);
+    CHECK_EQ(row.cfg_status, MOTOR_CFG_BAD_VALUE); CHECK_EQ(row.cfg_key, MOTOR_CFG_HALL_SHIFT_DEG);
+    CHECK_EQ(row.cfg_stored, -64); CHECK_EQ(row.cfg_effective, -63);
   }
-  CHECK(ik_config_frame(1, "ff_static_ma", 0, &id, &word) != 0); /* retired key 7 */
 }
 
 static void test_unpack_record(void)
@@ -223,14 +230,24 @@ static void test_missing_symbols_are_reported(void)
   CHECK(strstr(err, "missing"));
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+  if (argc > 1 && !strcmp(argv[1], "--rpc")) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    bool available = fd >= 0 && bind(fd, (struct sockaddr *)&a, sizeof a) == 0;
+    if (fd >= 0) close(fd);
+    if (!available) { puts("SKIP: sandbox denies loopback sockets needed by OpenOCD RPC"); return 77; }
+    test_mailbox_over_fake_openocd();
+    puts("ik_link RPC: 1 test case passed");
+    return 0;
+  }
   test_record_words();
   test_capture_words();
-  test_config_frames_for_all_wheels();
+  test_config_keys();
+  test_link_decode();
   test_unpack_record();
   test_decode_row();
-  test_mailbox_over_fake_openocd();
   test_missing_symbols_are_reported();
   printf("ok\n");
   return 0;

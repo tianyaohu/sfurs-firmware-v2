@@ -70,6 +70,7 @@ struct motor_cmd_inputs {
                              speed-feedback fault (with mc FAULT it names the fault HALL_LOST) */
   int16_t rpm;          /**< speed estimate, RPM */
   int16_t iq_ma;        /**< measured q-axis current, mA */
+  int16_t limit_ma;     /**< effective q-current limit (configured or I2T-derated), mA */
   uint16_t edges_pos;   /**< Hall edges counted in + direction (wrapping) */
   uint16_t edges_neg;   /**< Hall edges counted in - direction (wrapping) */
 };

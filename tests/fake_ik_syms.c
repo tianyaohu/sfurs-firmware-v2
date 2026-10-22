@@ -7,7 +7,8 @@ SYM(abi); SYM(vx_mmps); SYM(vy_mmps); SYM(omega_mradps); SYM(enable); SYM(heartb
 SYM(raw_data_hi); SYM(raw_len); SYM(clear_seq); SYM(clear_done); SYM(fault); SYM(armed);
 SYM(reply_lat_hist)[4][16]; SYM(reply_lat_max_us)[4];
 uint32_t can_rx_frame_count;
-SYM(link)[4 * 19]; SYM(ff_enable); SYM(ff_coulomb_xy_mn); SYM(ff_viscous_xy_mn_per_mps);
+SYM(mode); SYM(current_ma)[4];
+SYM(link)[4 * 25]; SYM(ff_enable); SYM(ff_coulomb_xy_mn); SYM(ff_viscous_xy_mn_per_mps);
 SYM(ff_coulomb_w_mnm); SYM(ff_viscous_w_mnm_per_radps); SYM(ff_a_per_nm_milli);
 SYM(ff_scale_pct)[4]; SYM(ff_ma)[4];
 SYM(raw_id); SYM(raw_data); SYM(raw_seq); SYM(state); SYM(raw_done); SYM(tx_count); SYM(tx_fail);

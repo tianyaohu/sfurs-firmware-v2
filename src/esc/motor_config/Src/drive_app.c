@@ -41,6 +41,8 @@ enum { CAPTURE_IDLE, CAPTURE_STARTING, CAPTURE_RAMP, CAPTURE_HOLD, CAPTURE_RUN,
 #define DRIVE_APP_VALIDITY ((const volatile uint32_t *)0x0801F800U)
 #endif
 
+_Static_assert(ESC_RECORD_TRIGGER_RPM == MOTOR_SPEED_MOVING_RPM, "the recorder starts where the loop calls it motion");
+
 volatile struct drive_app_state drive_app;
 struct motor_cmd drive_cmd;
 volatile uint8_t drive_align_force;
@@ -175,7 +177,7 @@ static void record_sample(uint8_t speed_mode)
   if (status != ESC_RECORD_ARMED && status != ESC_RECORD_TRIGGERED) return;
   const struct motor_speed_outputs *o = &speed_out;
   const uint32_t ran = speed_mode != MOTOR_SPEED_OFF;
-  const uint32_t moving = o->ref_rpm >= MOTOR_SPEED_MOVING_RPM || o->ref_rpm <= -MOTOR_SPEED_MOVING_RPM;
+  const uint32_t moving = o->ref_rpm >= ESC_RECORD_TRIGGER_RPM || o->ref_rpm <= -ESC_RECORD_TRIGGER_RPM;
   const uint32_t mode = speed_mode == MOTOR_SPEED_HOLD ? ESC_REC_MODE_HOLD
                         : o->stall_ramp ? ESC_REC_MODE_STALL_RAMP : ran ? ESC_REC_MODE_RUN : ESC_REC_MODE_OFF;
   int16_t *s = capture_mem.rec[rec_index % ESC_RECORD_SAMPLES];
@@ -455,7 +457,12 @@ static uint8_t config_write(uint16_t key, int16_t v)
       if (v < 1 || v > (int16_t)(IQMAX_A * 1000)) return MOTOR_CFG_BAD_VALUE;
       drive_app.iq_max_ma = v;
       drive_app.iq_max_counts = (int32_t)v * (int32_t)CURRENT_CONV_FACTOR / 1000;
-      if (!drive_app.derated) set_iq_limit(drive_app.iq_max_counts);
+      if (!drive_app.derated) {
+        set_iq_limit(drive_app.iq_max_counts);
+      } else { /* derated: the lower of the derate and the new limit, as effective_limit_ma() reports */
+        const int32_t derated = (int32_t)(I2T_DERATED_A * CURRENT_CONV_FACTOR);
+        set_iq_limit(derated < drive_app.iq_max_counts ? derated : drive_app.iq_max_counts);
+      }
       return 0;
     case MOTOR_CFG_HALL_SHIFT_DEG:
       if (v < -359 || v > 359) return MOTOR_CFG_BAD_VALUE;
@@ -541,7 +548,7 @@ static void command_tick(uint16_t state)
 {
   const struct motor_cmd_inputs in = {
     .now_ms = drive_app.now_ms, .mc = mc_state(state),
-    .mc_fault_present = MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS,
+    .mc_fault_present = state == FAULT_NOW || MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS,
     .aligned = drive_app.aligned != 0U, .busy = (uint8_t)busy(),
     /* the loop's verdicts are from the previous tick: it runs after the lifecycle decides its mode */
     .standstill = speed_out.standstill, .stall_fault = speed_out.stall_fault,

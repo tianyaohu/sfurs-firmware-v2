@@ -24,7 +24,9 @@ foreach(case
     lost_start_reply_stays_invalid
     reply_latency_histogram
     config_reply_stored
-    current_mode_frames)
+    current_mode_frames
+    rejected_twist_has_no_ff
+    fault_stop_starts_a_new_session)
   add_test(NAME test_ik_drive.${case} COMMAND test_ik_drive ${case})
 endforeach()
 host_test(test_ik_telemetry

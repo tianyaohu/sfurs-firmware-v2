@@ -230,6 +230,9 @@ static void test_fault_latches_until_stop(void)
   CHECK(drive_app.stop_reason == ESC_STOP_FAULT && !drive_app.active);
   clear_fault(); tick(1); CHECK(acks == 0); /* cause still present */
   CHECK(last_reply().reason == MOTOR_R_NOT_IDLE);
+  cur_faults = 0; /* MCSDK still in FAULT_NOW with an empty fault word between safety passes */
+  clear_fault(); tick(1); CHECK(acks == 0 && drive_cmd.lifecycle == MOTOR_LC_FAULTED);
+  CHECK(last_reply().reason == MOTOR_R_NOT_IDLE && drive_cmd.latched == MOTOR_R_FAULT_MCSDK);
   state = FAULT_OVER; cur_faults = 0;
   for (int i = 0; i < 10; ++i) { speed_cmd(200); tick(20); }
   CHECK(state == FAULT_OVER && starts == 1); /* stays off while commands stream */
@@ -271,10 +274,15 @@ static void test_config_only_when_idle(void)
   r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_IQ_LIMIT_MA, 9000); /* above IQMAX: refused, nothing changes */
   CHECK(r.status == MOTOR_CFG_BAD_VALUE && r.stored == 4000 && drive_app.iq_limit_counts == 2176);
   CHECK(drive_app.rejected == 1);
-  drive_app.derated = 1; /* the effective limit reports the I2T derate */
+  drive_app.derated = 1; drive_app.i2t_a2s = 40.0f; /* derated and still hot: the tick keeps it derated */
   r = cfg(MOTOR_CONFIG_GET, MOTOR_CFG_IQ_LIMIT_MA, 0);
   CHECK(r.status == 0 && r.stored == 4000 && r.effective == 3000);
-  drive_app.derated = 0;
+  drive_app.iq_limit_counts = 3 * 544; /* as the I2T derate leaves it */
+  r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_IQ_LIMIT_MA, 1000); /* lower than the derate: in force at once */
+  CHECK(r.status == 0 && r.stored == 1000 && r.effective == 1000 && drive_app.iq_limit_counts == 544);
+  CHECK(cfg(MOTOR_CONFIG_SET, MOTOR_CFG_IQ_LIMIT_MA, 4000).effective == 3000 && drive_app.iq_limit_counts == 3 * 544);
+  drive_app.derated = 0; drive_app.i2t_a2s = 0.0f;
+  drive_app.iq_limit_counts = drive_app.iq_max_counts;
   CHECK(cfg(MOTOR_CONFIG_GET, MOTOR_CFG_SPEED_KP, 0).stored == 5000);
   CHECK(cfg(MOTOR_CONFIG_SET, 0x0777, 1).status == MOTOR_CFG_UNKNOWN_KEY && drive_app.rejected == 2);
   arm(); speed_cmd(100); tick(3); CHECK(state == RUN);

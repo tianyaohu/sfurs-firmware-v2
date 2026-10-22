@@ -406,6 +406,38 @@ static void test_config_reply_stored(void)
   for (unsigned w = 0; w < 4U; ++w) CHECK(ik_drive_link[w].cfg_count == 1U);
 }
 
+/* A twist rejected as out of range gets no feed-forward either (it would fight the slew to zero). */
+static void test_rejected_twist_has_no_ff(void)
+{
+  setup();
+  ik_drive_ff_enable = 1; ik_drive_ff_coulomb_xy_mn = 3000; ik_drive_ff_a_per_nm_milli = 40000;
+  drive_forward();
+  for (unsigned w = 0; w < 4U; ++w) CHECK(ik_drive_ff_ma[w] != 0);
+  ik_drive_vy_mmps = IK_DRIVE_MAX_LINEAR_MMPS + 1; run(40, 1);
+  for (unsigned w = 0; w < 4U; ++w) CHECK(ik_drive_ff_ma[w] == 0);
+  CHECK(ik_drive_bad_input > 0U);
+  ik_drive_ff_enable = 0; ik_drive_ff_coulomb_xy_mn = 0; ik_drive_ff_a_per_nm_milli = 0;
+}
+
+/* A fault stop runs to STOPPED even if the host re-enables at once; then a fresh probe/ARM session starts. */
+static void test_fault_stop_starts_a_new_session(void)
+{
+  setup();
+  drive_forward();
+  esc_in[0].mc = MOTOR_CMD_MC_FAULT; /* FR faults: the robot stops */
+  unsigned t = 0;
+  while (ik_drive_fault == 0U && t < 100U) { run(1, 1); ++t; }
+  CHECK(ik_drive_fault != 0U && ik_drive_state == IK_STOPPING);
+  esc_in[0].mc = MOTOR_CMD_MC_IDLE;
+  ik_drive_enable = 0; run(1, 1); ik_drive_enable = 1; /* acknowledged and re-enabled at once */
+  CHECK(ik_drive_fault == 0U);
+  int saw_stopped = 0;
+  t = 0;
+  while (ik_drive_state != IK_DRIVING && t < 300U) { run(1, 1); saw_stopped |= ik_drive_state == IK_STOPPED; ++t; }
+  CHECK(saw_stopped); /* the fault stop ran to STOPPED instead of resuming the old links */
+  CHECK(ik_drive_state == IK_DRIVING && ik_drive_link[0].start_count == 0U); /* new session: counters reset */
+}
+
 static void test_reply_latency_histogram(void)
 {
   setup(); /* each reply lands in its latency bin; replies to other frames are not timed */
@@ -450,6 +482,8 @@ int main(int argc, char **argv)
     { "lost_start_reply_stays_invalid", test_lost_start_reply_stays_invalid },
     { "reply_latency_histogram", test_reply_latency_histogram },
     { "config_reply_stored", test_config_reply_stored },
+    { "rejected_twist_has_no_ff", test_rejected_twist_has_no_ff },
+    { "fault_stop_starts_a_new_session", test_fault_stop_starts_a_new_session },
     { "current_mode_frames", test_current_mode_frames },
   };
   const char *name = argc == 2 ? argv[1] : cases[0].name;

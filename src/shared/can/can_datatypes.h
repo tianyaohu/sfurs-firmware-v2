@@ -89,7 +89,7 @@ enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
  * speed-loop recorder. It only observes (allowed while driving; rejected during
  * a current-loop capture, which it shares memory with). It records one sample
  * per speed-loop tick (1 kHz), triggers when the speed reference leaves zero
- * (|ref| >= 10 RPM, MOTOR_SPEED_MOVING_RPM, after first being below it) plus delay ms (0..4095), and keeps
+ * (|ref| >= ESC_RECORD_TRIGGER_RPM, after first being below it) plus delay ms (0..4095), and keeps
  * pre (0..ESC_RECORD_SAMPLES-1) samples from before the trigger point. Read
  * with ESC_CAPTURE_READ: banks 0/1 carry channels 0-2/3-5, bank 0 with
  * ESC_RECORD_READ_CH67 set carries channels 6, 7, 0 (the Nucleo relay keeps
@@ -102,6 +102,7 @@ enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
  * starting sector and the sector after each edge, 15 speed loop ran this tick (else ref, P, I,
  * ff and Iq ref are 0). */
 #define ESC_RECORD_START 0x5EU
+#define ESC_RECORD_TRIGGER_RPM 10 /**< |applied ref| that counts as motion (= motor_speed.h MOTOR_SPEED_MOVING_RPM) */
 #define ESC_RECORD_SAMPLES 384U /**< speed-loop ticks recorded */
 #define ESC_RECORD_INFO_SAMPLE 1U /**< bank 3 sample index holding the recorder status */
 #define ESC_RECORD_READ_CH67 (1U << 18) /**< in the ESC_CAPTURE_READ word */

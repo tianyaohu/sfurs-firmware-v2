@@ -45,6 +45,7 @@ static struct {
 static uint32_t tick_us;
 static uint8_t session_mode; /* MOTOR_MODE_SPEED or MOTOR_MODE_CURRENT, fixed per drive session */
 static uint32_t last_heartbeat, heartbeat_tick, period_tick, hold_tick, stop_frames;
+static int fault_stop; /* the current stop came from a fault: it runs to STOPPED, never back to DRIVING */
 static int heartbeat_seen;
 static float command[4];
 
@@ -161,11 +162,12 @@ int ik_drive_rx(uint32_t id, const uint8_t *data, uint32_t len, uint32_t now_us)
   return 1;
 }
 
-/* Target wheel RPM for the requested twist; zero when not driving or invalid. */
-static void targets(int drive, float target[4])
+/* Target wheel RPM for the requested twist; zero when not driving or invalid. Returns nonzero when the
+ * twist was accepted (the feed-forward follows the same verdict). */
+static int targets(int drive, float target[4])
 {
   for (unsigned i = 0; i < 4U; ++i) target[i] = 0.0f;
-  if (!drive) return;
+  if (!drive) return 0;
   const int32_t vx = ik_drive_vx_mmps, vy = ik_drive_vy_mmps, omega = ik_drive_omega_mradps;
   if (vx < -IK_DRIVE_MAX_LINEAR_MMPS || vx > IK_DRIVE_MAX_LINEAR_MMPS ||
       vy < -IK_DRIVE_MAX_LINEAR_MMPS || vy > IK_DRIVE_MAX_LINEAR_MMPS ||
@@ -173,7 +175,9 @@ static void targets(int drive, float target[4])
       !rover_ik(rover_ik_provisional, vx / 1000.0f, vy / 1000.0f, omega / 1000.0f, target, 0)) {
     ++ik_drive_bad_input;
     for (unsigned i = 0; i < 4U; ++i) target[i] = 0.0f;
+    return 0;
   }
+  return 1;
 }
 
 /* Friction feed-forward for the requested twist, mA per wheel. The model runs on the target
@@ -195,7 +199,7 @@ static void feed_forward(int on, int32_t ma[4])
   float amps[4];
   if (!friction_ff_wheel_amps(rover_ik_provisional, &p, (float)ik_drive_vx_mmps / 1000.0f,
                               (float)ik_drive_vy_mmps / 1000.0f, (float)ik_drive_omega_mradps / 1000.0f, amps))
-    return; /* invalid parameters or twist (targets() counts a bad twist): no feed-forward */
+    return; /* invalid parameters: no feed-forward */
   for (unsigned i = 0; i < 4U; ++i) {
     int32_t v = (int32_t)lroundf(amps[i] * 1000.0f);
     if (v > IK_DRIVE_FF_MAX_MA) v = IK_DRIVE_FF_MAX_MA;
@@ -359,16 +363,20 @@ void ik_drive_tick(uint32_t now, uint32_t now_us, ik_send_fn send)
     check_replies();
     if (ik_drive_fault != 0U) { /* a FAULTED or LOST wheel stops the robot now, not next period */
       ik_drive_state = IK_STOPPING;
+      fault_stop = 1;
       stop_frames = disable_all(send) ? 1U : 0U;
       for (unsigned w = 0; w < 4U; ++w) wheel[w].sent = 0U;
       return;
     }
   }
   if (ik_drive_state == IK_STOPPING) {
-    if (drive) {
+    if (drive && !fault_stop) {
       ik_drive_state = IK_DRIVING;
     } else {
-      if (disable_all(send) && ++stop_frames >= IK_DRIVE_STOP_FRAMES) ik_drive_state = IK_STOPPED;
+      if (disable_all(send) && ++stop_frames >= IK_DRIVE_STOP_FRAMES) {
+        ik_drive_state = IK_STOPPED;
+        fault_stop = 0;
+      }
       for (unsigned w = 0; w < 4U; ++w) wheel[w].sent = 0U;
       return;
     }
@@ -378,10 +386,10 @@ void ik_drive_tick(uint32_t now, uint32_t now_us, ik_send_fn send)
   const int go = drive && ik_drive_armed == 0xFU;
   const int current = session_mode == MOTOR_MODE_CURRENT;
   float target[4];
-  targets(go && !current, target);
+  const int accepted = targets(go && !current, target);
   slew(target);
   int32_t ff_ma[4];
-  feed_forward(go && !current && ik_drive_ff_enable != 0U, ff_ma);
+  feed_forward(accepted && ik_drive_ff_enable != 0U, ff_ma);
   int moving = drive;
   for (unsigned w = 0; w < 4U; ++w) {
     ik_drive_ff_ma[w] = ff_ma[w];

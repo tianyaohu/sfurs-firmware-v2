@@ -9,7 +9,9 @@ PC (src/tools/) --SWD mailbox--> Nucleo-H755 CM7 --CAN FD--> 4 x B-G431B-ESC1
 
 Data flow, CAN protocol and protections: [DRIVE.md](drive.md). Boards, wheel
 map, safety: [HARDWARE.md](../system-info/hardware.md). Firmware update:
-[CAN_FWU.md](can-fwu.md).
+[CAN_FWU.md](can-fwu.md). Motor command protocol v1 (wire format, golden vectors):
+[protocol.md](protocol.md); ESC command lifecycle (states, transitions):
+[command-lifecycle.md](command-lifecycle.md).
 
 ## What each file does
 

@@ -18,6 +18,7 @@ static uint32_t now;
 static struct motor_cmd esc[4];
 static struct motor_cmd_inputs esc_in[4];
 static int drop_replies[4];
+static uint32_t reply_delay_us[4] = {0, 100, 200, 300}; /* reply stamp after the tick's ms, us */
 
 static int send(uint32_t id, const uint8_t *d, uint32_t len)
 {
@@ -45,7 +46,7 @@ static void esc_step(unsigned w)
   if (a.start) in->mc = MOTOR_CMD_MC_STARTING;
   uint32_t id; uint8_t d[8];
   while (motor_cmd_reply_peek(&esc[w], &id, d)) {
-    if (!drop_replies[w]) CHECK(ik_drive_rx(id, d, 8U, now * 1000U + 100U * w) == 1);
+    if (!drop_replies[w]) CHECK(ik_drive_rx(id, d, 8U, now * 1000U + reply_delay_us[w]) == 1);
     motor_cmd_reply_pop(&esc[w]);
   }
 }
@@ -54,7 +55,7 @@ static void run(unsigned ms, int beat)
 {
   for (unsigned i = 0; i < ms; ++i) {
     if (beat && now % 50U == 0U) ++ik_drive_heartbeat;
-    ik_drive_tick(now, send);
+    ik_drive_tick(now, now * 1000U, send);
     for (unsigned w = 0; w < 4U; ++w) esc_step(w);
     ++now;
   }
@@ -356,6 +357,26 @@ static void test_lost_start_reply_stays_invalid(void)
   for (unsigned i = 1; i < 4; ++i) CHECK(ik_drive_link[i].first_start_valid == 1U);
 }
 
+static void test_reply_latency_histogram(void)
+{
+  setup(); /* each reply lands in its latency bin; replies to other frames are not timed */
+  const uint32_t delay[4] = {120, 600, 1300, 5000}, bin[4] = {0, 2, 5, IK_DRIVE_LAT_BINS - 1U};
+  memcpy(reply_delay_us, delay, sizeof delay);
+  ik_drive_enable = 1; run(1000, 1);
+  for (unsigned w = 0; w < 4U; ++w) {
+    uint32_t total = 0;
+    for (unsigned b = 0; b < IK_DRIVE_LAT_BINS; ++b) {
+      if (b != bin[w]) CHECK(ik_drive_reply_lat_hist[w][b] == 0U);
+      total += ik_drive_reply_lat_hist[w][b];
+    }
+    CHECK(total >= 48U && total <= 51U); /* one per 20 ms period of the 1 s stream */
+    CHECK(ik_drive_reply_lat_max_us[w] == delay[w]);
+  }
+  const uint32_t before = ik_drive_reply_lat_hist[0][0];
+  drop_replies[0] = 1; run(40, 1); drop_replies[0] = 0; /* two periods unanswered: nothing timed */
+  CHECK(ik_drive_reply_lat_hist[0][0] == before);
+}
+
 int main(int argc, char **argv)
 {
   CHECK(argc <= 2);
@@ -378,6 +399,7 @@ int main(int argc, char **argv)
     { "resyncs_a_moved_baseline", test_resyncs_a_moved_baseline },
     { "feed_forward_rides_in_speed_frames", test_feed_forward_rides_in_speed_frames },
     { "lost_start_reply_stays_invalid", test_lost_start_reply_stays_invalid },
+    { "reply_latency_histogram", test_reply_latency_histogram },
   };
   const char *name = argc == 2 ? argv[1] : cases[0].name;
   for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i)

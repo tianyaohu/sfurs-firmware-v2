@@ -25,6 +25,7 @@ volatile uint32_t ik_drive_state, ik_drive_raw_done, ik_drive_fault, ik_drive_ar
 volatile int32_t ik_drive_target_rpm[4], ik_drive_rpm[4], ik_drive_ff_ma[4];
 volatile struct ik_drive_link ik_drive_link[4];
 volatile uint32_t ik_drive_tx_count, ik_drive_tx_fail, ik_drive_bad_input;
+volatile uint32_t ik_drive_reply_lat_hist[4][IK_DRIVE_LAT_BINS], ik_drive_reply_lat_max_us[4];
 
 static const uint32_t SELECT[4] = {MOTOR_NE_CAN_ID, MOTOR_SE_CAN_ID, MOTOR_SW_CAN_ID, MOTOR_NW_CAN_ID};
 
@@ -36,8 +37,10 @@ static struct {
   uint8_t rearm;         /* the ESC rejected our sequence: re-baseline with ARM */
   int8_t sign;           /* sign of the last setpoint sent, to see a start */
   uint8_t start_seq, start_pending; /* the frame whose reply times the current start */
+  uint32_t sent_us;      /* drive tick that queued this period's frame, us */
 } wheel[4];
 
+static uint32_t tick_us;
 static uint32_t last_heartbeat, heartbeat_tick, period_tick, hold_tick, stop_frames;
 static int heartbeat_seen;
 static float command[4];
@@ -114,7 +117,13 @@ int ik_drive_rx(uint32_t id, const uint8_t *data, uint32_t len, uint32_t now_us)
     wheel[w].start_pending = 0U;
   }
   link_close(w);
-  if (wheel[w].sent && r.request_seq == wheel[w].sent_seq) wheel[w].replied = 1U;
+  if (wheel[w].sent && !wheel[w].replied && r.request_seq == wheel[w].sent_seq) {
+    wheel[w].replied = 1U;
+    const uint32_t lat = now_us - wheel[w].sent_us;
+    const uint32_t bin = lat / IK_DRIVE_LAT_BIN_US;
+    ++ik_drive_reply_lat_hist[w][bin < IK_DRIVE_LAT_BINS ? bin : IK_DRIVE_LAT_BINS - 1U];
+    if (lat > ik_drive_reply_lat_max_us[w]) ik_drive_reply_lat_max_us[w] = lat;
+  }
   /* After a Nucleo restart the ESC may still be armed with another baseline. */
   if (r.outcome == MOTOR_OUT_REJECTED &&
       (r.reason == MOTOR_R_STALE || r.reason == MOTOR_R_SEQ_JUMP || r.reason == MOTOR_R_SEQ_AMBIGUOUS ||
@@ -276,13 +285,15 @@ static void send_wheel(ik_send_fn send, unsigned w, int16_t rpm, int16_t ff_ma)
     wheel[w].sign = sign;
   }
   wheel[w].sent_seq = c.seq;
+  wheel[w].sent_us = tick_us;
   wheel[w].replied = 0U;
   (void)send_control(send, &c, SELECT[w]);
   wheel[w].sent = 1U;
 }
 
-void ik_drive_tick(uint32_t now, ik_send_fn send)
+void ik_drive_tick(uint32_t now, uint32_t now_us, ik_send_fn send)
 {
+  tick_us = now_us;
   const uint32_t heartbeat = ik_drive_heartbeat;
   if (heartbeat != last_heartbeat) {
     last_heartbeat = heartbeat;

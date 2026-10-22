@@ -21,7 +21,8 @@ foreach(case
     faulted_wheel_stops_until_cleared
     resyncs_a_moved_baseline
     feed_forward_rides_in_speed_frames
-    lost_start_reply_stays_invalid)
+    lost_start_reply_stays_invalid
+    reply_latency_histogram)
   add_test(NAME test_ik_drive.${case} COMMAND test_ik_drive ${case})
 endforeach()
 host_test(test_ik_telemetry

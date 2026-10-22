@@ -16,7 +16,7 @@
 
 #include "ocd.h"
 
-#define IK_ABI 0x494B0006U
+#define IK_ABI 0x494B0007U
 #define IK_WHEELS 4
 #define IK_RECORD_CHANNELS 8
 #define IK_CAPTURE_READ_MAX 32U
@@ -123,7 +123,7 @@ void ik_decode_row(const uint32_t words[IK_ROW_WORDS], ik_row_t *row);
  */
 int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS]);
 /** @brief Decode IK_LINK_WORDS mailbox words, including stable protocol names.
- * @param words Stable mailbox words, in ABI 6 order; clocks are wrapping microseconds.
+ * @param words Stable mailbox words, in ABI 7 order; clocks are wrapping microseconds.
  * @param row Decoded row; rpm is mechanical RPM and iq_ma is q-current in mA.
  */
 void ik_decode_link_row(const uint32_t words[IK_LINK_WORDS], ik_link_row_t *row);

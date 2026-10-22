@@ -13,7 +13,9 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
    inverse kinematics (`src/shared/src/rover_kinematics.c`), slews all wheels toward their
    targets with one acceleration limit (default 900 RPM/s, keeps the twist direction), and
    sends one protocol v1 CONTROL frame to each ESC ([protocol.md](protocol.md)). Every frame
-   is answered; the answers land in `ik_drive_link[4]` for the tools.
+   is answered; the answers land in `ik_drive_link[4]` for the tools, and the time from the
+   drive tick that queued a frame to its reply goes into a per-wheel histogram
+   (`ik_drive_reply_lat_hist`, 250 µs bins, mailbox ABI 7).
 3. Each ESC runs MCSDK FOC with Hall sensors: 16 kHz current loop, 1 kHz
    speed PI. `motor_cmd.c` owns the command lifecycle (arming, session and sequence checks,
    watchdog, faults, parking; [command-lifecycle.md](command-lifecycle.md)); `drive_app.c`

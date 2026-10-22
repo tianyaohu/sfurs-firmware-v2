@@ -23,7 +23,7 @@
  * ::MOTOR_WATCHDOG_MS after the stream stops. All words are 32 bit for SWD access.
  */
 
-#define IK_DRIVE_ABI 0x494B0006U         /**< ABI tag the host checks before talking */
+#define IK_DRIVE_ABI 0x494B0007U         /**< ABI tag the host checks before talking */
 #define IK_DRIVE_PERIOD_MS 20U           /**< drive loop period, ms (= MOTOR_PROTOCOL_PERIOD_MS) */
 #define IK_DRIVE_HEARTBEAT_MS 300U       /**< heartbeat age that counts as lost, ms */
 #define IK_DRIVE_HOLD_MS 200U            /**< time at zero before DISABLE is sent, ms */
@@ -34,6 +34,8 @@
 #define IK_DRIVE_MAX_OMEGA_MRADPS 6000   /**< accepted |omega|, mrad/s */
 #define IK_DRIVE_FF_MAX_MA 6000          /**< |feed-forward| sent, mA (the ESC's hard limit) */
 #define IK_LINK_NONE 0xFFU               /**< ik_drive_link.lifecycle before the first reply */
+#define IK_DRIVE_LAT_BINS 16U            /**< reply latency histogram bins per wheel */
+#define IK_DRIVE_LAT_BIN_US 250U         /**< histogram bin width, us; the last bin holds everything above */
 /** @brief Values of ::ik_drive_state. */
 enum { IK_STOPPED, IK_DRIVING, IK_STOPPING };
 
@@ -106,6 +108,11 @@ extern volatile struct ik_drive_link ik_drive_link[4]; /**< per-wheel protocol l
 extern volatile uint32_t ik_drive_tx_count;    /**< CAN frames queued */
 extern volatile uint32_t ik_drive_tx_fail;     /**< CAN frames that failed to queue */
 extern volatile uint32_t ik_drive_bad_input;   /**< twists rejected as out of range */
+/** Reply latency per wheel since boot: Nucleo microseconds from the drive tick that queued a
+ *  wheel's frame to the arrival of the reply answering it (first reply only). Counts per
+ *  ::IK_DRIVE_LAT_BIN_US bin; the host takes differences between two reads. */
+extern volatile uint32_t ik_drive_reply_lat_hist[4][IK_DRIVE_LAT_BINS];
+extern volatile uint32_t ik_drive_reply_lat_max_us[4]; /**< largest such latency since boot, us */
 /**@}*/
 
 /** @brief Queue one CAN FD frame (no BRS); returns nonzero on success. */
@@ -113,10 +120,11 @@ typedef int (*ik_send_fn)(uint32_t id, const uint8_t *data, uint32_t len);
 
 /**
  * @brief One step of the drive loop; call every main-loop pass.
- * @param now  Nucleo time, ms.
- * @param send queues one frame of 4 or 8 bytes.
+ * @param now    Nucleo time, ms.
+ * @param now_us Nucleo microsecond clock (wraps), same clock as ik_drive_rx's; times reply latency.
+ * @param send   queues one frame of 4 or 8 bytes.
  */
-void ik_drive_tick(uint32_t now, ik_send_fn send);
+void ik_drive_tick(uint32_t now, uint32_t now_us, ik_send_fn send);
 
 /**
  * @brief Take a received CAN frame if it is a CONTROL_REPLY; call for every received frame.

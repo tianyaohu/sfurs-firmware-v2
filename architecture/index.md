@@ -24,7 +24,7 @@ When you add a file or folder, add a line here in the same commit.
 | `src/nucleo/CM7/Core/Src/ik_telemetry.c` | Poll ESC status/diag, keep last reply per wheel for the PC |
 | `src/nucleo/CM7/Core/Src/fwu_updater.c`, `can_fwu_host.c` | Updater image: push an ESC app over CAN |
 | `src/shared/src/rover_kinematics.c` | Body twist <-> wheel speeds (IK table) |
-| `src/shared/src/motor_protocol.c` | Motor command protocol v1 codec (CONTROL / CONTROL_REPLY, sequence and session rules); not on the wire yet |
+| `src/shared/src/motor_protocol.c` | Motor command protocol v1 codec (CONTROL / CONTROL_REPLY, sequence and session rules), used by the Nucleo, the ESCs and the tools |
 | `src/shared/src/friction_ff.c` | Body-frame friction model: commanded twist -> per-wheel feed-forward current (not wired into the drive yet) |
 | `src/shared/src/can_fwu_protocol.c`, `can_fwu_boot.c` | CAN firmware-update protocol, shared host/bootloader |
 | `src/nucleo/CM4/` | Unused CubeMX skeleton |
@@ -35,6 +35,8 @@ When you add a file or folder, add a line here in the same commit.
 | Path | Role |
 |---|---|
 | `motor_config/Src/drive_app.c` | All application behaviour: start, speed target, status/diag, config, protections |
+| `motor_config/Src/motor_cmd.c` | Command lifecycle (pure): ARM/session/sequence checks, watchdog, faults, replies |
+| `motor_config/Src/motor_speed.c` | Speed loop (pure, Stage 4a; not wired into drive_app yet): reference interpolation, Hall speed estimate, P + I + ff with stall ramp, over-speed bleed, stall timer |
 | `motor_config/Src/mc_tasks_foc.c` | Hall angle hook in the FOC current controller |
 | `motor_config/Inc/*parameters.h` | Motor and loop parameters |
 | `bootloader/` | 16 KiB CAN bootloader; compiles the protocol from `src/shared` |

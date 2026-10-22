@@ -39,7 +39,8 @@ stall monitor and park check read this value. The plausibility cap and the rever
 - HALL_LOST (decision, amends C4): MCSDK's speed-feedback fault (Hall code 0/7) or an invalid Hall code longer than
   the stale window. An invalid estimate after motion is not a fault (a re-stuck wheel is the stall ramp's job).
 - STALL: |iq_ref| >= 0.8*L, |r| >= 10 RPM, no progress edge for 500 ms (CONFIG `STALL_MS`); resets on progress edge,
-  sign flip, |r| < 10, leaving RUNNING. Replaces loop_failed / STOP_LOOP_FAILED.
+  sign flip, |r| < 10, leaving RUNNING; while |iq_ref| < 0.8*L it pauses (keeps its count). Replaces loop_failed /
+  STOP_LOOP_FAILED. "Saturated" also counts a P term clipped to +-L.
 - HOLD: RUNNING, setpoint 0, |w_hat| < 45 RPM for 150 ms -> output stays on, I = ff = slip = 0, Iq ref 0. Any
   non-zero SPEED frame -> RUNNING with no MCSDK start. DISABLE/watchdog/fault leave HOLD like RUNNING; "MCSDK left
   RUN" also checked in HOLD. STOP_PARKED retired.

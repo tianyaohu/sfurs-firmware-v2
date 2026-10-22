@@ -43,7 +43,7 @@ Configuration: protocol v1 CONFIG `0x020` / CONFIG_REPLY `0x420`, one wheel per 
 acknowledged with the stored and effective value, every key readable (GET); key table in [protocol.md](protocol.md).
 `0x080` (old SPEED_WRITE), `0x500` (old CONFIG_SET) and `0x780` (old STOP) are retired and ignored.
 STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault, 4 align,
-5 capture),
+5 capture, 8 parked after 1 s of HOLD; 6 and 7 retired),
 `0x10` output on, `0x20` I²t derated, `0x40` aligning, `0x80` Hall shift known.
 
 ## Protections

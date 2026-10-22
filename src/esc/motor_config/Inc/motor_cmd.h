@@ -26,10 +26,13 @@ extern "C" {
 #define MOTOR_CMD_REPLIES 4U        /**< replies buffered between two main-loop polls */
 #define MOTOR_CMD_START_TIMEOUT_MS 500U /**< STARTING without MCSDK RUN for this long -> FAULTED, ms */
 /* HOLD. The Nucleo slews to 0, so by the time the target is 0 the wheel is nearly stopped.
- * Holding zero speed on the Hall estimate only buzzed (0.2-0.6 A average, peaks 3.9 A), so at
- * standstill the speed loop is replaced by a zero-current hold with the bridge on: no buzz, and
- * the next motion needs no MCSDK start. Standstill is the speed loop's call (motor_speed.h). */
+ * Holding zero speed on the Hall estimate buzzed hard (0.2-0.6 A average, peaks 3.9 A), so at
+ * standstill the speed loop is replaced by a zero-current hold with the bridge on: the next motion
+ * needs no MCSDK start (13-53 ms, different per wheel). Standstill is the speed loop's call
+ * (motor_speed.h). The current loop still acts on measurement noise around 0 A (Iq sd 0.03-0.07 A,
+ * 2026-10-22), which is audible, so a stop longer than a pause parks: output off, back to READY. */
 #define MOTOR_CMD_HOLD_MS 150U      /**< zero target at standstill for this long -> HOLD, ms */
+#define MOTOR_CMD_PARK_MS 1000U     /**< HOLD for this long -> output off, READY, ms */
 
 /** @brief Motor-control state as the lifecycle needs it (the caller maps MCSDK states onto this). */
 enum motor_cmd_mc {
@@ -46,7 +49,8 @@ enum motor_cmd_stop {
   MOTOR_CMD_STOP_DISABLE,     /**< DISABLE frame */
   MOTOR_CMD_STOP_TIMEOUT,     /**< command watchdog */
   MOTOR_CMD_STOP_FAULT,       /**< MCSDK fault, start timeout, stall or Hall loss */
-  MOTOR_CMD_STOP_OVERFLOW     /**< inbox overflow (faulty sender) */
+  MOTOR_CMD_STOP_OVERFLOW,    /**< inbox overflow (faulty sender) */
+  MOTOR_CMD_STOP_PARKED       /**< HOLD outlasted MOTOR_CMD_PARK_MS */
 };
 
 /** @brief Fixed limits and capabilities, set once by ::motor_cmd_init. */
@@ -128,7 +132,7 @@ struct motor_cmd {
   int16_t setpoint;        /**< applied target */
   int16_t ff_ma;           /**< applied feed-forward */
   uint32_t watch_ms;       /**< ARM time or receive time of the last fresh motion frame */
-  uint32_t state_ms;       /**< entry time of STARTING */
+  uint32_t state_ms;       /**< entry time of STARTING or HOLD */
   uint32_t hold_since;     /**< time the wheel came to standstill at a zero target, ms */
   uint8_t holding;         /**< hold_since is running */
   uint16_t start_pos;      /**< Hall edge counters when the target last left zero or reversed */

@@ -30,7 +30,7 @@ static const struct { const char *name; int number; } CONFIG_KEYS[] = {
     {"current_ki", MOTOR_CFG_CURRENT_KI}, {"stall_ramp_ma_per_s", MOTOR_CFG_STALL_RAMP_MA_PER_S},
     {"stall_ms", MOTOR_CFG_STALL_MS}};
 
-static const char *const STOP_REASONS[] = {"-", "stop", "timeout", "fault", "align", "capture"};
+static const char *const STOP_REASONS[] = {"-", "stop", "timeout", "fault", "align", "capture", "6", "7", "parked"};
 static const char *const ALIGN_RESULTS[] = {"-", "ok", "REVERSED", "NO_EDGES", "aborted", "running"};
 static const char *const REC_MODES[] = {"off", "run", "hold", "stall_ramp"}; /* ESC_REC_MODE_* */
 static const struct { uint32_t bit; const char *name; } FAULT_BITS[] = {

@@ -11,7 +11,7 @@ Implemented by `src/esc/motor_config/Src/motor_cmd.c` (pure logic; `drive_app.c`
 | READY | off | none | armed, motor stopped; HALL_ALIGN, CAPTURE and CONFIG allowed here and in DISARMED |
 | STARTING | on | MCSDK start-up | `MC_StartMotor1` issued, waiting for MCSDK RUN |
 | RUNNING | on | `motor_speed` (SPEED) or the setpoint (CURRENT) | regulating |
-| HOLD | on | `motor_speed` at Iq = 0 | zero target at standstill; Iq held at 0, so it cannot buzz; resumes without an MCSDK start |
+| HOLD | on | `motor_speed` at Iq = 0 | zero target at standstill; Iq held at 0; resumes without an MCSDK start. The current loop on measurement noise is audible, so HOLD parks (READY, output off) after 1 s |
 | FAULTED | off | none | latched cause in `reason` (32+); needs DISABLE+CLEAR_FAULT |
 
 "IDLE" (for CONFIG, CLEAR_FAULT, align, capture) = state DISARMED or READY, MCSDK state IDLE and output off. A zero
@@ -42,6 +42,7 @@ The 1 kHz tick evaluates, in this order: (1) MCSDK fault, (2) lifecycle FIFO, (3
 | RUNNING, SPEED | setpoint 0 and the speed loop reports standstill (\|estimate\| < 45 RPM) for 150 ms | HOLD | output stays on; the speed loop holds Iq at 0 with integrator, ff and slip cleared |
 | HOLD | SPEED frame with setpoint != 0 | RUNNING | speed loop on, integrator 0, ff slew from 0 |
 | HOLD | CURRENT frame | unchanged | REJECTED(MODE_CHANGE): mode is latched until DISABLE |
+| HOLD | 1000 ms in HOLD (`MOTOR_CMD_PARK_MS`) | READY | `MC_StopMotor1`, stop reason PARKED (8), target cleared; still armed, so the next non-zero target starts MCSDK again (READY -> STARTING) |
 | RUNNING | stall monitor fires | FAULTED | reason FAULT_STALL, `MC_StopMotor1` |
 | RUNNING, HOLD | Hall code invalid (0 or 7) for longer than the stale window | FAULTED | reason FAULT_HALL_LOST, `MC_StopMotor1`. A wheel that sticks again is not a Hall loss: its estimate decays and the stall ramp handles it |
 | HOLD | MCSDK leaves RUN | FAULTED | reason FAULT_MCSDK |
@@ -101,5 +102,6 @@ Refined during implementation (2026-10-21); same guarantees as the approved draf
 - Starting a motor as a side effect of the first non-zero SPEED_WRITE, with no arming: replaced by ARM + motion.
 - MOTOR_STOP: replaced by a broadcast DISABLE (honoured whatever its session or sequence). It also aborts a running
   HALL_ALIGN or CAPTURE.
-- Output-off parking (`ESC_STOP_PARKED`, ~30 ms MCSDK restart): replaced by HOLD.
+- Output-off parking as the immediate standstill state (old stop reason 6): replaced by HOLD, which parks only after
+  1 s (stop reason 8).
 - INHIBITED(FF_UNUSED): the old speed loop ignored the feed-forward field; the speed loop applies it now.

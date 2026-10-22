@@ -334,6 +334,7 @@ static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
           m->hold_since = m->now_ms;
         } else if (m->now_ms - m->hold_since >= MOTOR_CMD_HOLD_MS) {
           m->lifecycle = MOTOR_LC_HOLD; /* output stays on: the speed loop holds Iq at 0 */
+          m->state_ms = m->now_ms;
           m->holding = 0U;
         }
       } else {
@@ -343,6 +344,11 @@ static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
     case MOTOR_LC_HOLD:
       if (in->hall_lost) fault(m, out, MOTOR_R_FAULT_HALL_LOST);
       else if (in->mc != MOTOR_CMD_MC_RUN) fault(m, out, MOTOR_R_FAULT_MCSDK);
+      else if (m->now_ms - m->state_ms >= MOTOR_CMD_PARK_MS) { /* a long stop: silent, next start via READY */
+        stop_output(m, out, MOTOR_CMD_STOP_PARKED);
+        m->lifecycle = MOTOR_LC_READY;
+        clear_target(m);
+      }
       break;
     default:
       break;

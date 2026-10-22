@@ -112,3 +112,13 @@ Append only; format in design/README.md.
   the body-frame model (friction_ff.c) can be fitted to these numbers later. Ke needs Vq, which no CAN channel carries
   (the recorder's 8 channels are full), so a Ke fit would mean a new telemetry path; not needed for the ff.
 - Touches: src/shared (codec), src/esc (drive_app, motor_cmd), src/nucleo (ik_drive), src/tools (friction_map).
+
+## 2026-10-22  HOLD parks after 1 s  (who: claude, decided with Frank H)
+- Decision: HOLD (bridge on, Iq 0 at standstill) lasts at most 1000 ms (MOTOR_CMD_PARK_MS); then the ESC switches the
+  output off and returns to READY, still armed, STATUS stop reason PARKED (8; 6 and 7 stay retired). A pause shorter than
+  1 s resumes from HOLD without an MCSDK start; a longer stop restarts through READY -> STARTING.
+- Why: on hardware (raised) HOLD buzzed audibly on the motors: the speed loop asked for exactly 0 A but the FOC current
+  loop acted on measurement noise (Iq sd 0.03-0.07 A, peaks 0.3 A). Dropping HOLD entirely would make every start pay
+  the 13-53 ms MCSDK start, which differs per wheel and breaks the 2 ms start-sync bar; parking only long stops keeps
+  fast synchronized restarts within play and silence at rest. Lower current gains in HOLD were not tried.
+- Touches: src/esc (motor_cmd, drive_app), src/shared/can (ESC_STOP_PARKED), src/tools (ik_link stop names).

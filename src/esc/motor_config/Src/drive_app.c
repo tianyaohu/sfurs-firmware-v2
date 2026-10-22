@@ -545,6 +545,7 @@ static uint32_t esc_stop_reason(uint8_t cause)
     case MOTOR_CMD_STOP_DISABLE: return ESC_STOP_COMMAND;
     case MOTOR_CMD_STOP_TIMEOUT: case MOTOR_CMD_STOP_OVERFLOW: return ESC_STOP_TIMEOUT;
     case MOTOR_CMD_STOP_FAULT: return ESC_STOP_FAULT;
+    case MOTOR_CMD_STOP_PARKED: return ESC_STOP_PARKED;
     default: return ESC_STOP_NONE;
   }
 }

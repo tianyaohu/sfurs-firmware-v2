@@ -398,6 +398,43 @@ static void test_holds_at_zero_and_resumes(void)
   CHECK_EQ(m.latched, MOTOR_R_FAULT_MCSDK);
 }
 
+/* HOLD for MOTOR_CMD_PARK_MS parks: output off (cause PARKED), READY, still armed under the zero stream; the next
+ * nonzero setpoint starts MCSDK again through READY -> STARTING. Resuming earlier needs no start. */
+static void test_hold_parks_after_a_long_stop(void)
+{
+  run_at(100);
+  speed(0); tick(); drain_replies();
+  in.standstill = 1U; zero_ticks(MOTOR_CMD_HOLD_MS + 1U);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_HOLD);
+  clear_acts();
+  zero_ticks(MOTOR_CMD_PARK_MS - 1U);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_HOLD);
+  CHECK(!acts.stop && motor_cmd_output_on(&m));
+  zero_ticks(1);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_READY);
+  CHECK(acts.stop && acts.stop_cause == MOTOR_CMD_STOP_PARKED);
+  CHECK(motor_cmd_output_off(&m));
+  settle(); /* STOPPING -> IDLE */
+  zero_ticks(500); /* the zero stream keeps it armed and parked: no watchdog, no start */
+  CHECK_EQ(m.lifecycle, MOTOR_LC_READY);
+  clear_acts();
+  speed(100); tick();
+  expect(seq, MOTOR_OUT_INHIBITED, MOTOR_R_STARTING, MOTOR_LC_STARTING);
+  CHECK(act.start && act.set_target && act.setpoint == 100);
+  settle();
+  speed(100); tick();
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
+
+  /* a pause shorter than the park time resumes from HOLD without a start */
+  speed(0); tick(); drain_replies();
+  zero_ticks(MOTOR_CMD_HOLD_MS + 1U + MOTOR_CMD_PARK_MS / 2U);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_HOLD);
+  clear_acts();
+  speed(100); tick();
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
+  CHECK(!acts.start && !acts.stop);
+}
+
 /* CURRENT mode: starts like SPEED, LIMITED above the effective limit (still applied, the caller clamps),
  * no mode change while running, and no HOLD at zero current (that is a legitimate command). */
 /* The watchdog is also judged at a frame's receive time: 99 ms after the last accepted motion it is still
@@ -598,6 +635,7 @@ static const struct { const char *name; void (*fn)(void); } cases[] = {
   { "watchdog_at_receive_time", test_watchdog_at_receive_time },
   { "speed_ff_limited", test_speed_ff_limited },
   { "holds_at_zero_and_resumes", test_holds_at_zero_and_resumes },
+  { "hold_parks_after_a_long_stop", test_hold_parks_after_a_long_stop },
   { "capabilities_and_limits", test_capabilities_and_limits },
   { "not_aligned_and_busy", test_not_aligned_and_busy },
   { "structural_rejects_are_answered", test_structural_rejects_are_answered },

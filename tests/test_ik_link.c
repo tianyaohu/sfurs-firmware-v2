@@ -131,6 +131,12 @@ static void test_decode_row(void)
     ik_decode_row(w, &r);
     CHECK(!strcmp(r.stop_reason, want));
   }
+  w[5] = 0x10 | ESC_STOP_PARKED;
+  ik_decode_row(w, &r);
+  CHECK(!strcmp(r.stop_reason, "parked"));
+  w[5] = 0x10 | 9U;
+  ik_decode_row(w, &r);
+  CHECK(!strcmp(r.stop_reason, "9"));
 }
 
 static uint32_t sym(const char *name)

@@ -113,9 +113,10 @@ enum { ESC_REC_MODE_OFF = 0, ESC_REC_MODE_RUN = 1, ESC_REC_MODE_HOLD = 2, ESC_RE
 
 #define ESC_COUNTS_PER_AMP 544 /**< MCSDK current counts per ampere */
 
-/** STATUS stop reasons; 6 and 7 (old parking and startup-loop failure) are retired. */
+/** STATUS stop reasons; 6 and 7 (old parking and startup-loop failure) are retired. PARKED: HOLD lasted
+ * MOTOR_CMD_PARK_MS, output switched off at standstill (still armed). */
 enum { ESC_STOP_NONE = 0, ESC_STOP_COMMAND = 1, ESC_STOP_TIMEOUT = 2,
-       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5 };
+       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5, ESC_STOP_PARKED = 8 };
 #define ESC_FLAG_ACTIVE  0x10U /**< streaming speed commands accepted */
 #define ESC_FLAG_DERATED 0x20U /**< I2T limit reached, current derated */
 #define ESC_FLAG_ALIGN   0x40U /**< forced-angle test running: Hall alignment or capture */

@@ -21,7 +21,7 @@ Tools (all in `src/tools/`, Nucleo must run the drive image, one tool at a time)
 | `esc_tool capture <W>` | 1 A → 3 A d-axis current step, 16 kHz, R/L/step metrics | clicks, no torque |
 | `esc_tool set <W\|all> KEY N` | RAM gain: `kp ki` (speed), `current_kp current_ki` | no |
 | `esc_tool spin <W> --rpm N` | one-wheel speed step, logged; optional `--kp --ki` | yes |
-| `esc_tool pulse [--kp --ki --ff-static --ff-kinetic]` | whole robot out and back on the ground, per-wheel breakaway time and spread | yes |
+| `esc_tool pulse [--kp --ki]` | whole robot out and back on the ground, per-wheel breakaway time and spread | yes |
 | `esc_update <W> --can` | install `build/esc/<W>` over CAN, verify by IDENT CRC | no |
 | `scripts/build.sh --shift NE=.. SE=.. SW=.. NW=..` | build ESC apps with baked shifts | — |
 
@@ -117,17 +117,19 @@ On the ground use `esc_tool pulse` (0.2 m/s, 1.5 s out and back, 3 reps,
 needs ~0.5 m clear and the user nearby): it sets the RAM values on all four
 wheels, restores the defaults after, and prints per-wheel time to 20 RPM and
 the spread. Judge with the log as well: `iq_ref_a` at breakaway (static
-friction, 2.2–3.2 A here), peak RPM / target (overshoot), cruise error.
-- **Static friction**: Iq ref ramps for hundreds of ms before any rotation,
-  then the wheel overshoots → friction, not gain. Raise `--ff-static` toward
-  the breakaway current instead of Ki; `--ff-kinetic` is what it takes to keep
-  rolling.
+friction, 3.3–4.7 A on the mat 2026-10-21), peak RPM / target (overshoot),
+cruise error. The record's channel 7 shows the loop's mode per tick (run, hold,
+stall_ramp) and the bleed and stall-timer bits.
+- **Static friction**: Iq ref climbs at the stall-ramp rate (`stall_ramp` mode)
+  for hundreds of ms before any rotation → friction, not gain. The rate is
+  CONFIG `stall_ramp_ma_per_s`; the real fix is the Nucleo's friction
+  feed-forward (Stage 5), not a higher Ki.
 - **Ground limit cycle**: all wheels at the 6 A limit, loud buzz, no motion
   (Kp 4096 / Ki 2200 here). Back off Ki; a higher current limit only makes it
   louder.
 - An obstacle at the mat edge looks like a stall — check the floor before
   believing a slow rung.
-Bake into `PID_SPEED_*_DEFAULT` and `FRICTION_FF_*_DEFAULT`.
+Bake into `PID_SPEED_*_DEFAULT` and `SPEED_STALL_*_DEFAULT` (`drive_parameters.h`).
 
 ### 4. Bake and record
 

@@ -11,7 +11,7 @@ Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2
 | READY | off | none | armed, motor stopped; HALL_ALIGN, CAPTURE and CONFIG allowed here and in DISARMED |
 | STARTING | on | MCSDK start-up | `MC_StartMotor1` issued, waiting for MCSDK RUN |
 | RUNNING | on | `motor_speed` (SPEED) or the setpoint (CURRENT) | regulating |
-| HOLD | on | fixed Iq = 0 | parked: zero speed reached; no speed loop, so it cannot buzz; restarts without an MCSDK start |
+| HOLD | on | `motor_speed` at Iq = 0 | zero target at standstill; Iq held at 0, so it cannot buzz; resumes without an MCSDK start |
 | FAULTED | off | none | latched cause in `reason` (32+); needs DISABLE+CLEAR_FAULT |
 
 "IDLE" (for CONFIG, CLEAR_FAULT, align, capture) = state DISARMED or READY, MCSDK state IDLE and output off. A zero
@@ -24,7 +24,7 @@ The 1 kHz tick evaluates, in this order: (1) MCSDK fault, (2) lifecycle FIFO, (3
 
 | From | Event | To | Action |
 |---|---|---|---|
-| any with output on | MCSDK fault (FAULT_NOW/FAULT_OVER) | FAULTED | reason FAULT_MCSDK; MCSDK already disabled the bridge |
+| any with output on | MCSDK fault (FAULT_NOW/FAULT_OVER) | FAULTED | reason FAULT_MCSDK, or FAULT_HALL_LOST when MCSDK's speed-feedback fault is set; MCSDK already disabled the bridge |
 | DISARMED | ARM with the current session | READY | `last_seq = seq`, `last_applied_seq = 0` |
 | any except FAULTED | ARM with the current session while armed | unchanged | re-baselines `last_seq`; reply APPLIED |
 | any | ARM with a wrong session | unchanged | REJECTED(BAD_SESSION) |
@@ -39,11 +39,12 @@ The 1 kHz tick evaluates, in this order: (1) MCSDK fault, (2) lifecycle FIFO, (3
 | STARTING | MCSDK reaches RUN | RUNNING | the integrator starts at 0, ff slew starts at 0 |
 | STARTING | no RUN within 500 ms | FAULTED | reason FAULT_MCSDK, `MC_StopMotor1` |
 | RUNNING | motion frame with a different mode | unchanged | REJECTED(MODE_CHANGE) |
-| RUNNING, SPEED | applied reference = 0 and \|speed\| < 45 RPM for 150 ms | HOLD | speed loop off, integrator cleared, Iq request 0 |
+| RUNNING, SPEED | setpoint 0 and the speed loop reports standstill (\|estimate\| < 45 RPM) for 150 ms | HOLD | output stays on; the speed loop holds Iq at 0 with integrator, ff and slip cleared |
 | HOLD | SPEED frame with setpoint != 0 | RUNNING | speed loop on, integrator 0, ff slew from 0 |
 | HOLD | CURRENT frame | unchanged | REJECTED(MODE_CHANGE): mode is latched until DISABLE |
 | RUNNING | stall monitor fires | FAULTED | reason FAULT_STALL, `MC_StopMotor1` |
-| RUNNING | speed estimate invalid after it was valid, beyond the stale window | FAULTED | reason FAULT_HALL_LOST, `MC_StopMotor1` |
+| RUNNING, HOLD | Hall code invalid (0 or 7) for longer than the stale window | FAULTED | reason FAULT_HALL_LOST, `MC_StopMotor1`. A wheel that sticks again is not a Hall loss: its estimate decays and the stall ramp handles it |
+| HOLD | MCSDK leaves RUN | FAULTED | reason FAULT_MCSDK |
 | armed, not FAULTED | watchdog age >= 100 ms | DISARMED | `MC_StopMotor1` if on, new session, reason TIMEOUT (sticky in DIAG until the next ARM) |
 | any | inbox overflow | DISARMED (FAULTED stays FAULTED) | `MC_StopMotor1`, new session (also when FAULTED), LIFECYCLE_OVERFLOW counted |
 
@@ -53,9 +54,10 @@ Notes:
 - Mode (SPEED or CURRENT) is latched on READY -> STARTING and only changes through DISABLE. CURRENT with setpoint 0
   keeps the output on with zero q-current; it is not HOLD and has no parking timer.
 - No automatic restart after FAULTED: the Nucleo must DISABLE, CLEAR_FAULT, ARM.
-- Stall monitor (RUNNING only): |Iq request| >= 80 % of the effective limit, |applied reference| >= 10 RPM, and no
-  Hall edge along the command for 500 ms (CONFIG 200-2000 ms). The timer resets on any edge along the command, a
-  reference sign change, |reference| < 10 RPM, or leaving RUNNING. In CURRENT mode the stall monitor is off (a
+- Stall monitor (RUNNING only, in `motor_speed.c`): counts while |Iq request| >= 80 % of the effective limit and
+  |applied reference| >= 10 RPM, pauses below that current, and fires after 500 ms (CONFIG 200-2000 ms) with no
+  progress edge (a new furthest position along the command). It resets on a progress edge, a reference sign change,
+  |reference| < 10 RPM, or leaving RUNNING. In CURRENT mode the stall monitor is off (a
   roll-out against a wall is a legitimate test); the current limit and I2T protect the motor there.
 
 ## Ordering of received frames (ISR -> tick)
@@ -84,24 +86,18 @@ Refined during implementation (2026-10-21); same guarantees as the approved draf
 - Only motion frames expire by receive age. A late DISABLE still stops; a late ARM arms, but starts the
   watchdog from its own receive time, so it disarms again at once.
 - A plain APPLIED carries reason NONE, also for a DISABLE while FAULTED (the lifecycle field says FAULTED).
-- Parking needs the zero target and standstill to hold for 150 ms of elapsed time from the first such tick.
+- HOLD needs the zero target and standstill to hold for 150 ms of elapsed time from the first such tick.
 - A stop cause is reported only with a real switch-off.
 
-## Implemented per stage
+## Not implemented yet
 
-| Behaviour | Stage 2 (old speed loop underneath) | Stage 4a |
-|---|---|---|
-| Parking | RUNNING -> READY, output off (old parking, kept so nominal traces compare) | RUNNING -> HOLD |
-| Old startup loop FAILED (DSC) | FAULTED(FAULT_STALL) (was a latch cleared by any zero command) | DSC deleted |
-| Stall monitor, HALL_LOST | not yet | yes |
-| CURRENT mode | REJECTED(UNSUPPORTED) | Stage 5 |
-| Feed-forward field | accepted, not applied: INHIBITED(FF_UNUSED) | applied |
-| Counters (rejects, dropped replies, overflow) | ESC state, readable over SWD | same |
+- CURRENT mode: REJECTED(UNSUPPORTED) until Stage 5.
+- Counters (rejects, dropped replies, overflow) are ESC state, readable over SWD only.
 
 ## Retired behaviour
 
 - Starting a motor as a side effect of the first non-zero SPEED_WRITE, with no arming: replaced by ARM + motion.
 - MOTOR_STOP: replaced by a broadcast DISABLE (honoured whatever its session or sequence). It also aborts a running
   HALL_ALIGN or CAPTURE.
-- Output-off parking (`ESC_STOP_PARKED`, ~30 ms MCSDK restart): replaced by HOLD in Stage 4a. The Stage 2 adapter
-  keeps the old parking so nominal traces stay comparable.
+- Output-off parking (`ESC_STOP_PARKED`, ~30 ms MCSDK restart): replaced by HOLD.
+- INHIBITED(FF_UNUSED): the old speed loop ignored the feed-forward field; the speed loop applies it now.

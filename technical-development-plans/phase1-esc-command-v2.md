@@ -107,10 +107,10 @@ Artifacts in `esc-command-v2/` next to this plan (they move to `architecture/` i
 ## Stages (each: own commits; `scripts/test.sh` + `scripts/build.sh` 0 warnings; docs in the same commit; hardware gate
 ## before the next; hardware: ask first, measure Vbus, wheels raised for the first run after a firmware change, back up
 ## ESC flash, record in `hardware-test-results/`)
-Progress (2026-10-21): Stages 0-2 on hardware. Stage 0 baseline on the raised robot recorded; protocol v1 installed;
-raised runs match the baseline and skew passes; first mat start stalls on static friction (old loop). Order changed
-(design log): finish the H2 protocol checks (rejects, watchdog, LOST, 5 min, latency, bus load; tools in a Codex
-lane), then Stage 4a, then Stage 3. Remaining Stage 2 mat starts skipped.
+Progress (2026-10-22): Stages 0-2 done on hardware (Stage 0 baseline raised; H2 protocol checks pass; first mat
+start stalled on the old loop, so 4a moved before 3, design log). Stage 4a firmware done and host-tested: motor_speed.c
+per artifact E, HOLD and the stall/HALL_LOST faults in motor_cmd, torque mode, DSC and legacy ff deleted, tools and docs
+follow. Next: gate H4a on hardware (raised first), then Stage 3, Stage 5.
 
 0. **Baseline + calibration (hardware).** **[rev]** First validate the C tools that never drove a board (`esc_tool
    status/record`, `move_test`), and resolve the `status` Iq ~25 A at IDLE seen on BR/FL (2026-10-20: offset or a

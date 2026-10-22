@@ -736,7 +736,6 @@ __weak void *HALL_TIMx_CC_IRQHandler(void *pHandleVoid)
           pHandle->SensorPeriod[pHandle->SpeedFIFOIdx] *= pHandle->Direction;
         }
           pHandle->ElPeriodSum += pHandle->SensorPeriod[pHandle->SpeedFIFOIdx];
-          pHandle->Captures++; /* USER: fresh speed sample */
         /* Update pointers to speed buffer */
         pHandle->SpeedFIFOIdx++;
         if (pHandle->SpeedFIFOIdx == pHandle->SpeedBufferSize)

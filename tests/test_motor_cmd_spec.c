@@ -32,7 +32,7 @@ struct fixture {
 
 static void init(struct fixture *f, uint32_t entropy)
 {
-  const struct motor_cmd_config cfg = {wheel, 2976, 6000, 0, 0};
+  const struct motor_cmd_config cfg = {wheel, 2976, 6000, 0};
   memset(f, 0, sizeof(*f));
   motor_cmd_init(&f->m, &cfg, entropy);
   f->in.aligned = 1;
@@ -668,11 +668,11 @@ static void stage2_monitors(void)
     EQ(f.m.lifecycle, MOTOR_LC_RUNNING); EQ(f.a.stop, 0); EQ(f.a.start, 0);
   }
   establish(&f, MOTOR_LC_RUNNING);
-  f.in.loop_failed = 1;
+  f.in.stall_fault = 1;
   tick(&f, 20); EQ(f.m.lifecycle, MOTOR_LC_FAULTED);
   EQ(f.m.latched, MOTOR_R_FAULT_STALL); EQ(f.a.stop, 1);
-  EQ(f.a.stop_cause, MOTOR_CMD_STOP_LOOP_FAILED);
-  f.in.loop_failed = 0;
+  EQ(f.a.stop_cause, MOTOR_CMD_STOP_FAULT);
+  f.in.stall_fault = 0;
   rx(&f, command(0, 12, f.m.session), 21); tick(&f, 21);
   one(&f, 12, MOTOR_OUT_REJECTED, MOTOR_R_FAULT_STALL); EQ(f.a.start, 0);
   struct motor_control failed_zero = command(0, 12, f.m.session); failed_zero.setpoint = 0;
@@ -680,40 +680,44 @@ static void stage2_monitors(void)
   one(&f, 12, MOTOR_OUT_REJECTED, MOTOR_R_FAULT_STALL);
   EQ(f.m.lifecycle, MOTOR_LC_FAULTED); EQ(f.a.start, 0);
 
-  /* Watchdog precedes monitors: a coincident loop failure cannot prevent disarm. */
-  establish(&f, MOTOR_LC_RUNNING); f.in.loop_failed = 1;
+  /* Watchdog precedes monitors: a coincident stall verdict cannot prevent disarm. */
+  establish(&f, MOTOR_LC_RUNNING); f.in.stall_fault = 1;
   tick(&f, 111); EQ(f.m.lifecycle, MOTOR_LC_DISARMED);
   EQ(f.a.stop_cause, MOTOR_CMD_STOP_TIMEOUT);
+  f.in.stall_fault = 0;
 
   variant = 150;
   establish(&f, MOTOR_LC_RUNNING);
   uint8_t session = f.m.session;
   struct motor_control zero = command(0, 12, session); zero.setpoint = 0;
   rx(&f, zero, 20); tick(&f, 20); one(&f, 12, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
-  f.in.rpm = 44; seq = 12;
+  f.in.standstill = 1; seq = 12;
   for (unsigned t = 21; t <= 170; ++t) {
     if (t % 20 == 0) { zero.seq = ++seq; rx(&f, zero, t); }
     tick(&f, t);
     if (t % 20 == 0) one(&f, seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
-    /* Parking timer starts at zero at t=20 (rpm was already zero). */
-    if (t < 170) EQ(f.m.lifecycle, MOTOR_LC_RUNNING);
+    EQ(f.a.stop, 0);
+    /* HOLD timer starts at t=21, the first tick with a zero target at standstill. */
+    if (t < 171) EQ(f.m.lifecycle, t < 21 + MOTOR_CMD_HOLD_MS ? MOTOR_LC_RUNNING : MOTOR_LC_HOLD);
   }
-  EQ(f.m.lifecycle, MOTOR_LC_READY); EQ(f.a.stop, 1);
-  EQ(f.a.stop_cause, MOTOR_CMD_STOP_PARKED); EQ(f.m.session, session);
-  rx(&f, command(0, ++seq, session), 171); tick(&f, 171);
-  one(&f, seq, MOTOR_OUT_INHIBITED, MOTOR_R_STARTING); EQ(f.a.start, 1);
+  tick(&f, 171);
+  EQ(f.m.lifecycle, MOTOR_LC_HOLD); EQ(f.a.stop, 0); EQ(f.m.session, session);
+  rx(&f, command(0, ++seq, session), 172); tick(&f, 172);
+  one(&f, seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE); EQ(f.a.start, 0); EQ(f.a.set_target, 1);
+  EQ(f.m.lifecycle, MOTOR_LC_RUNNING);
 
-  /* Exactly 45 RPM is outside the standstill predicate, and interrupts dwell. */
+  /* A standstill blip interrupts the dwell. */
   establish(&f, MOTOR_LC_RUNNING); zero = command(0, 12, f.m.session); zero.setpoint = 0;
   seq = 12;
   for (unsigned t = 20; t <= 180; ++t) {
     if (t % 20 == 0) { zero.seq = seq++; rx(&f, zero, t); }
-    f.in.rpm = t == 100 ? 45 : 44;
+    f.in.standstill = t != 100;
     tick(&f, t);
     if (t % 20 == 0) one(&f, zero.seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
     EQ(f.m.lifecycle, MOTOR_LC_RUNNING);
   }
-  /* No Stage 4 stall/Hall-lost faults on a steady nonzero Stage 2 target. */
+  f.in.standstill = 0;
+  /* Stall and Hall-loss faults come only from the speed loop's verdicts, never from current alone. */
   establish(&f, MOTOR_LC_RUNNING); seq = 11; f.in.iq_ma = 6000;
   for (unsigned t = 20; t <= 1020; t += 20) {
     rx(&f, command(0, ++seq, f.m.session), t); tick(&f, t);
@@ -809,8 +813,8 @@ static void validation(void)
     EQ(f.a.start, 1); EQ(f.a.setpoint, bounds[i]);
   }
 
-  // Decided (B): B's READY motion row includes zero, but parking and "restarts"
-  // imply zero SPEED should leave the bridge off. Assume accepted/no start,
+  // Decided (B): B's READY motion row includes zero, but a zero target needs no
+  // bridge (HOLD follows motion, it never starts it). Assume accepted/no start,
   // including unaligned and busy: zero cannot cause motion.
   establish(&f, MOTOR_LC_READY); f.in.aligned = 0; f.in.busy = 1;
   struct motor_control zero = command(0, 11, f.m.session); zero.setpoint = 0;
@@ -848,11 +852,11 @@ static void reply_content(void)
   rx(&f, command(1, 250, 0), 40); tick(&f, 40);
   r = one(&f, 250, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
   EQ(r.lifecycle, MOTOR_LC_READY); EQ(r.rpm, 0); EQ(r.iq_ma, 0); EQ(r.first_edge, 0);
-  /* Stage 2 accepts ff but reports that the old speed loop ignores it. */
+  /* ff rides with the setpoint to the speed loop. */
   establish(&f, MOTOR_LC_RUNNING);
   struct motor_control c = command(0, 12, f.m.session); c.ff_ma = 6000;
   rx(&f, c, 20); tick(&f, 20);
-  r = one(&f, 12, MOTOR_OUT_INHIBITED, MOTOR_R_FF_UNUSED); EQ(r.applied_seq, 12);
+  r = one(&f, 12, MOTOR_OUT_APPLIED, MOTOR_R_NONE); EQ(r.applied_seq, 12);
   EQ(f.a.set_target, 1); EQ(f.a.ff_ma, 6000);
 
   for (unsigned i = 0; i < sizeof(states)/sizeof(states[0]); ++i) {

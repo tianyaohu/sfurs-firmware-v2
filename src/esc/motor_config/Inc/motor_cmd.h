@@ -25,12 +25,11 @@ extern "C" {
 #define MOTOR_CMD_INBOX 8U          /**< received frames buffered between two ticks */
 #define MOTOR_CMD_REPLIES 4U        /**< replies buffered between two main-loop polls */
 #define MOTOR_CMD_START_TIMEOUT_MS 500U /**< STARTING without MCSDK RUN for this long -> FAULTED, ms */
-/* Parking. The Nucleo slews to 0, so by the time the target is 0 the wheel is nearly
- * stopped. Holding zero speed on the Hall estimate only buzzed (0.2-0.6 A average, peaks
- * 3.9 A): a wheel rocks across one edge and the estimate reads +-25-32 RPM, its smallest
- * non-zero value, so anything below MOTOR_CMD_PARK_RPM counts as standstill. */
-#define MOTOR_CMD_PARK_MS 150U      /**< zero target below ::MOTOR_CMD_PARK_RPM for this long -> park, ms */
-#define MOTOR_CMD_PARK_RPM 45       /**< standstill threshold of the Hall speed estimate, RPM */
+/* HOLD. The Nucleo slews to 0, so by the time the target is 0 the wheel is nearly stopped.
+ * Holding zero speed on the Hall estimate only buzzed (0.2-0.6 A average, peaks 3.9 A), so at
+ * standstill the speed loop is replaced by a zero-current hold with the bridge on: no buzz, and
+ * the next motion needs no MCSDK start. Standstill is the speed loop's call (motor_speed.h). */
+#define MOTOR_CMD_HOLD_MS 150U      /**< zero target at standstill for this long -> HOLD, ms */
 
 /** @brief Motor-control state as the lifecycle needs it (the caller maps MCSDK states onto this). */
 enum motor_cmd_mc {
@@ -46,9 +45,7 @@ enum motor_cmd_stop {
   MOTOR_CMD_STOP_NONE = 0,
   MOTOR_CMD_STOP_DISABLE,     /**< DISABLE frame */
   MOTOR_CMD_STOP_TIMEOUT,     /**< command watchdog */
-  MOTOR_CMD_STOP_FAULT,       /**< MCSDK fault or start timeout */
-  MOTOR_CMD_STOP_PARKED,      /**< zero target at standstill */
-  MOTOR_CMD_STOP_LOOP_FAILED, /**< the speed loop reported a failed start */
+  MOTOR_CMD_STOP_FAULT,       /**< MCSDK fault, start timeout, stall or Hall loss */
   MOTOR_CMD_STOP_OVERFLOW     /**< inbox overflow (faulty sender) */
 };
 
@@ -57,7 +54,6 @@ struct motor_cmd_config {
   uint32_t select;      /**< this wheel's CAN select bit (replies use it) */
   int16_t max_rpm;      /**< |SPEED setpoint| limit, RPM; larger is rejected */
   int16_t max_ma;       /**< |CURRENT setpoint| and |ff| limit, mA; larger is rejected */
-  uint8_t ff_supported; /**< 0: the active speed loop ignores ff (reply INHIBITED(FF_UNUSED)) */
   uint8_t current_supported; /**< 0: CURRENT frames are rejected (UNSUPPORTED) */
 };
 
@@ -68,7 +64,10 @@ struct motor_cmd_inputs {
   uint8_t mc_fault_present; /**< a fault cause is still active (MCSDK current faults != 0) */
   uint8_t aligned;      /**< Hall phase shift known */
   uint8_t busy;         /**< Hall alignment or current capture running */
-  uint8_t loop_failed;  /**< the speed loop gave up starting (old startup loop FAILED) */
+  uint8_t standstill;   /**< the speed loop sees the wheel at rest (motor_speed_outputs.standstill) */
+  uint8_t stall_fault;  /**< the speed loop's stall timer expired (motor_speed_outputs.stall_fault) */
+  uint8_t hall_lost;    /**< Hall sensing lost: invalid Hall code past the stale window, or MCSDK's
+                             speed-feedback fault (with mc FAULT it names the fault HALL_LOST) */
   int16_t rpm;          /**< speed estimate, RPM */
   int16_t iq_ma;        /**< measured q-axis current, mA */
   uint16_t edges_pos;   /**< Hall edges counted in + direction (wrapping) */
@@ -129,8 +128,8 @@ struct motor_cmd {
   int16_t ff_ma;           /**< applied feed-forward */
   uint32_t watch_ms;       /**< ARM time or receive time of the last fresh motion frame */
   uint32_t state_ms;       /**< entry time of STARTING */
-  uint32_t park_since;     /**< time the wheel came to standstill at a zero target, ms */
-  uint8_t parking;         /**< park_since is running */
+  uint32_t hold_since;     /**< time the wheel came to standstill at a zero target, ms */
+  uint8_t holding;         /**< hold_since is running */
   uint16_t start_pos;      /**< Hall edge counters when the target last left zero or reversed */
   uint16_t start_neg;      /**< see start_pos */
   int8_t start_dir;        /**< sign of the target at that moment */
@@ -160,7 +159,7 @@ void motor_cmd_init(struct motor_cmd *m, const struct motor_cmd_config *cfg, uin
 void motor_cmd_rx(struct motor_cmd *m, uint32_t id, const uint8_t *data, uint32_t dlc, uint32_t now_ms);
 
 /**
- * @brief 1 kHz tick: fault check, drain the inbox in order, watchdog, start and park rules.
+ * @brief 1 kHz tick: fault check, drain the inbox in order, watchdog, start, fault and HOLD rules.
  * @param m   state
  * @param in  sampled motor-control state
  * @param out actions for the caller; cleared first

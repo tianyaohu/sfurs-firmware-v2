@@ -55,3 +55,6 @@ what someone does next; this is not a log.
   (`technical-development-plans/esc-command-v2/D-acceptance.md`).
 - **A deterministic session byte is guessable.** Independent tests armed a wheel after an inbox overflow by
   queueing frames with the next session; frames drained in the tick of a session change must not use it.
+- **Static friction far above kinetic winds up an error integrator.** On the mat the reference ran away from a stuck
+  wheel for ~0.5 s, the I term climbed to the 3-5 A breakaway, and the wheel then overshot to 3.8x. Ramp the
+  current at a fixed rate while stuck and cap the reference lead, so nothing is owed when the wheel lets go.

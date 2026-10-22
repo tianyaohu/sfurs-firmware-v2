@@ -109,7 +109,7 @@ static void clear_target(struct motor_cmd *m)
 {
   m->setpoint = 0;
   m->ff_ma = 0;
-  m->parking = 0U;
+  m->holding = 0U;
   m->start_dir = 0;
   m->first_edge = 0U;
 }
@@ -291,6 +291,10 @@ static void apply(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
     m->first_edge = 0U;
   }
   if (output_on(m->lifecycle)) out->set_target = 1U;
+  if (m->lifecycle == MOTOR_LC_HOLD && c->setpoint != 0) { /* the bridge is on: resume, no MCSDK start */
+    m->lifecycle = MOTOR_LC_RUNNING;
+    m->holding = 0U;
+  }
 }
 
 static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct motor_cmd_actions *out)
@@ -308,29 +312,33 @@ static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
     case MOTOR_LC_STARTING:
       if (in->mc == MOTOR_CMD_MC_RUN) {
         m->lifecycle = MOTOR_LC_RUNNING;
-        m->parking = 0U;
+        m->holding = 0U;
       } else if (m->now_ms - m->state_ms >= MOTOR_CMD_START_TIMEOUT_MS) {
         fault(m, out, MOTOR_R_FAULT_MCSDK);
       }
       break;
     case MOTOR_LC_RUNNING:
-      if (in->loop_failed) {
+      if (in->stall_fault) {
         fault(m, out, MOTOR_R_FAULT_STALL);
-        out->stop_cause = MOTOR_CMD_STOP_LOOP_FAILED; /* RUNNING: the output was on, so stop is set */
+      } else if (in->hall_lost) {
+        fault(m, out, MOTOR_R_FAULT_HALL_LOST);
       } else if (in->mc != MOTOR_CMD_MC_RUN) { /* MCSDK left RUN on its own */
         fault(m, out, MOTOR_R_FAULT_MCSDK);
-      } else if (m->setpoint == 0 && in->rpm < MOTOR_CMD_PARK_RPM && in->rpm > -MOTOR_CMD_PARK_RPM) {
-        if (!m->parking) {
-          m->parking = 1U;
-          m->park_since = m->now_ms;
-        } else if (m->now_ms - m->park_since >= MOTOR_CMD_PARK_MS) {
-          stop_output(m, out, MOTOR_CMD_STOP_PARKED);
-          m->lifecycle = MOTOR_LC_READY;
-          clear_target(m);
+      } else if (m->setpoint == 0 && in->standstill) {
+        if (!m->holding) {
+          m->holding = 1U;
+          m->hold_since = m->now_ms;
+        } else if (m->now_ms - m->hold_since >= MOTOR_CMD_HOLD_MS) {
+          m->lifecycle = MOTOR_LC_HOLD; /* output stays on: the speed loop holds Iq at 0 */
+          m->holding = 0U;
         }
       } else {
-        m->parking = 0U;
+        m->holding = 0U;
       }
+      break;
+    case MOTOR_LC_HOLD:
+      if (in->hall_lost) fault(m, out, MOTOR_R_FAULT_HALL_LOST);
+      else if (in->mc != MOTOR_CMD_MC_RUN) fault(m, out, MOTOR_R_FAULT_MCSDK);
       break;
     default:
       break;
@@ -347,7 +355,8 @@ void motor_cmd_tick(struct motor_cmd *m, const struct motor_cmd_inputs *in, stru
   memset(out, 0, sizeof *out);
   m->now_ms = in->now_ms;
   m->tick_session = m->session;
-  if (in->mc == MOTOR_CMD_MC_FAULT && m->lifecycle != MOTOR_LC_FAULTED) fault(m, out, MOTOR_R_FAULT_MCSDK);
+  if (in->mc == MOTOR_CMD_MC_FAULT && m->lifecycle != MOTOR_LC_FAULTED)
+    fault(m, out, in->hall_lost ? MOTOR_R_FAULT_HALL_LOST : MOTOR_R_FAULT_MCSDK);
   if (atomic_exchange_explicit(&m->inbox_overflow, 0U, memory_order_acq_rel)) {
     ++m->count.overflow;
     if (m->lifecycle != MOTOR_LC_FAULTED) {
@@ -370,8 +379,6 @@ void motor_cmd_tick(struct motor_cmd *m, const struct motor_cmd_inputs *in, stru
       reply(m, in, c->seq, MOTOR_OUT_INHIBITED, m->latched);
     else if (c->setpoint != 0 && (m->lifecycle == MOTOR_LC_READY || m->lifecycle == MOTOR_LC_STARTING))
       reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_STARTING);
-    else if (c->mode == MOTOR_MODE_SPEED && c->ff_ma != 0 && !m->cfg.ff_supported)
-      reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_FF_UNUSED);
     else
       reply(m, in, c->seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
   }

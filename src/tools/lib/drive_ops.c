@@ -11,13 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
-const char *const DRIVE_SETTING_KEYS[DRIVE_KEYS] = {
-  "kp", "ki", "ff_static_ma", "ff_kinetic_ma", "speed_rev_filter", "speed_edge_est",
-  "dsc_enable", "dsc_ff_run_ma", "dsc_ff_per_krpm_ma", "dsc_start_from_ma",
-  "dsc_start_cap_ma", "dsc_start_slope_ma", "dsc_start_hold_ms", "dsc_pcap_ma",
-  "dsc_pcap_ms", "dsc_pcap_updates", "dsc_pcap_fallback_ms", "dsc_hold_decay_ma",
-  "dsc_watch_ms", "dsc_preload_pct"
-};
+const char *const DRIVE_SETTING_KEYS[DRIVE_KEYS] = {"kp", "ki", "stall_ramp_ma_per_s", "stall_ms"};
 
 void drive_key_press(drive_keys_t *k, int key, double now_s)
 {
@@ -44,15 +38,8 @@ void drive_key_vector(drive_keys_t *k, double now_s, double speed_mps, double ya
 drive_record_summary_t drive_record_summary(const ik_record_unpacked_t *rows, int n, int trigger)
 {
   drive_record_summary_t s = {.samples = n, .trigger = trigger};
-  for (int k = 0; k < n; k++) {
+  for (int k = 0; k < n; k++)
     if (abs(rows[k].rpm) > s.peak_rpm) s.peak_rpm = abs(rows[k].rpm);
-    if (!s.handoff && k > 0 && !strcmp(rows[k - 1].state, "starting") &&
-        !strcmp(rows[k].state, "running") && !strcmp(rows[k].reason, "edge")) {
-      s.handoff = true;
-      s.handoff_ms = k - trigger;
-      s.handoff_iq_a = nearbyint(rows[k - 1].iq_ref_a * 100) / 100;
-    }
-  }
   return s;
 }
 
@@ -229,15 +216,7 @@ int drive_stage_analyze(drive_stage_t *s)
   return tune_response(s->analysis, s->pulse.n, &s->response);
 }
 
-static int config(ik_link_t *l, int w, const char *key, int value)
-{
-  uint32_t id, word;
-  if (ik_config_frame(IK_WHEEL_SELECT[w], key, value, &id, &word)) {
-    snprintf(l->err, sizeof l->err, "invalid setting %s=%d", key, value);
-    return -1;
-  }
-  return ik_send_raw(l, id, word, 1.0);
-}
+_Static_assert(DRIVE_KEYS <= PULSE_MAX_KEYS, "pulse_run carries every drive setting");
 
 int drive_stage_run(ik_link_t *l, const char *directory, const char *name,
                     const esc_move_t *plan, size_t count, double duration_s,
@@ -248,34 +227,17 @@ int drive_stage_run(ik_link_t *l, const char *directory, const char *name,
   if (snprintf(filename, sizeof filename, "%s.jsonl", name) >= (int)sizeof filename ||
       drive_path(path, sizeof path, directory, filename)) return -1;
   if (drive_preflight(l, 0)) return -1;
-  pulse_settings_t pulse = {.n_keys = PULSE_MAX_KEYS};
-  for (int k = 0; k < PULSE_MAX_KEYS; k++) {
+  /* pulse_run sends every key while IDLE and restores the boot defaults afterwards. */
+  pulse_settings_t pulse = {.n_keys = DRIVE_KEYS};
+  for (int k = 0; k < DRIVE_KEYS; k++) {
     pulse.keys[k] = DRIVE_SETTING_KEYS[k];
     for (int w = 0; w < 4; w++) pulse.value[w][k] = settings->value[w][k];
   }
-  int rc = 0;
-  printf("-- %s:", name);
-  for (int w = 0; w < 4; w++) printf(" %s %d/%d", IK_WHEEL_POS[w], settings->value[w][2], settings->value[w][3]);
+  printf("-- %s: kp/ki", name);
+  for (int w = 0; w < 4; w++) printf(" %s %d/%d", IK_WHEEL_POS[w], settings->value[w][0], settings->value[w][1]);
   puts(""); fflush(stdout);
-  /* pulse_run owns eight keys. Apply the remaining keys only while all ESCs are IDLE. */
-  for (int w = 0; w < 4 && !rc; w++)
-    for (int k = PULSE_MAX_KEYS; k < DRIVE_KEYS && !rc; k++)
-      rc = config(l, w, DRIVE_SETTING_KEYS[k], settings->value[w][k]);
-  if (!rc) rc = pulse_run(l, plan, count, duration_s, &pulse, accel_rpmps, &s->pulse);
+  int rc = pulse_run(l, plan, count, duration_s, &pulse, accel_rpmps, &s->pulse);
   char error[sizeof l->err]; snprintf(error, sizeof error, "%s", l->err);
-  (void)ik_write(l, IK_ENABLE, 0);
-  const int wheels[4] = {0, 1, 2, 3};
-  if (!pulse_wait_idle(l, wheels, 4, 3.0)) {
-    fprintf(stderr, "not all wheels IDLE; cannot confirm defaults restored\n");
-    if (!rc) { rc = -1; snprintf(error, sizeof error, "defaults restore: wheels not IDLE"); }
-  }
-  for (int w = 0; w < 4; w++) for (int k = PULSE_MAX_KEYS; k < DRIVE_KEYS; k++) {
-    int def;
-    if (esc_default(DRIVE_SETTING_KEYS[k], &def) || config(l, w, DRIVE_SETTING_KEYS[k], def)) {
-      if (!rc) snprintf(error, sizeof error, "defaults restore failed: %s", DRIVE_SETTING_KEYS[k]);
-      rc = -1;
-    }
-  }
   if (drive_log_write(path, &s->pulse) || drive_stage_analyze(s)) {
     if (!rc) snprintf(error, sizeof error, "cannot write/analyze stage %s", name);
     rc = -1;

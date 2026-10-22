@@ -25,23 +25,12 @@ static const char *const SYM_NAMES[IK_SYM_COUNT] = {
 static const struct { const char *name; int number; } CONFIG_KEYS[] = {
     {"kp", ESC_CFG_SPEED_KP}, {"ki", ESC_CFG_SPEED_KI}, {"shift", ESC_CFG_HALL_SHIFT_DEG},
     {"iqmax_ma", ESC_CFG_IQ_MAX_MA}, {"current_kp", ESC_CFG_CURRENT_KP},
-    {"current_ki", ESC_CFG_CURRENT_KI}, {"ff_static_ma", ESC_CFG_FF_STATIC_MA},
-    {"ff_kinetic_ma", ESC_CFG_FF_KINETIC_MA},
-    /* startup speed loop (drive_speed_ctrl.h) */
-    {"dsc_enable", ESC_CFG_DSC_ENABLE}, {"dsc_ff_run_ma", ESC_CFG_DSC_FF_RUN_MA},
-    {"dsc_ff_per_krpm_ma", ESC_CFG_DSC_FF_PER_KRPM_MA}, {"dsc_start_from_ma", ESC_CFG_DSC_START_FROM_MA},
-    {"dsc_start_cap_ma", ESC_CFG_DSC_START_CAP_MA}, {"dsc_start_slope_ma", ESC_CFG_DSC_START_SLOPE_MA},
-    {"dsc_start_hold_ms", ESC_CFG_DSC_START_HOLD_MS}, {"dsc_pcap_ma", ESC_CFG_DSC_PCAP_MA},
-    {"dsc_pcap_ms", ESC_CFG_DSC_PCAP_MS}, {"dsc_pcap_updates", ESC_CFG_DSC_PCAP_UPDATES},
-    {"dsc_pcap_fallback_ms", ESC_CFG_DSC_PCAP_FALLBACK_MS}, {"speed_rev_filter", ESC_CFG_SPEED_REV_FILTER},
-    {"dsc_hold_decay_ma", ESC_CFG_DSC_HOLD_DECAY_MA}, {"dsc_watch_ms", ESC_CFG_DSC_WATCH_MS},
-    {"dsc_preload_pct", ESC_CFG_DSC_PRELOAD_PCT}, {"speed_edge_est", ESC_CFG_SPEED_EDGE_EST}};
+    {"current_ki", ESC_CFG_CURRENT_KI}, {"stall_ramp_ma_per_s", ESC_CFG_STALL_RAMP_MA_PER_S},
+    {"stall_ms", ESC_CFG_STALL_MS}};
 
-static const char *const STOP_REASONS[] = {"-", "stop", "timeout", "fault", "align", "capture", "parked"};
+static const char *const STOP_REASONS[] = {"-", "stop", "timeout", "fault", "align", "capture"};
 static const char *const ALIGN_RESULTS[] = {"-", "ok", "REVERSED", "NO_EDGES", "aborted", "running"};
-static const char *const DSC_STATES[] = {"stopped", "starting", "running", "failed"};
-static const char *const DSC_REASONS[] = {"none", "armed", "edge", "stop", "reverse", "no_edge",
-                                          "no_capture", "inactive", "restick", "moving"};
+static const char *const REC_MODES[] = {"off", "run", "hold", "stall_ramp"}; /* ESC_REC_MODE_* */
 static const struct { uint32_t bit; const char *name; } FAULT_BITS[] = {
     {0x01, "duration"}, {0x02, "overvolt"}, {0x04, "undervolt"}, {0x08, "overtemp"},
     {0x10, "startup"}, {0x20, "speed_fdbk"}, {0x40, "overcurrent"}, {0x80, "sw_error"}};
@@ -403,7 +392,6 @@ const char *ik_config_key_name(size_t i, int *number)
 void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u)
 {
   unsigned p = (uint16_t)s->packed;
-  unsigned reason = (p >> 2) & 15;
   u->ref_rpm = s->ref_rpm;
   u->rpm = s->rpm;
   u->p_a = (double)s->p / ESC_COUNTS_PER_AMP;
@@ -411,10 +399,11 @@ void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u)
   u->ff_a = (double)s->ff / ESC_COUNTS_PER_AMP;
   u->iq_ref_a = (double)s->iq_ref / ESC_COUNTS_PER_AMP;
   u->iq_a = (double)s->iq / ESC_COUNTS_PER_AMP;
-  u->state = DSC_STATES[p & 3];
-  u->reason = reason < ARRAY_LEN(DSC_REASONS) ? DSC_REASONS[reason] : "?";
-  u->capped = p & 0x40;
-  u->dsc = p & 0x80;
+  u->mode = REC_MODES[p & 3];
+  u->valid = p & 0x04;
+  u->saturated = p & 0x08;
+  u->bleed = p & 0x10;
+  u->stall_timer = p & 0x20;
   u->edges_mod16 = (int)((p >> 8) & 15);
   u->hall_state = (int)((p >> 12) & 7);
   u->loop = p & 0x8000;

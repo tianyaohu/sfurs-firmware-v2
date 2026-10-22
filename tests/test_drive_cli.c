@@ -92,11 +92,17 @@ static void test_help_and_invalid_arguments(void)
   CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--distance", "1", "--speed", "0.1", NULL}), 1);
   CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--reps", "4", NULL}), 1);
   CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--axis", "bad", NULL}), 1);
-  CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--edge-speed", "2", NULL}), 1);
   CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--record-pre", "384", NULL}), 1);
-  CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--dsc-cap", "2000", NULL}), 1);
-  CHECK(strstr(output, "need --dsc"));
   CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--kp", "40000", NULL}), 1);
+  CHECK(strstr(output, "invalid setting kp"));
+  /* Retired startup-loop and friction options are gone, not silently ignored. */
+  const char *retired[] = {"--dsc-cap", "--ff", "--ff-static", "--ff-kinetic", "--edge-speed"};
+  for (size_t k = 0; k < sizeof retired / sizeof *retired; k++) {
+    CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, retired[k], "1", NULL}), 1);
+    CHECK(strstr(output, "invalid option"));
+  }
+  CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--frac", "0.5", NULL}), 1);
+  CHECK(strstr(output, "invalid option"));
   CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--speed", "0.31", NULL}), 1);
   CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--x-speed", "0.31", NULL}), 1);
   CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--seconds", "2.1", NULL}), 1);
@@ -108,16 +114,12 @@ static void test_non_camera_options_parse_before_elf_refusal(void)
 {
   CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--no-camera", "--axis", "wz",
     "--distance", "0.6", "--speed", "0.2", "--reps", "3", "--accel", "900", "--first-back", "--pause", "1.5",
-    "--kp", "100", "--ki", "20", "--ff", "200", "--ff-static", "300", "--ff-kinetic", "250", "--edge-speed", "1",
-    "--dsc", "--dsc-ff-run", "200", "--dsc-from", "300", "--dsc-cap", "3000", "--dsc-slope", "2",
-    "--dsc-pcap", "1000", "--dsc-hold-decay", "3", "--dsc-watch", "10", "--dsc-preload", "50",
-    "--record", "--record-pre", "50", "--record-delay", "1000", "--min-vbus", "11", "--check",
+    "--kp", "100", "--ki", "20", "--record", "--record-pre", "50", "--record-delay", "1000", "--min-vbus", "11", "--check",
     "--elf", "/nonexistent.elf", "--sn", "FAKE", NULL}), 1);
   CHECK(strstr(output, "IK ELF not found"));
   CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--no-camera", "--speed", "0.2", "--x-speed", "0.3",
     "--seconds", "0.8", "--pause", "1.5", "--reps", "2", "--axes", "both", "--kp", "100", "--ki", "20",
-    "--frac", "0.65", "--max-tries", "4", "--max-spread", "0.2", "--breakaway-ms", "80", "--spread-ms", "30",
-    "--overshoot", "1.3", "--min-vbus", "11", "--elf", "/nonexistent.elf", "--sn", "FAKE", NULL}), 1);
+    "--max-spread", "0.2", "--min-vbus", "11", "--elf", "/nonexistent.elf", "--sn", "FAKE", NULL}), 1);
   CHECK(strstr(output, "IK ELF not found"));
   for (int i = 0; i < 2; i++) {
     CHECK_EQ(run(i ? TUNE_TOOL : MOVE_TOOL, (const char *const[]){"--out", directory, "--calibration", "gone.yaml", NULL}), 1);

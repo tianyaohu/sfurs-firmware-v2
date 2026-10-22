@@ -458,9 +458,8 @@ static void test_reject_vectors(void)
     {0x11, 0, 0, 0, 0, 0, 250, 0x3c},
     {0x11, 0, 0xa1, 0x0b, 0, 0, 250, 0x3c},
     {0x12, 0, 0, 0, 0, 0, 251, 0x3c},
-    {0x11, 0, 0, 0, 0xf4, 1, 251, 0x3c},
   };
-  static const unsigned reasons[] = {1, 2, 3, 4, 5, 8, 7, 6, 6, 9, 10, 11, 0, 19, 21, 18};
+  static const unsigned reasons[] = {1, 2, 3, 4, 5, 8, 7, 6, 6, 9, 10, 11, 0, 19, 21};
   size_t count;
   const esc_reject_case_t *cases = esc_ctl_reject_cases(&count);
   CHECK_EQ(count, sizeof bytes / sizeof *bytes);
@@ -471,7 +470,7 @@ static void test_reject_vectors(void)
     CHECK_EQ(memcmp(data, bytes[k], 8), 0);
     CHECK_EQ(id, 0x10U | (1U << w) | (k == 4 ? 1U << ((w + 1) % 4) : 0));
     CHECK_EQ(cases[k].reason, reasons[k]);
-    CHECK_EQ(cases[k].outcome, k == 12 ? 4 : k == 15 ? 1 : 3);
+    CHECK_EQ(cases[k].outcome, k == 12 ? 4 : 3);
     CHECK_EQ(cases[k].disarmed, k == 6);
     struct motor_control c;
     CHECK_EQ(motor_control_decode(id, data, 8, &c), k < 5 ? reasons[k] : 0);

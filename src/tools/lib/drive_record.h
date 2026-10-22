@@ -11,6 +11,6 @@ typedef struct {
 } drive_records_t;
 /** @brief Read each wheel independently; failed reads are preserved in the summary. */
 int drive_records_read(ik_link_t *link, const char *path, double t0_monotonic_s, drive_records_t *out);
-/** @brief Write a wheel-keyed summary with nulls for unobserved handoffs. */
+/** @brief Write a wheel-keyed summary (samples, trigger, peak RPM); failed reads as their error string. */
 void drive_records_json(FILE *f, const drive_records_t *records);
 #endif

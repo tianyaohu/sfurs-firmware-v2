@@ -6,14 +6,12 @@
 #include "pulse_run.h"
 #include "tune_analysis.h"
 
-#define DRIVE_KEYS 20
+#define DRIVE_KEYS 4 /**< kp, ki, stall_ramp_ma_per_s, stall_ms: every RAM tunable the tools restore */
 #define DRIVE_MAX_MOVES 20
 
 typedef struct { double hold_s, expiry_s[3]; int sign[3]; } drive_keys_t;
 typedef struct {
-  int samples, trigger, handoff_ms, peak_rpm;
-  bool handoff;
-  double handoff_iq_a;
+  int samples, trigger, peak_rpm;
 } drive_record_summary_t;
 typedef struct { int value[IK_WHEELS][DRIVE_KEYS]; } drive_settings_t;
 extern const char *const DRIVE_SETTING_KEYS[DRIVE_KEYS];
@@ -29,14 +27,14 @@ typedef struct {
 void drive_key_press(drive_keys_t *keys, int key, double now_s);
 /** @brief Combined body twist in mm/s and mrad/s, with expired axes released. */
 void drive_key_vector(drive_keys_t *keys, double now_s, double speed_mps, double yaw_radps, int32_t out[3]);
-/** @brief Summarize an observed STARTING to RUNNING/edge recorder transition. */
+/** @brief Summarize one recorder window: sample count, trigger index, peak |RPM|. */
 drive_record_summary_t drive_record_summary(const ik_record_unpacked_t *rows, int n, int trigger);
 /** @brief Compare two four-wheel snapshots for live IDLE, fault-free replies and Vbus. */
 int drive_preflight_rows(const ik_row_t before[4], const ik_row_t rows[4], double min_vbus_v,
                          char *problems, size_t capacity);
 /** @brief Read snapshots 0.3 s apart and refuse unsafe ground drive. */
 int drive_preflight(ik_link_t *link, double min_vbus_v);
-/** @brief Initialize every Python ground-tool tunable from firmware defaults. */
+/** @brief Initialize every ground-tool tunable (DRIVE_SETTING_KEYS) from firmware defaults. */
 int drive_settings_defaults(drive_settings_t *settings);
 /** @brief Override a named tunable on all four wheels, validating CONFIG_SET range. */
 int drive_setting_set(drive_settings_t *settings, const char *key, int value);

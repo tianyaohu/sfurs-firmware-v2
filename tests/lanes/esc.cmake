@@ -12,13 +12,11 @@ set(esc_app_cases
   test_ident_reports_validity_record
   test_capture_steps_id_and_reads_out
   test_capture_stop_and_busy
-  test_friction_feedforward
-  test_parks_at_zero_command
-  test_startup_loop_config_and_failed_latch
-  test_startup_speed_plausibility
+  test_speed_config_keys
+  test_holds_at_zero_command
+  test_speed_loop_drives_and_faults
   test_speed_loop_recorder
-  test_recorder_idle_arm_and_early_stop
-  test_recorder_dsc_stop_drops_loop_terms)
+  test_recorder_idle_arm_and_early_stop)
 
 foreach(wheel NE SE SW NW)
   string(TOLOWER "${wheel}" suffix)
@@ -28,7 +26,7 @@ foreach(wheel NE SE SW NW)
     set(app_test test_esc_drive_app_${suffix})
   endif()
   host_test(${app_test}
-    SOURCES src/esc/motor_config/Src/drive_app.c src/esc/motor_config/Src/motor_cmd.c
+    SOURCES src/esc/motor_config/Src/drive_app.c src/esc/motor_config/Src/motor_cmd.c src/esc/motor_config/Src/motor_speed.c
             src/shared/src/motor_protocol.c
     INCLUDES tests/esc_drive_app_fakes src/esc/motor_config/Inc src/esc/Inc src/shared/can src/shared/inc
     DEFS MOTOR_${wheel} DRIVE_APP_VALIDITY=fake_validity
@@ -37,11 +35,6 @@ foreach(wheel NE SE SW NW)
   target_compile_options(${app_test} PRIVATE
     -include "${REPO}/tests/esc_drive_app_fakes/test_hooks.h")
 endforeach()
-
-set(esc_sdk src/esc/motor_config/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any)
-host_test(test_esc_speed_ctrl
-  SOURCES src/esc/motor_config/Src/drive_speed_ctrl.c ${esc_sdk}/Src/pid_regulator.c
-  INCLUDES tests/esc_speed_ctrl_fakes src/esc/motor_config/Inc ${esc_sdk}/Inc)
 
 add_executable(esc_blink_image esc_blink/image_embed.c ${REPO}/src/tools/lib/crc32.c)
 target_include_directories(esc_blink_image PRIVATE ${REPO}/tests ${REPO}/src/tools/lib)
@@ -60,7 +53,7 @@ add_test(NAME test_esc_blink_build
 set_tests_properties(test_esc_blink_build PROPERTIES SKIP_RETURN_CODE 77)
 
 foreach(target test_esc_drive_app test_esc_drive_app_se test_esc_drive_app_sw
-    test_esc_drive_app_nw test_esc_speed_ctrl esc_blink_image)
+    test_esc_drive_app_nw esc_blink_image)
   set_target_properties(${target} PROPERTIES C_EXTENSIONS OFF)
 endforeach()
 

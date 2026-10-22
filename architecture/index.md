@@ -36,8 +36,8 @@ When you add a file or folder, add a line here in the same commit.
 |---|---|
 | `motor_config/Src/drive_app.c` | All application behaviour: start, speed target, status/diag, config, protections |
 | `motor_config/Src/motor_cmd.c` | Command lifecycle (pure): ARM/session/sequence checks, watchdog, faults, replies |
-| `motor_config/Src/motor_speed.c` | Speed loop (pure, Stage 4a; not wired into drive_app yet): reference interpolation, Hall speed estimate, P + I + ff with stall ramp, over-speed bleed, stall timer |
-| `motor_config/Src/mc_tasks_foc.c` | Hall angle hook in the FOC current controller |
+| `motor_config/Src/motor_speed.c` | Speed loop (pure; drive_app runs it every 1 ms): reference interpolation, Hall speed estimate, P + I + ff with stall ramp, over-speed bleed, stall timer |
+| `motor_config/Src/mc_tasks_foc.c` | Forced-angle and capture hooks in the FOC current controller (alignment, capture) |
 | `motor_config/Inc/*parameters.h` | Motor and loop parameters |
 | `bootloader/` | 16 KiB CAN bootloader; compiles the protocol from `src/shared` |
 | `Inc/motor_controller_can.h` | `MOTOR_NE/SE/SW/NW` build macro to CAN select bit |
@@ -57,7 +57,7 @@ Programs (one `targets/<tool>.cmake` each):
 | `esc_tool.c` | ESC setup: status, align, set, capture, spin, pulse, stop, clear |
 | `keyboard_drive.c` | WASD/QE drive |
 | `move_test.c` | Scripted straight-line moves, logged with monotonic stamps |
-| `tune_ground.c` | Ground friction feed-forward tuning |
+| `tune_ground.c` | Ground friction identification: breakaway and kinetic current per wheel |
 | `sweep.c` | Oblique out-and-back pulses for friction identification |
 | `fwu_image/fwu_image.c` | ESC app to Nucleo FWU payload (own CMake project) |
 

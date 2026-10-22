@@ -57,16 +57,18 @@ static void test_defaults_and_settings_all_wheels(void)
 {
   drive_settings_t settings;
   CHECK_EQ(drive_settings_defaults(&settings), 0);
-  int dsc_keys = 0;
+  const char *const want[] = {"kp", "ki", "stall_ramp_ma_per_s", "stall_ms"};
+  CHECK_EQ(DRIVE_KEYS, 4);
   for (int k = 0; k < DRIVE_KEYS; k++) {
     int def;
+    CHECK(!strcmp(DRIVE_SETTING_KEYS[k], want[k]));
     CHECK_EQ(esc_default(DRIVE_SETTING_KEYS[k], &def), 0);
-    if (!strncmp(DRIVE_SETTING_KEYS[k], "dsc_", 4)) dsc_keys++;
     for (int w = 0; w < 4; w++) CHECK_EQ(settings.value[w][k], def);
   }
-  CHECK_EQ(dsc_keys, 14);
-  CHECK_EQ(drive_setting_set(&settings, "ff_static_ma", 1234), 0);
-  for (int w = 0; w < 4; w++) CHECK_EQ(settings.value[w][2], 1234);
+  CHECK_EQ(drive_setting_set(&settings, "stall_ramp_ma_per_s", 12000), 0);
+  for (int w = 0; w < 4; w++) CHECK_EQ(settings.value[w][2], 12000);
+  CHECK(drive_setting_set(&settings, "ff_static_ma", 1234) != 0); /* retired */
+  CHECK(drive_setting_set(&settings, "shift", 10) != 0); /* valid CONFIG key, not a drive setting */
   CHECK(drive_setting_set(&settings, "not_a_setting", 1) != 0);
   CHECK(drive_setting_set(&settings, "kp", 32768) != 0);
   CHECK_EQ(drive_setting_set(&settings, "kp", -32768), 0);
@@ -137,7 +139,8 @@ static void test_stage_json_plan_windows_and_nulls(void)
   CHECK(isnan(s.vbus_min_v));
   f = tmpfile(); CHECK(f); drive_stage_json(f, "drive", &s, &settings, plan, 2);
   rewind(f); memset(text, 0, sizeof text); CHECK(fread(text, 1, sizeof text - 1, f) > 0); fclose(f);
-  CHECK(strstr(text, "\"settings\":{")); CHECK(strstr(text, "\"vbus_min\":null"));
+  CHECK(strstr(text, "\"settings\":{\"kp\":1024,\"ki\":553,\"stall_ramp_ma_per_s\":10000,\"stall_ms\":500}"));
+  CHECK(strstr(text, "\"vbus_min\":null"));
   CHECK(strstr(text, "\"breakaway_s\":null")); CHECK(!strstr(text, "nan"));
   drive_stage_free(&s);
 }

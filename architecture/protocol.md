@@ -110,7 +110,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
   command-apply skew. It does not mean the speed was reached.
 - SUPERSEDED: accepted, then replaced in the single motion slot by a newer frame before a tick consumed it.
 - INHIBITED: applied, but the output cannot follow. Reasons: LIMITED (effective limit below the request), STARTING
-  (MCSDK start in progress), FF_UNUSED (Stage 2 adapter: the old loop drops ff while its startup loop is on), and
+  (MCSDK start in progress), FF_UNUSED (18, retired with the old speed loop: never sent, never reused), and
   the FAULTED reasons.
 - Pending replies sit in a 4-entry ring; when it is full the newest is dropped and counted (`reply_dropped`, ESC
   state over SWD); see [command-lifecycle.md](command-lifecycle.md) for why.

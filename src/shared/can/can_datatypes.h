@@ -90,58 +90,40 @@ enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
  * speed-loop recorder. It only observes (allowed while driving; rejected during
  * a current-loop capture, which it shares memory with). It records one sample
  * per speed-loop tick (1 kHz), triggers when the speed reference leaves zero
- * (|ref| >= 2 RPM, after first being zero) plus delay ms (0..4095), and keeps
+ * (|ref| >= 10 RPM, MOTOR_SPEED_MOVING_RPM, after first being below it) plus delay ms (0..4095), and keeps
  * pre (0..ESC_RECORD_SAMPLES-1) samples from before the trigger point. Read
  * with ESC_CAPTURE_READ: banks 0/1 carry channels 0-2/3-5, bank 0 with
  * ESC_RECORD_READ_CH67 set carries channels 6, 7, 0 (the Nucleo relay keeps
  * banks 0/1 only); bank 3 sample 1: status (ESC_RECORD_*), samples, trigger
  * sample index.
- * Channels: ramped ref RPM, measured RPM, P, I, ff, Iq reference, measured Iq
- * (counts), packed: bits 0-1 startup-loop state (DSC_*), 2-5 reason, 6 P cap,
- * 7 startup loop enabled, 8-11 net Hall edges (+ minus -) mod 16, 12-14 raw Hall
- * state (HALL_M1.HallState, 1..6; 0/7 = invalid) so tools know the starting sector
- * and the sector after each edge, 15 speed loop ran this tick (else ref, P, I, ff, Iq ref are
- * 0; state/reason keep the last values, e.g. FAILED). Legacy loop: I from the
- * PI integral, P = PI out - I, ff = Iq reference - PI out. */
+ * Channels (motor_speed.h): applied ref RPM, speed estimate RPM, P, I, ff, Iq reference, measured Iq
+ * (counts), packed: bits 0-1 loop mode (ESC_REC_MODE_*), 2 estimate valid, 3 request saturated,
+ * 4 over-speed bleed this tick, 5 stall timer counting, 6-7 0, 8-11 net Hall edges (+ minus -)
+ * mod 16, 12-14 raw Hall state (HALL_M1.HallState, 1..6; 0/7 = invalid) so tools know the
+ * starting sector and the sector after each edge, 15 speed loop ran this tick (else ref, P, I,
+ * ff and Iq ref are 0). */
 #define ESC_RECORD_START 0x5EU
 #define ESC_RECORD_SAMPLES 384U /**< speed-loop ticks recorded */
 #define ESC_RECORD_INFO_SAMPLE 1U /**< bank 3 sample index holding the recorder status */
 #define ESC_RECORD_READ_CH67 (1U << 18) /**< in the ESC_CAPTURE_READ word */
 enum { ESC_RECORD_NONE = 0, ESC_RECORD_ARMED = 1, ESC_RECORD_TRIGGERED = 2,
        ESC_RECORD_DONE = 3, ESC_RECORD_REJECTED = 4 };
+/** Recorder channel 7 bits 0-1: what the speed loop did this tick. */
+enum { ESC_REC_MODE_OFF = 0, ESC_REC_MODE_RUN = 1, ESC_REC_MODE_HOLD = 2, ESC_REC_MODE_STALL_RAMP = 3 };
 
 #define ESC_COUNTS_PER_AMP 544 /**< MCSDK current counts per ampere */
 
-/** CURRENT_KP/KI set both the Iq and Id PI gains (dividers TF_KPDIV/TF_KIDIV).
- * FF_STATIC/KINETIC_MA: friction feed-forward added to the speed loop's Iq
- * reference (0..IQMAX mA; see drive_app.h). */
+/** CONFIG_SET keys. SPEED_KP/KI: motor_speed gains (counts per RPM x 256, counts per RPM per ms
+ * x 16384). CURRENT_KP/KI set both the Iq and Id PI gains (dividers TF_KPDIV/TF_KIDIV).
+ * STALL_RAMP_MA_PER_S: integrator slope while the wheel is stuck (2000..30000 mA/s); STALL_MS:
+ * high current without Hall progress this long faults the wheel (200..2000 ms). Keys 7-24
+ * (old friction feed-forward and startup loop) are retired: rejected, numbers never reused. */
 enum { ESC_CFG_SPEED_KP = 1, ESC_CFG_SPEED_KI = 2, ESC_CFG_HALL_SHIFT_DEG = 3,
        ESC_CFG_IQ_MAX_MA = 4, ESC_CFG_CURRENT_KP = 5, ESC_CFG_CURRENT_KI = 6,
-       ESC_CFG_FF_STATIC_MA = 7, ESC_CFG_FF_KINETIC_MA = 8,
-       /** Startup speed loop (drive_speed_ctrl.h), IDLE only, RAM only:
-        * ENABLE 0/1; *_MA 0..IQMAX mA; SLOPE mA per ms; *_MS ms; UPDATES n. */
-       ESC_CFG_DSC_ENABLE = 9, ESC_CFG_DSC_FF_RUN_MA = 10, ESC_CFG_DSC_FF_PER_KRPM_MA = 11,
-       ESC_CFG_DSC_START_FROM_MA = 12, ESC_CFG_DSC_START_CAP_MA = 13,
-       ESC_CFG_DSC_START_SLOPE_MA = 14, ESC_CFG_DSC_START_HOLD_MS = 15,
-       ESC_CFG_DSC_PCAP_MA = 16, ESC_CFG_DSC_PCAP_MS = 17, ESC_CFG_DSC_PCAP_UPDATES = 18,
-       ESC_CFG_DSC_PCAP_FALLBACK_MS = 19,
-       /** Hall reversal filter on the speed fed to either loop (drive_speed_ctrl.h
-        * dsc_reversal_filter), 0/1, default on. */
-       ESC_CFG_SPEED_REV_FILTER = 20,
-       /** Startup loop hand-off hold decay, mA per ms, 0..IQMAX (0 = hold until
-        * the positive-P cap releases). */
-       ESC_CFG_DSC_HOLD_DECAY_MA = 21,
-       /** Startup loop motion confirmation, ms (0 = hand off at the first
-        * edge, 0..2000), and breakaway preload, % of the last confirmed
-        * hand-off current per direction (0..90, 0 = off). */
-       ESC_CFG_DSC_WATCH_MS = 22, ESC_CFG_DSC_PRELOAD_PCT = 23,
-       /** Low-speed speed from Hall edge timing for either loop, 0/1. */
-       ESC_CFG_SPEED_EDGE_EST = 24 };
+       ESC_CFG_STALL_RAMP_MA_PER_S = 25, ESC_CFG_STALL_MS = 26 };
+/** STATUS stop reasons; 6 and 7 (old parking and startup-loop failure) are retired. */
 enum { ESC_STOP_NONE = 0, ESC_STOP_COMMAND = 1, ESC_STOP_TIMEOUT = 2,
-       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5,
-       ESC_STOP_PARKED = 6 /**< zero command at standstill; next non-zero restarts */,
-       ESC_STOP_START_FAILED = 7 /**< startup loop: no breakaway or no Hall speed;
-                                    latched until a zero command, STOP or gap */ };
+       ESC_STOP_FAULT = 3, ESC_STOP_ALIGN = 4, ESC_STOP_CAPTURE = 5 };
 #define ESC_FLAG_ACTIVE  0x10U /**< streaming speed commands accepted */
 #define ESC_FLAG_DERATED 0x20U /**< I2T limit reached, current derated */
 #define ESC_FLAG_ALIGN   0x40U /**< forced-angle test running: Hall alignment or capture */

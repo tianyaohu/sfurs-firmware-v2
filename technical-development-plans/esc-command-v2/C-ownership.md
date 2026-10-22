@@ -14,7 +14,7 @@ ESC FDCAN ISR (motor_rx.c)
 ESC 1 kHz tick (MCSDK medium-frequency hook; motor_cmd.c, motor_safety.c)
   lifecycle, watchdog, session/sequence --> applied target {mode, setpoint, ff}
   reference r(t): linear from the present value to the setpoint over 20 ms (C5b)
-ESC 1 kHz speed step (motor_speed.c, called from FOC_CalcCurrRef in place of the MCSDK speed PI output)
+ESC 1 kHz speed step (motor_speed.c, run by drive_app's 1 kHz tick; result to MCSDK torque mode via MC_SetCurrentReferenceMotor1; amended by E)
   w_hat, valid  = speed_estimate()                 the only speed estimate (chosen in Stage 4a)
   e             = r - (valid ? w_hat : 0)          w_hat = 0 only before the first edge of a start
   p             = Kp * e  (+ i, Ki = 0 by default)
@@ -50,5 +50,5 @@ DISARMED, READY, FAULTED: output off; nothing is computed.
 | hand-off hold, hold decay, positive-P cap | removed: nothing to hand off; one law from the first tick |
 | restick detection | stall monitor (B) |
 | learned breakaway preload | removed: the Nucleo's friction model provides breakaway current |
-| reversal filter, edge-timing speed, plausibility cap | inputs to `speed_estimate()`: kept only where Stage 4a recorded data needs them; each lesson first becomes a test |
+| reversal filter, edge-timing speed, plausibility cap | removed; the one estimator in `motor_speed.c` (E) covers their cases: validity after 2 same-direction edges, edge timing until MCSDK's buffer is full, 1/t decay |
 | FAILED latch | FAULTED(STALL) / FAULTED(HALL_LOST) with explicit clear |

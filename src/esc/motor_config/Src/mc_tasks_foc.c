@@ -430,24 +430,12 @@ __weak void FOC_CalcCurrRef(uint8_t bMotor)
   __enable_irq();
 
   /* USER CODE BEGIN FOC_CalcCurrRef 0 */
-  if (INTERNAL == FOCVars[bMotor].bDriveInput)
-  {
-    drive_speed_plausible(&HALL_M1._Super.hAvrMecSpeedUnit,
-                          (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()));
-  }
 
   /* USER CODE END FOC_CalcCurrRef 0 */
   if (INTERNAL == FOCVars[bMotor].bDriveInput)
   {
     FOCVars[bMotor].hTeref = STC_CalcTorqueReference(pSTC[bMotor]);
     IqdTmp.q = FOCVars[bMotor].hTeref;
-    /* USER: legacy friction ff here, before the single Iqdref publish below;
-     * the startup speed loop already returns the complete reference. */
-    if (!drive_dsc_enabled())
-      IqdTmp.q = drive_speed_iq_ref(FOCVars[bMotor].hTeref,
-                                    (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()),
-                                    (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1()));
-    drive_record_tick(FOCVars[bMotor].hTeref, IqdTmp.q);
 
   }
   else

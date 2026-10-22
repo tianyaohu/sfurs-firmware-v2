@@ -8,7 +8,7 @@
 
 /**
  * @brief Boot default of a CONFIG_SET key.
- * @param key   key name as in ik_config_frame ("kp", "ff_static_ma", "dsc_enable", ...).
+ * @param key   key name as in ik_config_frame ("kp", "ki", "stall_ramp_ma_per_s", "stall_ms").
  * @param value receives the default.
  * @return 0 if the key has a default, -1 otherwise.
  */

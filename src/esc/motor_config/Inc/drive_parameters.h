@@ -78,7 +78,7 @@
 #define TF_KDDIV_LOG                        LOG2((8192))
 #define TFDIFFERENTIAL_TERM_ENABLING        DISABLE
 
-/* Speed PI in current counts (544/A) per RPM of error (SPEED_UNIT = U_RPM).
+/* Speed loop gains (motor_speed.c) in current counts (544/A) per RPM of error.
  * Kp 1024/256 = 4 counts/RPM: a 100 RPM error asks for ~0.75 A.
  * Ki 553/16384 per 1 ms: a held 30 RPM error adds ~1.9 A/s.
  * Provisional, wheels raised (2026-10-16): 4096/4424 limit-cycled at +-6 A
@@ -90,45 +90,12 @@
 #define PID_SPEED_KI_DEFAULT                553
 #define PID_SPEED_KD_DEFAULT                0
 
-/* Friction feed-forward (drive_app.h), mA. Off until tuned on the ground:
- * breakaway there takes 2.2-3.2 A per wheel, which the PI alone only reaches
- * by integrator windup (slow start, then overshoot). CAN CONFIG_SET keys
- * FF_STATIC_MA / FF_KINETIC_MA. */
-#define FRICTION_FF_STATIC_MA_DEFAULT       0
-#define FRICTION_FF_KINETIC_MA_DEFAULT      0
-
-/* Startup speed loop (drive_speed_ctrl.h, notes/ff-design.md stage 1). Off by
- * default: enable and tune over CAN CONFIG_SET (ESC_CFG_DSC_*). Running ff
- * 600 mA ~ the carpet steady current at 50 RPM (0.4-0.9 A); the start ramp
- * 0.5 -> 3 A at 16 A/s crosses the 1.7-2.3 A carpet breakaway in ~80-110 ms.
- * Hold decay 8 mA/ms: a 1.5 A hand-off hold is gone in ~190 ms. */
-#define DSC_ENABLE_DEFAULT                  0
-#define DSC_FF_RUN_MA_DEFAULT               600
-#define DSC_FF_PER_KRPM_MA_DEFAULT          0
-#define DSC_START_FROM_MA_DEFAULT           500
-#define DSC_START_CAP_MA_DEFAULT            3000
-#define DSC_START_SLOPE_MA_DEFAULT          16
-#define DSC_START_HOLD_MS_DEFAULT           150
-#define DSC_PCAP_MA_DEFAULT                 500
-#define DSC_PCAP_MS_DEFAULT                 50
-#define DSC_PCAP_UPDATES_DEFAULT            2
-#define DSC_PCAP_FALLBACK_MS_DEFAULT        150
-#define DSC_HOLD_DECAY_MA_DEFAULT           8
-/* Mat 2026-10-18 (M1 log): wind-up gives one edge per ~0.5-1 A; after a real
- * breakaway the next edge came 45-50 ms later at the slow legacy ramp. */
-#define DSC_WATCH_MS_DEFAULT                40
-#define DSC_PRELOAD_PCT_DEFAULT             70
-
-/* Hall reversal filter (drive_speed_ctrl.h): a stuck wheel rocking across one
- * Hall edge reads +-200 RPM and the speed loop answers with +-6 A (FR stall
- * test 2026-10-17). On by default; CONFIG ESC_CFG_SPEED_REV_FILTER. */
-#define SPEED_REV_FILTER_DEFAULT            1
-/* Speed fed to either loop below DSC_EDGE_SPEED_MAX_RPM, or while the SDK
- * speed is still 0, from Hall edge timing (dsc_edge_rpm). Mat 2026-10-18: the
- * wheels creep at 7-18 RPM from ~1.2 A while the SDK speed reads 0, so both
- * loops kept raising current and each wheel lurched when its SDK estimate came
- * alive. CONFIG ESC_CFG_SPEED_EDGE_EST. */
-#define SPEED_EDGE_EST_DEFAULT              0
+/* Speed loop stall handling (motor_speed.h, technical-development-plans/esc-command-v2/E-speed-loop.md).
+ * Mat 2026-10-21: breakaway took 3.3-4.7 A; at 10 A/s the stuck-wheel ramp reaches 3.3 A in ~0.3 s.
+ * STALL_MS: >= 80 % of the current limit with no Hall progress this long -> FAULTED(STALL).
+ * CAN CONFIG_SET ESC_CFG_STALL_RAMP_MA_PER_S / ESC_CFG_STALL_MS. */
+#define SPEED_STALL_RAMP_MA_PER_S_DEFAULT   10000
+#define SPEED_STALL_MS_DEFAULT              500
 
 /* Speed control loop */
 #define SPEED_LOOP_FREQUENCY_HZ             (uint16_t)1000 /*!<Execution rate of speed regulation loop (Hz) */

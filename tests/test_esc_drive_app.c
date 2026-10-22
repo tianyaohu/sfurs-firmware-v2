@@ -6,6 +6,7 @@
 #include "check.h"
 #include "motor_controller_can.h"
 #include "motor_protocol.h"
+#include "parameters_conversion.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,46 +16,29 @@
 
 PID_Handle_t PIDSpeedHandle_M1 = { .kidiv = 16384 }, PIDIqHandle_M1, PIDIdHandle_M1;
 HALL_Handle_t HALL_M1;
-static int pi_calls, dsc_calls, dsc_resets, fake_next_state = -1; static dsc_in_t dsc_last_in;
-int16_t PI_Controller(PID_Handle_t *p, int32_t err) { (void)p; ++pi_calls; return (int16_t)err; }
-void dsc_reset(dsc_state_t *st) { *st = (dsc_state_t){0}; ++dsc_resets; }
-static int rebases;
-void dsc_rev_rebase(dsc_rev_t *f, uint16_t p, uint16_t n, uint16_t c) { (void)f; (void)p; (void)n; (void)c; ++rebases; }
-int16_t dsc_reversal_filter(dsc_rev_t *f, uint16_t pos, uint16_t neg, uint16_t caps, int16_t rpm) {
-  f->qpos = (uint16_t)(pos + 100); f->qneg = (uint16_t)(neg + 100); f->qcaps = (uint16_t)(caps + 100);
-  return (int16_t)(rpm / 2); /* marks "filtered" */
-}
-static int16_t fake_edge;
-int16_t dsc_edge_rpm(const dsc_rev_t *f) { (void)f; return fake_edge; }
-int16_t dsc_step(const dsc_cfg_t *c, dsc_state_t *st, const dsc_in_t *in, PID_Handle_t *p) {
-  (void)c; (void)p; ++dsc_calls; dsc_last_in = *in;
-  if (fake_next_state >= 0) st->state = (uint8_t)fake_next_state;
-  return 123;
-}
 RDivider_Handle_t BusVoltageSensor_M1 = { ._Super = { .ConversionFactor = 34, .raw = 23831 } };
 
 /* ---- fake MCSDK state machine ---- */
 static int state = IDLE, start_pending, stop_pending, starts, acks;
 static uint16_t cur_faults, occ_faults;
-static int16_t ramp_rpm, speed; static uint16_t ramp_ms;
+static int16_t speed;
 static qd_t iqd, iqdref;
 bool MC_StartMotor1(void) { if (state != IDLE) return false; start_pending = 1; ++starts; return true; }
 bool MC_StopMotor1(void) { stop_pending = 1; return true; }
-void MC_ProgramSpeedRampMotor1(int16_t rpm, uint16_t ms) { ramp_rpm = rpm; ramp_ms = ms; }
+void MC_ProgramSpeedRampMotor1(int16_t rpm, uint16_t ms) { (void)rpm; (void)ms; CHECK(0); /* torque mode only */ }
 void MC_SetCurrentReferenceMotor1(qd_t r) { iqdref = r; }
 int MC_GetSTMStateMotor1(void) { return state; }
 uint16_t MC_GetCurrentFaultsMotor1(void) { return cur_faults; }
 uint16_t MC_GetOccurredFaultsMotor1(void) { return occ_faults; }
 bool MC_AcknowledgeFaultMotor1(void) { if (state != FAULT_OVER) return false; state = IDLE; occ_faults = 0; ++acks; return true; }
 int16_t MC_GetMecSpeedAverageMotor1(void) { return speed; }
-static int16_t speed_ref;
-int16_t MC_GetMecSpeedReferenceMotor1(void) { return speed_ref; }
+int16_t MC_GetMecSpeedReferenceMotor1(void) { return 0; }
 qd_t MC_GetIqdMotor1(void) { return iqd; }
 qd_t MC_GetIqdrefMotor1(void) { return iqdref; }
 
 /* ---- fake motor + Hall decoder (hall_speed_pos_fdbk.c table) ---- */
 static const uint8_t SEQ[6] = {5, 1, 3, 2, 6, 4};
-static double true_shift_deg = 77.0; static int reversed, stuck;
+static double true_shift_deg = 77.0; static int reversed, stuck, hall_dead;
 static double rotor_deg;
 static int sector_of(uint8_t s) { for (int k = 0; k < 6; ++k) if (SEQ[k] == s) return k; return -1; }
 static uint8_t hall_at(double el_deg) {
@@ -69,14 +53,13 @@ static void hall_isr(uint8_t next) {
   else if (sp == (sn + 1) % 6) { HALL_M1.Direction = -1; HALL_M1.MeasuredElAngle = (int16_t)(HALL_M1.PhaseShift + sp * 65536 / 6); }
 }
 static void motor_step(void) {
+  if (hall_dead) { HALL_M1.HallState = 7; return; } /* lost Hall harness: all lines read high */
   if (state == RUN && drive_align_force && iqdref.d > 300 && !stuck)
     rotor_deg = (uint16_t)drive_align_angle * 360.0 / 65536.0;
   uint8_t h = hall_at(rotor_deg);
   if (h != HALL_M1.HallState) hall_isr(h);
 }
-static int feed_rec; static int16_t rec_pi = 300, rec_iq = 500;
 static void mf_step(void) {
-  if (feed_rec || state == RUN) drive_record_tick(rec_pi, rec_iq);
   if (stop_pending) { stop_pending = 0; start_pending = 0; if (state == RUN || state == CHARGE_BOOT_CAP) state = IDLE; }
   if (start_pending && state == IDLE) { start_pending = 0; state = CHARGE_BOOT_CAP; }
   else if (state == CHARGE_BOOT_CAP) state = RUN;
@@ -131,6 +114,7 @@ static void clear_fault(void) { ctl(MOTOR_MODE_DISABLE, MOTOR_FLAG_CLEAR_FAULT, 
 static void flush(void) { drive_app_poll(send); sent_id = 0; frames = 0; }
 /* Most recent CONTROL reply; fails if none was sent since the last call. */
 static struct motor_reply last_reply(void) { CHECK(ctl_seen); ctl_seen = 0; return ctl_last; }
+#define last_reply_rpm (ctl_last.rpm)
 static double shift_deg(void) { return HALL_M1.PhaseShift * 360.0 / 65536.0; }
 
 static void setup(int scenario)
@@ -176,9 +160,9 @@ static void test_streaming_and_watchdog(void)
   CHECK(last_reply().reason == MOTOR_R_NOT_ARMED);
   arm(); speed_cmd(0); tick(3); CHECK(starts == 0); /* zero does not start */
   speed_cmd(150); tick(3); CHECK(starts == 1 && state == RUN && drive_app.active);
-  CHECK(ramp_rpm == 150 && ramp_ms == MOTOR_PROTOCOL_PERIOD_MS); /* the old loop's 20 ms ramp */
-  for (int i = 0; i < 50; ++i) { speed_cmd(-90); tick(20); }
-  CHECK(state == RUN && ramp_rpm == -90 && starts == 1);
+  CHECK(drive_speed.ref_to_rpm == 150); /* the speed loop interpolates to it over 20 ms */
+  for (int i = 0; i < 25; ++i) { speed_cmd(-90); tick(20); } /* < 1 s: the edge-less fake wheel would stall */
+  CHECK(state == RUN && drive_speed.ref_to_rpm == -90 && drive_speed.ref_rpm == -90 && starts == 1);
   tick(79); CHECK(state == RUN); /* 99 ms since the last command */
   tick(2); CHECK(state == IDLE && !drive_app.active && drive_app.stop_reason == ESC_STOP_TIMEOUT);
   CHECK(drive_cmd.lifecycle == MOTOR_LC_DISARMED);
@@ -191,12 +175,14 @@ static void test_stop_and_status_reply(void)
 {
   setup(4); /* DISABLE, status reply */
   arm(); speed_cmd(200); tick(5); CHECK(state == RUN);
-  iqd.q = 1234; iqdref.q = 1300; speed = 187;
-  speed_cmd(200); tick(1); CHECK(last_reply().iq_ma == 2250); /* 1234 / 544 A in 50 mA steps */
+  iqd.q = 1234;
+  HALL_M1.EdgesPos++; tick(10); HALL_M1.EdgesPos++; tick(1); /* edges 10 ms apart: 1250 / 10 = 125 RPM */
+  speed_cmd(200); tick(1); /* the lifecycle answers with the loop's estimate of the tick before */ CHECK(last_reply().iq_ma == 2250); /* 1234 / 544 A in 50 mA steps */
+  CHECK(last_reply_rpm == 125);
   rx(STATUS_READ | MOTOR_CAN_ID, 0); drive_app_poll(send);
   CHECK(sent_id == (STATUS_REPLY | MOTOR_CAN_ID));
-  CHECK((int16_t)(sent[0] | sent[1] << 8) == 187 && (int16_t)(sent[2] | sent[3] << 8) == 1234);
-  CHECK((int16_t)(sent[4] | sent[5] << 8) == 1300 && sent[6] == RUN);
+  CHECK((int16_t)(sent[0] | sent[1] << 8) == 125 && (int16_t)(sent[2] | sent[3] << 8) == 1234);
+  CHECK((int16_t)(sent[4] | sent[5] << 8) == iqdref.q && iqdref.q != 0 && sent[6] == RUN);
   CHECK(sent[7] == (ESC_FLAG_ACTIVE | ESC_FLAG_ALIGNED));
   disable(0xFU); tick(2);
   CHECK(state == IDLE && drive_app.stop_reason == ESC_STOP_COMMAND && !drive_app.active);
@@ -236,13 +222,14 @@ static void test_i2t_derates_and_recovers(void)
 {
   setup(6); /* I2T derate and recovery */
   arm(); speed_cmd(300); tick(5); iqd.q = 6 * 544;
-  int t = 0; while (!drive_app.derated && t < 3000) { speed_cmd(300); tick(10); t += 10; }
+  int t = 0; /* Hall edges keep coming (2 per 10 ms), so this is heating, not a stall */
+  while (!drive_app.derated && t < 3000) { speed_cmd(300); tick(10); HALL_M1.EdgesPos += 2; t += 10; }
   printf("derated after %d ms\n", t);
-  CHECK(t > 1000 && t < 1400 && PIDSpeedHandle_M1.up == 3 * 544 && PIDSpeedHandle_M1.low == -3 * 544);
-  CHECK(PIDSpeedHandle_M1.iup == 3 * 544 * 16384);
+  CHECK(t > 1000 && t < 1400 && drive_app.iq_limit_counts == 3 * 544);
+  tick(1); CHECK(iqdref.q <= 3 * 544); /* the loop obeys the derated limit at once */
   iqd.q = 2 * 544; t = 0;
-  while (drive_app.derated && t < 10000) { speed_cmd(300); tick(10); t += 10; }
-  CHECK(!drive_app.derated && PIDSpeedHandle_M1.up == 6 * 544);
+  while (drive_app.derated && t < 10000) { speed_cmd(300); tick(10); HALL_M1.EdgesPos += 2; t += 10; }
+  CHECK(!drive_app.derated && drive_app.iq_limit_counts == 6 * 544);
 }
 
 static void test_config_only_when_idle(void)
@@ -251,17 +238,17 @@ static void test_config_only_when_idle(void)
   rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)5000 << 16) | ESC_CFG_SPEED_KP); tick(1);
   rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)-30 << 16) | ESC_CFG_HALL_SHIFT_DEG); tick(1);
   rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)4000 << 16) | ESC_CFG_IQ_MAX_MA); tick(1);
-  CHECK(PIDSpeedHandle_M1.kp == 5000 && fabs(shift_deg() + 30.0) < 0.01 && drive_app.aligned);
-  CHECK(PIDSpeedHandle_M1.up == 2176);
+  CHECK(drive_speed.cfg.kp == 5000 && fabs(shift_deg() + 30.0) < 0.01 && drive_app.aligned);
+  CHECK(drive_app.iq_limit_counts == 2176);
   flush(); drive_app_poll(send); CHECK(sent_id == 0); /* nothing unsolicited */
   rx(DIAG_READ | MOTOR_CAN_ID, 0); drive_app_poll(send);
   CHECK(sent_id == (DIAG_REPLY | MOTOR_CAN_ID) && f16(sent + 4) == -30 && sent[6] == ESC_ALIGN_NONE);
   CHECK((sent[0] | sent[1] << 8) == 1236); /* 23831 * 34 * 100 / 65536 centivolts */
   rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)9000 << 16) | ESC_CFG_IQ_MAX_MA); tick(1);
-  CHECK(PIDSpeedHandle_M1.up == 2176 && drive_app.rejected == 1);
+  CHECK(drive_app.iq_limit_counts == 2176 && drive_app.rejected == 1);
   arm(); speed_cmd(100); tick(3); CHECK(state == RUN);
   rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)7000 << 16) | ESC_CFG_SPEED_KP); tick(1);
-  CHECK(PIDSpeedHandle_M1.kp == 5000 && drive_app.rejected == 2);
+  CHECK(drive_speed.cfg.kp == 5000 && drive_app.rejected == 2);
   rx(HALL_ALIGN | MOTOR_CAN_ID, HALL_ALIGN_MAGIC); tick(1); CHECK(drive_app.align_phase == 0);
   disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);
   rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)1500 << 16) | ESC_CFG_CURRENT_KP); tick(1);
@@ -361,169 +348,86 @@ static void test_capture_stop_and_busy(void)
   CHECK(drive_app.capture_status == ESC_CAPTURE_ABORTED && state == IDLE && !drive_align_force);
 }
 
-static void test_friction_feedforward(void)
+/* Speed-loop keys 25/26 with their bounds; the retired keys 7-24 are rejected. */
+static void test_speed_config_keys(void)
 {
-  setup(13); /* friction feed-forward */
-  const uint32_t key_s = ESC_CFG_FF_STATIC_MA, key_k = ESC_CFG_FF_KINETIC_MA;
-  CHECK(drive_speed_iq_ref(100, 50, 0) == 100); /* idle: PI output untouched */
-  rx(CONFIG_SET | MOTOR_CAN_ID, (2500U << 16) | key_s); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (500U << 16) | key_k); tick(1);
-  CHECK(drive_app.ff_static_counts == 1360 && drive_app.ff_kinetic_counts == 272);
-  CHECK(drive_speed_iq_ref(100, 50, 0) == 100); /* still not driving */
-  drive_app.aligned = 1; arm(); speed_cmd(50); tick(3); CHECK(state == RUN && drive_app.active);
-  CHECK(drive_speed_iq_ref(100, 50, 0) == 100 + 1360);     /* standstill: full static */
-  CHECK(drive_speed_iq_ref(100, 50, -20) == 100 + 1360);   /* pushed backwards: full static */
-  CHECK(drive_speed_iq_ref(100, 50, 15) == 100 + 816);     /* halfway through the fade */
-  CHECK(drive_speed_iq_ref(100, 50, 5) == 100 + 816);      /* fade only goes one way */
-  CHECK(drive_speed_iq_ref(100, 50, 30) == 100 + 272);     /* broken free: kinetic only */
-  for (int k = 0; k < 99; ++k) /* Hall scatter / brief dips below zero do not re-arm */
-    CHECK(drive_speed_iq_ref(100, 50, k % 3 ? 10 : -5) == 100 + 272);
-  for (int k = 0; k < 99; ++k) CHECK(drive_speed_iq_ref(100, 50, 0) == 100 + 272);
-  CHECK(drive_speed_iq_ref(100, 50, 0) == 100 + 1360);     /* stalled 100 ms: static again */
-  CHECK(drive_speed_iq_ref(100, 50, 400) == 100 + 272);
-  CHECK(drive_speed_iq_ref(7, 1, 400) == 7 && drive_speed_iq_ref(7, -1, 0) == 7); /* stop band, re-arms */
-  CHECK(drive_speed_iq_ref(-100, -50, 0) == -100 - 1360);  /* reverse mirrors */
-  CHECK(drive_speed_iq_ref(-100, -50, -15) == -100 - 816);
-  CHECK(drive_speed_iq_ref(-100, -50, -40) == -100 - 272);
-  CHECK(drive_speed_iq_ref(3000, 50, 0) == 6 * 544);       /* clamped to the limit */
-  CHECK(drive_speed_iq_ref(-3000, -50, 0) == -6 * 544);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (3000U << 16) | key_s); tick(1);
-  CHECK(drive_app.ff_static_counts == 1360 && drive_app.rejected == 1); /* only when idle */
-  disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);
-  CHECK(drive_speed_iq_ref(100, 50, 0) == 100); /* stopped: off */
-  rx(CONFIG_SET | MOTOR_CAN_ID, (7000U << 16) | key_s); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)-1 << 16) | key_k); tick(1);
-  CHECK(drive_app.ff_static_counts == 1360 && drive_app.ff_kinetic_counts == 272 && drive_app.rejected == 3);
-  drive_app.iq_limit_counts = 3 * 544; /* I2T derate also caps the feed-forward */
-  drive_app.active = 1; CHECK(drive_speed_iq_ref(1000, 50, 0) == 3 * 544);
+  setup(13);
+  for (uint32_t key = 7; key <= 24; ++key) { rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | key); tick(1); }
+  CHECK(drive_app.rejected == 18);
+  rx(CONFIG_SET | MOTOR_CAN_ID, (1999U << 16) | ESC_CFG_STALL_RAMP_MA_PER_S); tick(1);
+  rx(CONFIG_SET | MOTOR_CAN_ID, (30001U << 16) | ESC_CFG_STALL_RAMP_MA_PER_S); tick(1);
+  rx(CONFIG_SET | MOTOR_CAN_ID, (199U << 16) | ESC_CFG_STALL_MS); tick(1);
+  rx(CONFIG_SET | MOTOR_CAN_ID, (2001U << 16) | ESC_CFG_STALL_MS); tick(1);
+  rx(CONFIG_SET | MOTOR_CAN_ID, ((uint32_t)(uint16_t)-1 << 16) | ESC_CFG_SPEED_KI); tick(1);
+  CHECK(drive_app.rejected == 23);
+  CHECK(drive_speed.cfg.stall_ramp_ma_per_s == SPEED_STALL_RAMP_MA_PER_S_DEFAULT);
+  CHECK(drive_speed.cfg.stall_ms == SPEED_STALL_MS_DEFAULT && drive_speed.cfg.ki == PID_SPEED_KI_DEFAULT);
+  rx(CONFIG_SET | MOTOR_CAN_ID, (12000U << 16) | ESC_CFG_STALL_RAMP_MA_PER_S); tick(1);
+  rx(CONFIG_SET | MOTOR_CAN_ID, (800U << 16) | ESC_CFG_STALL_MS); tick(1);
+  rx(CONFIG_SET | MOTOR_CAN_ID, (2048U << 16) | ESC_CFG_SPEED_KP); tick(1);
+  CHECK(drive_app.rejected == 23 && drive_speed.cfg.stall_ms == 800 && drive_speed.cfg.kp == 2048);
+  CHECK(drive_speed.stall_step_q14 == 106955); /* 12 A/s: 12000 * 544 * 16384 / 1e6, rounded */
 }
 
-static void test_parks_at_zero_command(void)
+/* Zero target at standstill: HOLD keeps the bridge on at Iq 0 and resumes without an MCSDK start. */
+static void test_holds_at_zero_command(void)
 {
-  setup(14); /* parking at zero command */
+  setup(14);
   drive_app.aligned = 1;
-  arm(); speed_cmd(100); tick(3); CHECK(state == RUN); speed = 100;
-  for (int i = 0; i < 20; ++i) { speed_cmd(0); tick(20); } /* decelerating */
-  CHECK(state == RUN && drive_app.active);
-  speed = 60; for (int i = 0; i < 10; ++i) { speed_cmd(0); tick(20); }
-  CHECK(state == RUN); /* still rolling */
-  for (int i = 0; i < 7; ++i) { speed = i % 2 ? -27 : 29; speed_cmd(0); tick(20); } /* rocking */
-  CHECK(state == RUN); /* 140 ms at standstill */
+  arm(); speed_cmd(100); tick(3); CHECK(state == RUN);
+  for (int i = 0; i < 7; ++i) { speed_cmd(0); tick(20); } /* no Hall edges: standstill */
+  CHECK(drive_cmd.lifecycle == MOTOR_LC_RUNNING); /* 140 ms */
   speed_cmd(0); tick(20);
-  CHECK(state == IDLE && !drive_app.active && drive_app.stop_reason == ESC_STOP_PARKED);
-  CHECK(drive_cmd.lifecycle == MOTOR_LC_READY && starts == 1); /* parked, still armed */
-  for (int i = 0; i < 20; ++i) { speed_cmd(0); tick(20); } /* zeros keep it off */
-  CHECK(state == IDLE && starts == 1);
-  speed = 0; speed_cmd(80); tick(3);
-  CHECK(state == RUN && drive_app.active && starts == 2 && ramp_rpm == 80);
-  speed = 3; for (int i = 0; i < 20; ++i) { speed_cmd(5); tick(20); }
-  CHECK(state == RUN); /* a small non-zero command holds speed, no parking */
-  for (int i = 0; i < 5; ++i) { speed_cmd(0); tick(20); } /* 100 ms at zero */
-  speed_cmd(-30); tick(20);
-  CHECK(state == RUN && starts == 2); /* parking timer reset by the new command */
-  for (int i = 0; i < 10; ++i) { speed_cmd(0); tick(20); }
+  CHECK(drive_cmd.lifecycle == MOTOR_LC_HOLD && state == RUN && drive_app.active && starts == 1);
+  CHECK(iqdref.q == 0 && iqdref.d == 0 && drive_app.stop_reason == ESC_STOP_NONE);
   flush(); rx(STATUS_READ | MOTOR_CAN_ID, 0); drive_app_poll(send);
-  CHECK(state == IDLE && (sent[7] & 0x0F) == ESC_STOP_PARKED && !(sent[7] & ESC_FLAG_ACTIVE));
+  CHECK((sent[7] & ESC_FLAG_ACTIVE) && (sent[7] & 0x0F) == ESC_STOP_NONE);
+  speed_cmd(80); tick(1);
+  CHECK(drive_cmd.lifecycle == MOTOR_LC_RUNNING && starts == 1 && drive_speed.ref_to_rpm == 80);
+  tick(5); CHECK(iqdref.q > 0); /* P on the error again */
+  for (int i = 0; i < 9; ++i) { speed_cmd(0); tick(20); }
+  CHECK(drive_cmd.lifecycle == MOTOR_LC_HOLD);
+  disable(MOTOR_CAN_ID); tick(3);
+  CHECK(state == IDLE && !drive_app.active && drive_app.stop_reason == ESC_STOP_COMMAND);
 }
 
-static void test_startup_loop_config_and_failed_latch(void)
+/* Torque mode: Iq 0 programmed before the start, the loop's request published in RUN; stall and Hall
+ * loss end as latched faults with the output off. */
+static void test_speed_loop_drives_and_faults(void)
 {
-  setup(15); /* startup loop: config keys, dispatch, failed-start latch */
-  CHECK(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 40 && pi_calls == 1 && dsc_calls == 0); /* filtered */
-  rx(CONFIG_SET | MOTOR_CAN_ID, (0U << 16) | ESC_CFG_SPEED_REV_FILTER); tick(1);
-  CHECK(drive_rev_enable == 0 && drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 30 && pi_calls == 2);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | ESC_CFG_SPEED_REV_FILTER); tick(1);
-  CHECK(drive_rev_enable == 1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | ESC_CFG_SPEED_EDGE_EST); tick(1);
-  fake_edge = 12;
-  CHECK(drive_edge_speed == 1 && drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 38);   /* edge speed */
-  fake_edge = 150;
-  CHECK(drive_speed_pi(&PIDSpeedHandle_M1, 50, 400) == -150);  /* fast: SDK speed */
-  CHECK(drive_speed_pi(&PIDSpeedHandle_M1, 50, 0) == -100);    /* SDK not alive: edge */
-  rx(CONFIG_SET | MOTOR_CAN_ID, (0U << 16) | ESC_CFG_SPEED_EDGE_EST); tick(1);
-  fake_edge = 0;
-  pi_calls = 1;
-  rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (700U << 16) | ESC_CFG_DSC_FF_RUN_MA); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (2500U << 16) | ESC_CFG_DSC_START_CAP_MA); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | ESC_CFG_DSC_START_SLOPE_MA); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (200U << 16) | ESC_CFG_DSC_START_HOLD_MS); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (3U << 16) | ESC_CFG_DSC_PCAP_UPDATES); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (20U << 16) | ESC_CFG_DSC_HOLD_DECAY_MA); tick(1);
-  CHECK(drive_dsc_cfg.hold_decay == 11);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (25U << 16) | ESC_CFG_DSC_WATCH_MS); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (50U << 16) | ESC_CFG_DSC_PRELOAD_PCT); tick(1);
-  CHECK(drive_dsc_cfg.watch_ms == 25 && drive_dsc_cfg.preload_pct == 50);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (91U << 16) | ESC_CFG_DSC_PRELOAD_PCT); tick(1);
-  CHECK(drive_dsc_cfg.preload_pct == 50 && drive_app.rejected == 1);
-  drive_app.rejected = 0;
-  CHECK(drive_dsc_cfg.enable == 1 && drive_dsc_enabled() && dsc_resets == 2);
-  CHECK(drive_dsc_cfg.ff_run == 700 * 544 / 1000 && drive_dsc_cfg.start_cap == 2500 * 544 / 1000);
-  CHECK(drive_dsc_cfg.start_slope == 1 && drive_dsc_cfg.start_hold_ms == 200);
-  CHECK(drive_dsc_cfg.pcap_updates == 3 && drive_app.rejected == 0);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (2U << 16) | ESC_CFG_DSC_ENABLE); tick(1);          /* not 0/1 */
-  rx(CONFIG_SET | MOTOR_CAN_ID, (0U << 16) | ESC_CFG_DSC_START_SLOPE_MA); tick(1);  /* never rises */
-  rx(CONFIG_SET | MOTOR_CAN_ID, (7000U << 16) | ESC_CFG_DSC_PCAP_MA); tick(1);      /* > IQMAX */
-  rx(CONFIG_SET | MOTOR_CAN_ID, (0U << 16) | ESC_CFG_DSC_PCAP_UPDATES); tick(1);
-  rx(CONFIG_SET | MOTOR_CAN_ID, (3000U << 16) | ESC_CFG_DSC_PCAP_FALLBACK_MS); tick(1);
-  CHECK(drive_app.rejected == 5 && drive_dsc_cfg.enable == 1 && drive_dsc_cfg.pcap_updates == 3);
+  setup(15);
   drive_app.aligned = 1;
-  HALL_M1.EdgesPos = 7; HALL_M1.EdgesNeg = 2; HALL_M1.Captures = 5;
-  arm(); speed_cmd(100); tick(3); CHECK(state == RUN && drive_app.active);
-  CHECK(drive_speed_pi(&PIDSpeedHandle_M1, 50, 20) == 123 && pi_calls == 1);
-  CHECK(dsc_last_in.edges_pos == 107 && dsc_last_in.edges_neg == 102 && dsc_last_in.captures == 105); /* qualified */
-  CHECK(dsc_last_in.meas_rpm == 10);                                     /* filtered speed */
-  CHECK(dsc_last_in.limit == 6 * 544 && dsc_last_in.active == 1 && dsc_last_in.ref_rpm == 50);
-  { const int r0 = rebases;                       /* band origin: on entering STARTING only */
-    drive_dsc.state = DSC_RUNNING;
-    (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); CHECK(rebases == r0); /* fake step keeps RUNNING */
-    drive_dsc.state = DSC_STOPPED;
-    (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); CHECK(rebases == r0);
-    fake_next_state = DSC_STARTING;
-    (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); CHECK(rebases == r0 + 1); /* entered */
-    (void)drive_speed_pi(&PIDSpeedHandle_M1, 50, 20); CHECK(rebases == r0 + 1); /* stays */
-    fake_next_state = -1; drive_dsc.state = DSC_STOPPED;
-  }
-  rx(CONFIG_SET | MOTOR_CAN_ID, (0U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
-  CHECK(drive_dsc_cfg.enable == 1 && drive_app.rejected == 6); /* only when idle */
-  /* A failed start is a latched fault now (it was cleared by any zero command, STOP or gap). */
-  drive_dsc.state = DSC_FAILED; tick(3);
-  CHECK(state == IDLE && !drive_app.active);
-  CHECK(drive_cmd.lifecycle == MOTOR_LC_FAULTED && drive_cmd.latched == MOTOR_R_FAULT_STALL);
-  CHECK(drive_app.stop_reason == ESC_STOP_START_FAILED);
-  for (int i = 0; i < 10; ++i) { speed_cmd(100); tick(20); }
-  CHECK(state == IDLE && starts == 1);        /* no automatic retry */
-  speed_cmd(0); tick(1); tick(260); CHECK(drive_cmd.lifecycle == MOTOR_LC_FAULTED); /* zero, gap: no */
-  clear_fault(); arm(); tick(1); /* the clear opened a new session: this ARM carried the old one */
-  CHECK(drive_cmd.lifecycle == MOTOR_LC_DISARMED && last_reply().reason == MOTOR_R_BAD_SESSION);
-  arm(); speed_cmd(100); tick(3); CHECK(state == RUN && starts == 2); /* session from the reply */
-  CHECK(drive_dsc.state == DSC_STOPPED && drive_app.active); /* reset on start, not stopped again */
-}
+  iqdref = (qd_t){ .q = 777, .d = 55 };
+  arm(); speed_cmd(100); tick(1);
+  CHECK(starts == 1 && iqdref.q == 0 && iqdref.d == 0);
+  tick(4); CHECK(state == RUN && iqdref.q > 0 && iqdref.d == 0);
+  int t = 0; /* the wheel never moves (no Hall edges): stall ramp, then the stall timer */
+  while (drive_cmd.lifecycle != MOTOR_LC_FAULTED && t < 3000) { speed_cmd(100); tick(20); t += 20; }
+  printf("stall fault after %d ms\n", t);
+  CHECK(drive_cmd.latched == MOTOR_R_FAULT_STALL && t > 800 && t < 1300);
+  CHECK(state == IDLE && drive_app.stop_reason == ESC_STOP_FAULT);
 
-static void test_startup_speed_plausibility(void)
-{
-  setup(19); /* start-up speed plausibility */
-  int16_t r = 212;
-  HALL_M1.SpeedBufferSize = 6; HALL_M1.BufferFilled = 1;
-  drive_speed_plausible(&r, 44); CHECK(r == 212); /* idle: untouched */
-  drive_app.aligned = 1; arm(); speed_cmd(44); tick(3); CHECK(drive_app.active);
-  drive_speed_plausible(&r, 44); CHECK(r == 76);   /* 1.5 x 44 + 10 */
-  r = -212; drive_speed_plausible(&r, -44); CHECK(r == -76);
-  r = -212; drive_speed_plausible(&r, 44); CHECK(r == -76); /* a wrong-sign spike too */
-  r = 50; drive_speed_plausible(&r, 44); CHECK(r == 50);    /* plausible: untouched */
-  r = 300; drive_speed_plausible(&r, 0); CHECK(r == 300);   /* stop command: untouched */
-  HALL_M1.BufferFilled = 6;                                  /* FIFO full: average is trusted */
-  r = 212; drive_speed_plausible(&r, 44); CHECK(r == 212);
-  HALL_M1.BufferFilled = 1;                                  /* edge timing is capped too */
-  drive_edge_speed = 1; drive_rev_enable = 0; fake_edge = 90;
-  CHECK(drive_speed_pi(&PIDSpeedHandle_M1, 44, 0) == 44 - 76); /* 90 -> 76 */
-  HALL_M1.BufferFilled = 6;
-  CHECK(drive_speed_pi(&PIDSpeedHandle_M1, 44, 0) == 44 - 90);          /* FIFO full: as measured */
+  setup(15);
+  drive_app.aligned = 1;
+  arm(); speed_cmd(100); tick(5); CHECK(state == RUN);
+  const uint8_t good = HALL_M1.HallState;
+  hall_dead = 1;
+  speed_cmd(100); tick(20); CHECK(drive_cmd.lifecycle == MOTOR_LC_RUNNING); /* within the stale window */
+  speed_cmd(100); tick(4); /* the line reads 7 from the next tick: 21 ms bad, fault, MCSDK stops */
+  CHECK(drive_cmd.latched == MOTOR_R_FAULT_HALL_LOST && state == IDLE);
+  hall_dead = 0; HALL_M1.HallState = good;
+
+  setup(15);
+  drive_app.aligned = 1;
+  arm(); speed_cmd(100); tick(5); CHECK(state == RUN);
+  state = FAULT_NOW; cur_faults = MC_SPEED_FDBK; occ_faults = MC_SPEED_FDBK; tick(1);
+  CHECK(drive_cmd.latched == MOTOR_R_FAULT_HALL_LOST);
 }
 
 static void test_speed_loop_recorder(void)
 {
   setup(16); /* speed-loop recorder */
+  drive_app.aligned = 1;
   const uint32_t rec = (uint32_t)ESC_RECORD_START << 24, read = (uint32_t)ESC_CAPTURE_READ << 24;
   rx(CAPTURE | MOTOR_CAN_ID, rec | 384U); tick(1);                  /* pre out of range */
   CHECK(drive_app.rejected == 1);
@@ -533,45 +437,40 @@ static void test_speed_loop_recorder(void)
   CHECK(f16(frame[0] + 2) == ESC_RECORD_ARMED);
   rx(CAPTURE | MOTOR_CAN_ID, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); tick(2);
   CHECK(starts == 0 && drive_app.capture_status == ESC_CAPTURE_REJECTED); /* shares RAM */
-  PIDSpeedHandle_M1.wIntegralTerm = 100 * 16384;
-  /* rearm with the speed loop feeding (as if running), samples from the 1 kHz tick */
-  feed_rec = 1; speed_ref = 51;
-  rx(CAPTURE | MOTOR_CAN_ID, rec | 10U); tick(1);                   /* sample 0, moving: no trigger */
-  tick(19);                                               /* already moving: no trigger */
-  speed_ref = 0; tick(30);
-  speed_ref = 51; speed = 7; iqd.q = 99; state = RUN; /* measured Iq is reported only with the bridge on */
-  tick(373);
-  rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == ESC_RECORD_TRIGGERED);
-  tick(1);                                                /* 374th after the trigger */
+  tick(20);
+  iqd.q = 99;
+  arm(); speed_cmd(100);
+  for (int i = 0; i < 20; ++i) { tick(20); speed_cmd(100); }
   rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 4) == 384 && f16(frame[0] + 6) == 10);
-  rec_pi = 1; rec_iq = 1; tick(5); rec_pi = 300; rec_iq = 500; /* frozen once done */
+  /* trigger: the first loop tick with |ref| >= 10 RPM; 100 RPM over 20 ticks is 5, 10, ... */
   rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (2U << 10) | 9U); frames = 0; drive_app_poll(send);
-  CHECK(frames == 2 && f16(frame[0] + 2) == 0 && f16(frame[1] + 2) == 51); /* ref around the trigger */
-  CHECK(f16(frame[1] + 4) == 7 && f16(frame[1] + 6) == 200);              /* meas, P = 300 - I */
+  CHECK(frames == 2 && f16(frame[0] + 2) == 5 && f16(frame[1] + 2) == 10); /* ref around the trigger */
+  CHECK(f16(frame[1] + 4) == 0 && f16(frame[1] + 6) == 40);              /* estimate (no edges), P = 4 x 10 */
   rx(CAPTURE | MOTOR_CAN_ID, read | (1U << 16) | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == 100 && f16(frame[0] + 4) == 200 && f16(frame[0] + 6) == 500); /* I, ff, Iq ref */
+  CHECK(f16(frame[0] + 2) == 0 && f16(frame[0] + 4) == 0 && f16(frame[0] + 6) == 40); /* I (Q14 < 1), ff, Iq ref */
   rx(CAPTURE | MOTOR_CAN_ID, read | ESC_RECORD_READ_CH67 | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
   CHECK(frames == 1 && f16(frame[0] + 2) == 99 && f16(frame[0] + 6) == 0); /* measured Iq; pad */
-  CHECK((f16(frame[0] + 4) & 0x80) == 0);                                 /* legacy: not enabled */
-  state = IDLE;
+  const uint16_t packed = (uint16_t)f16(frame[0] + 4);
+  CHECK((packed & 3U) == ESC_REC_MODE_RUN && !(packed & 0x3CU) && (packed & 0x8000U));
+  CHECK(((packed >> 12) & 7U) == HALL_M1.HallState);
   rx(CAPTURE | MOTOR_CAN_ID, read | (2U << 16) | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
   CHECK(frames == 0);                                                     /* no bank 2 */
   rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (32U << 10) | 380U); frames = 0; drive_app_poll(send);
   CHECK(frames == 4);                                       /* clamped to 384 samples */
-  speed_ref = 0;
+  disable(MOTOR_CAN_ID); tick(5); CHECK(state == IDLE);
   rx(CAPTURE | MOTOR_CAN_ID, rec | (100U << 9)); tick(1);              /* delay 100 ms, pre 0 */
-  speed_ref = 51;
-  for (int k = 0; k < 100; ++k) { speed = (int16_t)k; tick(1); }
-  speed = 1000;
-  tick(384);
+  arm(); speed_cmd(100);
+  for (int k = 0; k < 100; ++k) { iqd.q = (int16_t)k; tick(1); if (k % 20 == 19) speed_cmd(100); }
+  iqd.q = 1000;
+  for (int i = 0; i < 20; ++i) { tick(20); speed_cmd(100); }
   rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == 0);
-  rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (1U << 10) | 0U); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 4) == 1000);                         /* window starts 100 ms after the start */
+  rx(CAPTURE | MOTOR_CAN_ID, read | ESC_RECORD_READ_CH67 | (1U << 10) | 0U); frames = 0; drive_app_poll(send);
+  CHECK(f16(frame[0] + 2) == 1000);                         /* window starts ~100 ms after the trigger */
+  disable(MOTOR_CAN_ID); tick(5); CHECK(state == IDLE);
   rx(CAPTURE | MOTOR_CAN_ID, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); tick(2);
-  CHECK(starts == 1 && drive_app.capture_status == ESC_CAPTURE_RUNNING); /* recorder done: allowed */
+  CHECK(drive_app.capture_status == ESC_CAPTURE_RUNNING);   /* recorder done: allowed */
   rx(CAPTURE | MOTOR_CAN_ID, rec | 10U); tick(1);
   rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == ESC_RECORD_REJECTED);          /* capture running */
@@ -581,12 +480,14 @@ static void test_recorder_idle_arm_and_early_stop(void)
 {
   setup(17); /* recorder armed while IDLE, real start, early stop */
   const uint32_t rec = (uint32_t)ESC_RECORD_START << 24, read = (uint32_t)ESC_CAPTURE_READ << 24;
-  drive_app.aligned = 1; speed_ref = 51;   /* the SDK would still hold a stale ref in IDLE */
+  drive_app.aligned = 1;
   rx(CAPTURE | MOTOR_CAN_ID, rec | 20U); tick(5);    /* IDLE: loop not running, samples read ref 0 */
   arm(); speed_cmd(51);                    /* ARM and motion in the same tick */
   int start_ms = 0; while (state != RUN && start_ms < 10) { tick(1); ++start_ms; }
   CHECK(state == RUN);
-  const int pre = 5 + start_ms;            /* samples before the trigger: IDLE + motor start-up */
+  /* samples before the trigger: IDLE, motor start-up (its last tick already runs the loop at ref 2),
+   * then the loop ticks at 5 and 7 RPM; the trigger sample is 10 (51 / 20 per tick) */
+  const int pre = 5 + start_ms + 2;
   CHECK(pre < 20);
   tick(40);
   disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);   /* stopped before the window filled */
@@ -598,46 +499,9 @@ static void test_recorder_idle_arm_and_early_stop(void)
    * them plus (384 - 20) samples */
   CHECK(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == pre && f16(frame[0] + 4) == pre + 384 - 20);
   rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (2U << 10) | (uint32_t)(pre - 1)); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == 0 && f16(frame[1] + 2) == 51); /* trigger at the first RUN sample */
+  CHECK(f16(frame[0] + 2) == 7 && f16(frame[1] + 2) == 10); /* trigger at the first |ref| >= 10 RPM */
   rx(CAPTURE | MOTOR_CAN_ID, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); tick(2);
   CHECK(drive_app.capture_status == ESC_CAPTURE_RUNNING); /* buffer released */
-}
-
-static void test_recorder_dsc_stop_drops_loop_terms(void)
-{
-  setup(18); /* recorder, startup loop enabled: stopped samples drop loop terms */
-  const uint32_t rec = (uint32_t)ESC_RECORD_START << 24, read = (uint32_t)ESC_CAPTURE_READ << 24;
-  drive_app.aligned = 1; speed_ref = 51;
-  rx(CONFIG_SET | MOTOR_CAN_ID, (1U << 16) | ESC_CFG_DSC_ENABLE); tick(1);
-  rx(CAPTURE | MOTOR_CAN_ID, rec | 0U); tick(2);
-  rotor_deg = true_shift_deg + 3 * 60 + 30; tick(2);       /* rotor parked in sector 3 */
-  CHECK(HALL_M1.HallState == SEQ[3]);
-  HALL_M1.Captures = 5;                                     /* differs from both Hall states */
-  arm(); speed_cmd(51); tick(3); CHECK(state == RUN);
-  drive_dsc = (dsc_state_t){ .state = DSC_RUNNING, .reason = DSC_R_EDGE, .capped = 1,
-                             .p = 200, .i = 100, .ff = 326 };
-  tick(10);
-  drive_dsc.state = DSC_FAILED; drive_dsc.reason = DSC_R_NO_EDGE;
-  tick(3); CHECK(state == IDLE && drive_cmd.lifecycle == MOTOR_LC_FAULTED);
-  rotor_deg += 60; tick(1); CHECK(HALL_M1.HallState == SEQ[4]); /* pushed one sector on */
-  tick(400);
-  rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == 0);
-  rx(CAPTURE | MOTOR_CAN_ID, read | (1U << 16) | (1U << 10) | 5U); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == 100 && f16(frame[0] + 4) == 326);           /* running: I, ff */
-  rx(CAPTURE | MOTOR_CAN_ID, read | ESC_RECORD_READ_CH67 | (1U << 10) | 5U); frames = 0; drive_app_poll(send);
-  uint16_t packed = (uint16_t)f16(frame[0] + 4);
-  CHECK((packed & 3U) == DSC_RUNNING && (packed & 0x40U) && (packed & 0x80U) && (packed & 0x8000U));
-  CHECK(((packed >> 12) & 7U) == SEQ[3]);                /* raw Hall state, not captures */
-  rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == 0 && f16(frame[0] + 6) == 0);               /* stopped: ref, P */
-  rx(CAPTURE | MOTOR_CAN_ID, read | (1U << 16) | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == 0 && f16(frame[0] + 4) == 0 && f16(frame[0] + 6) == 0); /* I, ff, Iq ref */
-  rx(CAPTURE | MOTOR_CAN_ID, read | ESC_RECORD_READ_CH67 | (1U << 10) | 300U); frames = 0; drive_app_poll(send);
-  packed = (uint16_t)f16(frame[0] + 4);
-  CHECK((packed & 3U) == DSC_FAILED && ((packed >> 2) & 15U) == DSC_R_NO_EDGE); /* failure kept */
-  CHECK(!(packed & 0x40U) && !(packed & 0x8000U));                     /* not capped, loop off */
-  CHECK(((packed >> 12) & 7U) == SEQ[4]);                /* sampled in the same tick */
 }
 
 int main(int argc, char **argv)
@@ -655,13 +519,11 @@ int main(int argc, char **argv)
     { "test_ident_reports_validity_record", test_ident_reports_validity_record },
     { "test_capture_steps_id_and_reads_out", test_capture_steps_id_and_reads_out },
     { "test_capture_stop_and_busy", test_capture_stop_and_busy },
-    { "test_friction_feedforward", test_friction_feedforward },
-    { "test_parks_at_zero_command", test_parks_at_zero_command },
-    { "test_startup_loop_config_and_failed_latch", test_startup_loop_config_and_failed_latch },
-    { "test_startup_speed_plausibility", test_startup_speed_plausibility },
+    { "test_speed_config_keys", test_speed_config_keys },
+    { "test_holds_at_zero_command", test_holds_at_zero_command },
+    { "test_speed_loop_drives_and_faults", test_speed_loop_drives_and_faults },
     { "test_speed_loop_recorder", test_speed_loop_recorder },
     { "test_recorder_idle_arm_and_early_stop", test_recorder_idle_arm_and_early_stop },
-    { "test_recorder_dsc_stop_drops_loop_terms", test_recorder_dsc_stop_drops_loop_terms },
   };
   if (argc != 2) { fprintf(stderr, "usage: %s <case>\n", argv[0]); return 1; }
   const char *name = argv[1];

@@ -79,7 +79,7 @@ static void expect(uint8_t s, uint8_t outcome, uint8_t reason, uint8_t lifecycle
 static void setup(void)
 {
   const struct motor_cmd_config cfg = { .select = select_bit, .max_rpm = 2976, .max_ma = 6000,
-                                        .ff_supported = 0, .current_supported = 0 };
+                                        .current_supported = 0 };
   motor_cmd_init(&m, &cfg, 1234U);
   memset(&in, 0, sizeof in);
   in.now_ms = 1000U;
@@ -311,32 +311,90 @@ static void test_mcsdk_leaving_run_faults(void)
   CHECK_EQ(m.latched, MOTOR_R_FAULT_MCSDK);
 }
 
-static void test_loop_failure_faults_as_stall(void)
+/* The speed loop's verdicts become faults: stall, Hall loss while RUNNING, and an MCSDK fault that the
+ * caller attributes to Hall sensing. */
+static void test_speed_loop_faults(void)
 {
   run_at(100);
-  in.loop_failed = 1U;
+  in.stall_fault = 1U;
   tick();
   CHECK_EQ(m.lifecycle, MOTOR_LC_FAULTED);
   CHECK_EQ(m.latched, MOTOR_R_FAULT_STALL);
-  CHECK(act.stop && act.stop_cause == MOTOR_CMD_STOP_LOOP_FAILED);
+  CHECK(act.stop && act.stop_cause == MOTOR_CMD_STOP_FAULT);
+
+  setup();
+  run_at(100);
+  in.hall_lost = 1U;
+  tick();
+  CHECK_EQ(m.latched, MOTOR_R_FAULT_HALL_LOST);
+  CHECK(act.stop && act.stop_cause == MOTOR_CMD_STOP_FAULT);
+
+  setup();
+  run_at(100);
+  in.mc = MOTOR_CMD_MC_FAULT;
+  in.hall_lost = 1U; /* MCSDK's speed-feedback fault */
+  tick();
+  CHECK_EQ(m.latched, MOTOR_R_FAULT_HALL_LOST);
 }
 
-static void test_parks_at_zero_and_restarts(void)
+/* Zero target at standstill for exactly MOTOR_CMD_HOLD_MS -> HOLD with the output on; motion resumes without
+ * an MCSDK start; DISABLE and MCSDK leaving RUN act on HOLD as on RUNNING. */
+/* n ticks while the Nucleo streams zero every 20 ms, replies drained. */
+static void zero_ticks(unsigned n)
+{
+  for (unsigned t = 0; t < n; ++t) {
+    if (in.now_ms % 20U == 0U) speed(0);
+    tick();
+    drain_replies();
+  }
+}
+
+static void test_holds_at_zero_and_resumes(void)
 {
   run_at(100);
-  for (unsigned t = 0; t < 400U; t += 20U) {
-    speed(0);
-    in.rpm = 30; /* below the park threshold */
-    ticks(20);
-    drain_replies();
-    if (m.lifecycle != MOTOR_LC_RUNNING) break;
-  }
-  CHECK_EQ(m.lifecycle, MOTOR_LC_READY);
-  CHECK(acts.stop && acts.stop_cause == MOTOR_CMD_STOP_PARKED);
-  settle();
+  speed(0); tick(); drain_replies();
+  in.standstill = 1U;
   clear_acts();
+  for (unsigned t = 0; t < MOTOR_CMD_HOLD_MS; ++t) {
+    CHECK_EQ(m.lifecycle, MOTOR_LC_RUNNING);
+    tick();
+    if (t % 20U == 19U) { speed(0); drain_replies(); } /* the Nucleo keeps streaming zero */
+  }
+  tick(); /* 150 ms after the first standstill tick */
+  drain_replies();
+  CHECK_EQ(m.lifecycle, MOTOR_LC_HOLD);
+  CHECK(!acts.stop && !acts.start);
+  CHECK(motor_cmd_output_on(&m));
+  in.standstill = 0U; /* a wheel pushed by hand does not leave HOLD by itself */
+  ticks(5);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_HOLD);
+
   speed(100); tick();
-  CHECK(act.start);
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
+  CHECK(act.set_target && act.setpoint == 100 && !act.start && !act.stop);
+
+  /* standstill that breaks before 150 ms restarts the count (zero keeps streaming: no watchdog) */
+  speed(0); tick(); drain_replies();
+  in.standstill = 1U; zero_ticks(100);
+  in.standstill = 0U; zero_ticks(1);
+  in.standstill = 1U; zero_ticks(MOTOR_CMD_HOLD_MS);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_RUNNING);
+  zero_ticks(1);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_HOLD);
+
+  clear_acts();
+  disable(); tick();
+  CHECK_EQ(m.lifecycle, MOTOR_LC_READY);
+  CHECK(acts.stop && acts.stop_cause == MOTOR_CMD_STOP_DISABLE);
+
+  setup();
+  run_at(100);
+  speed(0); tick(); drain_replies();
+  in.standstill = 1U; zero_ticks(MOTOR_CMD_HOLD_MS + 1U);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_HOLD);
+  in.mc = MOTOR_CMD_MC_IDLE; /* MCSDK left RUN on its own */
+  tick();
+  CHECK_EQ(m.latched, MOTOR_R_FAULT_MCSDK);
 }
 
 static void test_capabilities_and_limits(void)
@@ -351,12 +409,13 @@ static void test_capabilities_and_limits(void)
   send(MOTOR_MODE_CURRENT, 0, 1000, 0, ++seq, m.session, select_bit); tick();
   expect(seq, MOTOR_OUT_REJECTED, MOTOR_R_UNSUPPORTED, MOTOR_LC_READY);
   CHECK(!acts.start);
-  /* ff is accepted but this loop does not apply it */
+  /* the limits themselves are accepted, ff included */
   send(MOTOR_MODE_SPEED, 0, 2976, 1500, ++seq, m.session, select_bit); tick();
   expect(seq, MOTOR_OUT_INHIBITED, MOTOR_R_STARTING, MOTOR_LC_STARTING);
   settle();
   send(MOTOR_MODE_SPEED, 0, 2976, 1500, ++seq, m.session, select_bit); tick();
-  expect(seq, MOTOR_OUT_INHIBITED, MOTOR_R_FF_UNUSED, MOTOR_LC_RUNNING);
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
+  CHECK(act.set_target && act.ff_ma == 1500);
 }
 
 static void test_not_aligned_and_busy(void)
@@ -446,7 +505,7 @@ static void test_seq_wraps_through_255(void)
 static void test_mode_change_needs_disable(void)
 {
   const struct motor_cmd_config cfg = { .select = select_bit, .max_rpm = 2976, .max_ma = 6000,
-                                        .ff_supported = 1, .current_supported = 1 };
+                                        .current_supported = 1 };
   motor_cmd_init(&m, &cfg, 99U);
   run_at(100);
   send(MOTOR_MODE_CURRENT, 0, 1000, 0, ++seq, m.session, select_bit); tick();
@@ -472,8 +531,8 @@ static const struct { const char *name; void (*fn)(void); } cases[] = {
   { "fault_at_boot_with_output_off", test_fault_at_boot_with_output_off },
   { "start_timeout_faults", test_start_timeout_faults },
   { "mcsdk_leaving_run_faults", test_mcsdk_leaving_run_faults },
-  { "loop_failure_faults_as_stall", test_loop_failure_faults_as_stall },
-  { "parks_at_zero_and_restarts", test_parks_at_zero_and_restarts },
+  { "speed_loop_faults", test_speed_loop_faults },
+  { "holds_at_zero_and_resumes", test_holds_at_zero_and_resumes },
   { "capabilities_and_limits", test_capabilities_and_limits },
   { "not_aligned_and_busy", test_not_aligned_and_busy },
   { "structural_rejects_are_answered", test_structural_rejects_are_answered },

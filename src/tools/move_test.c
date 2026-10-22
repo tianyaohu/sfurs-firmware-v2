@@ -16,24 +16,17 @@ int main(int argc, char **argv)
   const char *out = NULL, *axis = "vy", *elf = IK_DEFAULT_ELF, *sn = IK_DEFAULT_SN;
   double distance_m = 0.6, speed_mps = 0.2, pause_s = 1.5, min_vbus_v = 11;
   int reps = 1, accel_rpmps = 0, record_pre = 50, record_delay_ms = 0;
-  bool first_back = false, record = false, check = false, dsc = false, no_camera = true;
+  bool first_back = false, record = false, check = false, no_camera = true;
   bool startup_metrics = false;
   double sector_spread_deg = 0;
-  int kp = INT_MIN, ki = INT_MIN, ff_ma = INT_MIN, static_ma = INT_MIN, kinetic_ma = INT_MIN, edge = INT_MIN;
-  int ff_run_ma = INT_MIN, from_ma = INT_MIN, cap_ma = INT_MIN, slope = INT_MIN, pcap_ma = INT_MIN;
-  int decay = INT_MIN, watch_ms = INT_MIN, preload_pct = INT_MIN;
+  int kp = INT_MIN, ki = INT_MIN;
   drive_option options[] = {
     DRIVE_OPT("out", STRING, &out), DRIVE_OPT("no-camera", BOOL, &no_camera),
     DRIVE_OPT("axis", STRING, &axis), DRIVE_OPT("distance", DOUBLE, &distance_m),
     DRIVE_OPT("speed", DOUBLE, &speed_mps), DRIVE_OPT("reps", INT, &reps),
     DRIVE_OPT("accel", INT, &accel_rpmps), DRIVE_OPT("first-back", BOOL, &first_back),
     DRIVE_OPT("pause", DOUBLE, &pause_s), DRIVE_OPT("kp", INT, &kp), DRIVE_OPT("ki", INT, &ki),
-    DRIVE_OPT("ff", INT, &ff_ma), DRIVE_OPT("ff-static", INT, &static_ma), DRIVE_OPT("ff-kinetic", INT, &kinetic_ma),
-    DRIVE_OPT("edge-speed", INT, &edge), DRIVE_OPT("dsc", BOOL, &dsc),
-    DRIVE_OPT("dsc-ff-run", INT, &ff_run_ma), DRIVE_OPT("dsc-from", INT, &from_ma),
-    DRIVE_OPT("dsc-cap", INT, &cap_ma), DRIVE_OPT("dsc-slope", INT, &slope), DRIVE_OPT("dsc-pcap", INT, &pcap_ma),
-    DRIVE_OPT("dsc-hold-decay", INT, &decay), DRIVE_OPT("dsc-watch", INT, &watch_ms),
-    DRIVE_OPT("dsc-preload", INT, &preload_pct), DRIVE_OPT("record", BOOL, &record),
+    DRIVE_OPT("record", BOOL, &record),
     DRIVE_OPT("record-pre", INT, &record_pre), DRIVE_OPT("record-delay", INT, &record_delay_ms),
     DRIVE_OPT("startup-metrics", BOOL, &startup_metrics),
     DRIVE_OPT("sector-spread-deg", DOUBLE, &sector_spread_deg),
@@ -45,9 +38,6 @@ int main(int argc, char **argv)
   if (parsed) {
     if (parsed > 0) puts("move_test --out DIR [--no-camera] [--axis vx|vy|wz] [--distance 0.6] [--speed 0.2]\n"
                          "  [--reps 1 --first-back --pause 1.5 --accel RPMPS --kp N --ki N]\n"
-                         "  [--ff MA | --ff-static MA --ff-kinetic MA] [--edge-speed 0|1]\n"
-                         "  [--dsc --dsc-ff-run MA --dsc-from MA --dsc-cap MA --dsc-slope MA_PER_MS\n"
-                         "   --dsc-pcap MA --dsc-hold-decay MA_PER_MS --dsc-watch MS --dsc-preload PCT]\n"
                          "  [--record --record-pre N --record-delay MS] [--min-vbus 11 --check --elf F --sn SERIAL]\n"
                          "  [--startup-metrics --record --sector-spread-deg 0]\n"
                          "Camera capture belongs to the external tracker. MOTION unless --check.");
@@ -60,8 +50,7 @@ int main(int argc, char **argv)
   }
   if (!out || !(speed_mps > 0 && speed_mps <= 2) || !(distance_m > 0 && distance_m <= 1) ||
       reps < 1 || reps > 3 || distance_m / speed_mps > 5 || pause_s < 0 || min_vbus_v < 0 ||
-      accel_rpmps < 0 || (strcmp(axis, "vx") && strcmp(axis, "vy") && strcmp(axis, "wz")) ||
-      (edge != INT_MIN && edge != 0 && edge != 1)) {
+      accel_rpmps < 0 || (strcmp(axis, "vx") && strcmp(axis, "vy") && strcmp(axis, "wz"))) {
     fprintf(stderr, "require --out, vx/vy/wz, 0 < speed <= 2, 0 < distance <= 1, 1 <= reps <= 3, distance/speed <= 5; nonnegative pause/accel/Vbus\n");
     return 1;
   }
@@ -69,17 +58,13 @@ int main(int argc, char **argv)
   if (ik_record_start_word(record_pre, record_delay_ms, &record_word)) {
     fprintf(stderr, "invalid recorder pre/delay\n"); return 1;
   }
-  const int overrides[] = {kp, ki, static_ma == INT_MIN ? ff_ma : static_ma,
-    kinetic_ma == INT_MIN ? ff_ma : kinetic_ma, edge, dsc ? 1 : INT_MIN,
-    ff_run_ma, from_ma, cap_ma, slope, pcap_ma, decay, watch_ms, preload_pct};
-  const char *keys[] = {"kp", "ki", "ff_static_ma", "ff_kinetic_ma", "speed_edge_est", "dsc_enable",
-    "dsc_ff_run_ma", "dsc_start_from_ma", "dsc_start_cap_ma", "dsc_start_slope_ma", "dsc_pcap_ma",
-    "dsc_hold_decay_ma", "dsc_watch_ms", "dsc_preload_pct"};
+  const int overrides[] = {kp, ki};
+  const char *keys[] = {"kp", "ki"};
   drive_settings_t settings;
   if (drive_settings_defaults(&settings)) return 1;
   for (size_t k = 0; k < sizeof overrides / sizeof *overrides; k++) if (overrides[k] != INT_MIN) {
-    if ((k >= 6 && !dsc) || drive_setting_set(&settings, keys[k], overrides[k])) {
-      fprintf(stderr, "invalid setting %s (--dsc-* options need --dsc)\n", keys[k]); return 1;
+    if (drive_setting_set(&settings, keys[k], overrides[k])) {
+      fprintf(stderr, "invalid setting %s\n", keys[k]); return 1;
     }
   }
   int32_t twists[6][3] = {{0}};

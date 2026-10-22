@@ -50,26 +50,52 @@ static void test_config_frames_for_all_wheels(void)
   uint32_t id, word;
   CHECK(ik_config_frame(1, "nope", 0, &id, &word) != 0);
   CHECK(ik_config_frame(1, "kp", 40000, &id, &word) != 0);
-  int number;
-  size_t dsc = 0;
-  for (size_t k = 0; k < ik_config_key_count(); k++)
-    if (!strncmp(ik_config_key_name(k, &number), "dsc_", 4)) dsc++;
-  CHECK_EQ(dsc, 14); /* every ESC_CFG_DSC_* key of can_datatypes.h */
-  CHECK_EQ(ESC_CFG_DSC_ENABLE, 9);
+  /* Settable keys are exactly can_datatypes.h's ESC_CFG_*; retired 7-24 are not offered. */
+  const struct { const char *name; int number; } want[] = {
+      {"kp", ESC_CFG_SPEED_KP}, {"ki", ESC_CFG_SPEED_KI}, {"shift", ESC_CFG_HALL_SHIFT_DEG},
+      {"iqmax_ma", ESC_CFG_IQ_MAX_MA}, {"current_kp", ESC_CFG_CURRENT_KP}, {"current_ki", ESC_CFG_CURRENT_KI},
+      {"stall_ramp_ma_per_s", ESC_CFG_STALL_RAMP_MA_PER_S}, {"stall_ms", ESC_CFG_STALL_MS}};
+  CHECK_EQ(ik_config_key_count(), sizeof want / sizeof want[0]);
+  for (size_t k = 0; k < ik_config_key_count(); k++) {
+    int number;
+    CHECK(!strcmp(ik_config_key_name(k, &number), want[k].name));
+    CHECK_EQ(number, want[k].number);
+    CHECK(number < 7 || number > 24);
+  }
+  CHECK(ik_config_key_name(ik_config_key_count(), NULL) == NULL);
+  CHECK_EQ(ESC_CFG_STALL_RAMP_MA_PER_S, 25);
+  CHECK_EQ(ESC_CFG_STALL_MS, 26);
+  for (int i = 0; i < IK_WHEELS; i++) {
+    CHECK_EQ(ik_config_frame(IK_WHEEL_SELECT[i], "stall_ramp_ma_per_s", 30000, &id, &word), 0);
+    CHECK_EQ(id, CONFIG_SET | IK_WHEEL_SELECT[i]);
+    CHECK_EQ(word, 25U | 30000U << 16);
+    CHECK_EQ(ik_config_frame(IK_WHEEL_SELECT[i], "stall_ms", 500, &id, &word), 0);
+    CHECK_EQ(word, 26U | 500U << 16);
+  }
+  CHECK(ik_config_frame(1, "ff_static_ma", 0, &id, &word) != 0); /* retired key 7 */
 }
 
 static void test_unpack_record(void)
 {
-  unsigned packed = 2 | 2 << 2 | 0x40 | 0x80 | 3 << 8 | 5 << 12 | 1 << 15;
+  unsigned packed = ESC_REC_MODE_HOLD | 0x04 | 0x10 | 3 << 8 | 5 << 12 | 1 << 15;
   ik_record_sample_t s = {51, 40, 272, 0, 326, 598, -544, (int16_t)packed};
   ik_record_unpacked_t u;
   ik_unpack_record(&s, &u);
-  CHECK(!strcmp(u.state, "running") && !strcmp(u.reason, "edge"));
-  CHECK(u.capped && u.dsc && u.loop);
+  CHECK(!strcmp(u.mode, "hold"));
+  CHECK(u.valid && !u.saturated && u.bleed && !u.stall_timer && u.loop);
   CHECK_EQ(u.edges_mod16, 3);
   CHECK_EQ(u.hall_state, 5);
   CHECK_NEAR(u.p_a, 0.5, 1e-9);
   CHECK_NEAR(u.iq_a, -1.0, 1e-9);
+  const char *const modes[] = {"off", "run", "hold", "stall_ramp"};
+  for (unsigned m = 0; m < 4; m++) {
+    s.packed = (int16_t)(m | 0x08 | 0x20);
+    ik_unpack_record(&s, &u);
+    CHECK(!strcmp(u.mode, modes[m]));
+    CHECK(!u.valid && u.saturated && !u.bleed && u.stall_timer && !u.loop);
+    CHECK_EQ(u.edges_mod16, 0);
+    CHECK_EQ(u.hall_state, 0);
+  }
 }
 
 static void test_decode_row(void)
@@ -86,6 +112,16 @@ static void test_decode_row(void)
   CHECK(r.active && r.aligned && !r.derated && !r.aligning);
   CHECK(!strcmp(r.fault_names, "overvolt overcurrent"));
   CHECK_EQ(r.hall_shift_deg, -30);
+  w[5] = 0x10 | 5;
+  ik_decode_row(w, &r);
+  CHECK(!strcmp(r.stop_reason, "capture"));
+  for (uint32_t retired = 6; retired <= 7; retired++) { /* old parked / start-failed: shown as numbers */
+    char want[4];
+    snprintf(want, sizeof want, "%u", retired);
+    w[5] = 0x10 | retired;
+    ik_decode_row(w, &r);
+    CHECK(!strcmp(r.stop_reason, want));
+  }
 }
 
 static uint32_t sym(const char *name)

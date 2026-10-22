@@ -16,11 +16,11 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
    is answered; the answers land in `ik_drive_link[4]` for the tools, and the time from the
    drive tick that queued a frame to its reply goes into a per-wheel histogram
    (`ik_drive_reply_lat_hist`, 250 µs bins, mailbox ABI 7).
-3. Each ESC runs MCSDK FOC with Hall sensors: 16 kHz current loop, 1 kHz
-   speed PI. `motor_cmd.c` owns the command lifecycle (arming, session and sequence checks,
-   watchdog, faults, parking; [command-lifecycle.md](command-lifecycle.md)); `drive_app.c`
-   executes its decisions on MCSDK and replies to status/diag polls. The ESC moves its speed
-   reference to each new setpoint over the 20 ms frame period (MCSDK ramp).
+3. Each ESC runs MCSDK FOC with Hall sensors (16 kHz current loop) in torque mode.
+   `motor_cmd.c` owns the command lifecycle (arming, session and sequence checks, watchdog,
+   faults, HOLD; [command-lifecycle.md](command-lifecycle.md)); `motor_speed.c` is the 1 kHz
+   speed loop (below); `drive_app.c` runs both every millisecond, hands the q-current to
+   MCSDK (`MC_SetCurrentReferenceMotor1`) and replies to status/diag polls.
 
 ## CAN protocol
 
@@ -34,12 +34,12 @@ Service commands (`src/shared/can/can_datatypes.h`), 4-byte requests, ID = comma
 | `0x100` → `0x280` STATUS | poll/reply | i16 RPM, i16 Iq, i16 Iq ref (544 counts/A), u8 MCSDK state, u8 flags |
 | `0x300` → `0x380` DIAG | poll/reply | u16 Vbus cV, u16 occurred faults, i16 Hall shift °, u8 align result, u8 I²t % |
 | `0x480` HALL_ALIGN | → ESC | `"HALN"` |
-| `0x500` CONFIG_SET | → ESC | u16 key (1 Kp, 2 Ki, 3 Hall shift °, 4 Iq max mA, 5/6 current Kp/Ki, 7/8 friction feed-forward static/kinetic mA), i16 value |
+| `0x500` CONFIG_SET | → ESC | u16 key (1 Kp, 2 Ki, 3 Hall shift °, 4 Iq max mA, 5/6 current Kp/Ki, 25 stall ramp mA/s, 26 stall time ms; 7-24 retired), i16 value |
 | `0x600–0x6FF` | | firmware update ([CAN_FWU.md](can-fwu.md)) |
 
 `0x080` (old SPEED_WRITE) and `0x780` (old STOP) are retired and ignored.
 STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault, 4 align,
-5 capture, 6 parked, 7 failed start),
+5 capture),
 `0x10` output on, `0x20` I²t derated, `0x40` aligning, `0x80` Hall shift known.
 
 ## Protections
@@ -50,16 +50,18 @@ STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault
 | ESC arming | Motion only after an ARM carrying the session the ESC announced; a timeout or a cleared fault starts a new session, so nothing sent before can move the wheel |
 | ESC watchdog | No fresh accepted motion frame for 100 ms → output off, disarmed (3 lost 50 Hz frames are tolerated, 4 trip) |
 | ESC I²t | Iq limit 6 A; after ~30 A²s above 3.26 A it derates to 3 A until it cools |
-| ESC fault latch | Any fault (MCSDK, failed start, start timeout) keeps the wheel off until CLEAR_FAULT, then a new ARM |
-| ESC parking | Target 0 RPM and standstill (< 45 RPM, the Hall estimate's floor) for 150 ms → motor off (coasts); the next non-zero target restarts it (~30 ms). Holding zero speed on the Hall estimate only buzzed (0.2–0.6 A average, peaks 3.9 A) |
+| ESC fault latch | Any fault (MCSDK, stall, Hall loss, start timeout) keeps the wheel off until CLEAR_FAULT, then a new ARM |
+| ESC HOLD | Target 0 RPM and standstill (< 45 RPM, the Hall estimate's floor) for 150 ms → zero-current hold with the bridge on; the next non-zero target resumes without an MCSDK start. Holding zero speed on the Hall estimate only buzzed (0.2–0.6 A average, peaks 3.9 A) |
+| ESC stall | ≥ 80 % of the current limit with no Hall progress along the command for 500 ms → FAULTED(STALL) |
+| ESC Hall loss | Hall code 0/7 beyond the estimator's stale window, or MCSDK's speed-feedback fault → FAULTED(HALL_LOST) |
 | ESC alignment gate | A non-zero target is rejected (NOT_ALIGNED) until the Hall shift is known (built in or measured) |
 | ESC range check | Targets beyond 2976 RPM or 6 A are rejected, never clamped |
 | Nucleo link | A wheel that misses 3 replies in a row is LOST; a LOST or FAULTED wheel stops the robot (DISABLE to all) and latches `ik_drive_fault` until the PC sets enable to 0; `esc_tool clear` clears ESC faults |
 | Nucleo heartbeat | PC silent for 300 ms → decelerate, hold 200 ms, broadcast DISABLE ×3 |
 | Kinematics | All wheels scaled together so none exceeds 900 RPM (~3 m/s) |
 
-No run timeouts, revolution counts or stall stops: a loaded wheel at low speed
-must be allowed to build torque.
+The stall fault waits 500 ms at high current, so a loaded wheel still builds torque to
+breakaway first (the stall ramp below gets there in a few hundred ms).
 
 ## Hall alignment
 
@@ -102,26 +104,26 @@ capture again; copy good values into `PID_TORQUE_*`/`PID_FLUX_*` in
 `drive_parameters.h`. With one PWM period of delay, overshoot grows quickly
 above about 0.8 kHz.
 
-Speed PI (counts per RPM of error, `SPEED_UNIT = U_RPM`): Kp 1024/256 =
-4 counts/RPM (100 RPM error → 0.75 A), Ki 553/16384 per ms. Chosen with all
-four wheels raised: Kp 4096 / Ki 4424 limit-cycled at ±6 A (loud buzz, no
-rotation); 1024/553 holds ±60 and 120 RPM with Iq ≈ 0.1 A. At 30–60 RPM the
-Hall speed estimate itself scatters by about ±25 RPM whatever the gains. On
-the ground the robot's inertia is part of the plant, so retune there. Tune
-live without reflashing: `build/tools/esc_tool set all kp 2048` (IDLE only,
-RAM only), then copy good values into `drive_parameters.h`.
+Speed loop (`motor_speed.c`, spec
+[E-speed-loop.md](../technical-development-plans/esc-command-v2/E-speed-loop.md)): the
+reference moves linearly to each new setpoint over the 20 ms frame period; one speed
+estimate (Hall edge timing for the first edges after a start, then MCSDK's 6-edge average,
+decaying as 1/t when edges stop); Iq = P + I + ff, clamped to the current limit (including
+the I²t derate). Kp 1024/256 = 4 counts/RPM (100 RPM error → 0.75 A), Ki 553/16384 per ms
+(62 mA/s per RPM). The integrator follows three rules: while the wheel is stuck (the
+reference 4 Hall edges ahead and the estimate below 45 RPM) it ramps at a fixed 10 A/s
+instead of by the error, and the reference lead is capped at those 4 edges, so no wind-up
+waits for the breakaway; otherwise it integrates only while the request is not saturated
+(or moving back inside); and a progress edge timed above 1.15× the target halves it. The
+feed-forward field from the Nucleo is added along the command only, slewed at 50 A/s.
+Raised, 1024/553 holds ±60 and 120 RPM with Iq ≈ 0.1 A (4096/4424 limit-cycled at ±6 A); at
+30–60 RPM the Hall estimate scatters by about ±25 RPM whatever the gains. Tune live without
+reflashing: `build/tools/esc_tool set all kp 2048` (IDLE only, RAM only), then copy good
+values into `drive_parameters.h`.
 
-Friction feed-forward (`drive_speed_iq_ref` in `drive_app.c`, called from
-`FOC_CalcCurrRef`): on the ground each wheel needs 2.2–3.2 A before it turns
-(free air 0.1 A), which a PI loop only reaches by winding up its integrator —
-slow starts, then overshoot to 2–3× the command. In speed mode the Iq
-reference is the PI output plus sign(speed ref) × ff, with ff = static value at
-standstill fading linearly to the kinetic value at 30 RPM, clamped to the
-current limit (including I²t derate). Both default to 0 (`FRICTION_FF_*` in
-`drive_parameters.h`); tune with `esc_tool pulse --ff-static MA
---ff-kinetic MA`, which drives the robot out and back and reports per-wheel
-breakaway time. Ground ladder without feed-forward: Kp 4096 / Ki 1100 is the
-best stable pair; Ki 2200 at Kp 4096 limit-cycles at the 6 A limit.
+On the ground each wheel needs 3.3–4.7 A before it turns (mat 2026-10-21; free air
+0.1 A): that is the stall ramp's job until the Nucleo's friction model supplies it as
+feed-forward (Stage 5).
 
 Motor constants in `pmsm_motor_parameters.h` are the Workbench placeholder
 (Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM). Measured by capture on all four motors:

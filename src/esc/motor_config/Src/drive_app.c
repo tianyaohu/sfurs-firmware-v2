@@ -12,24 +12,6 @@
 #define I2T_DERATED_A 3.0f
 #define AMPS_PER_COUNT (1.0f / (float)CURRENT_CONV_FACTOR)
 
-/* Friction feed-forward: the static part fades out as the wheel first speeds
- * up to FRICTION_FADE_RPM and then stays off (kinetic only), because the Hall
- * estimate scatters ~+-25 RPM at low speed and would otherwise toggle it. It
- * re-arms on a stop command or a stall (no forward speed for
- * FRICTION_STALL_MS). */
-#define FRICTION_FADE_RPM 30
-#define FRICTION_MIN_REF_RPM 2 /* below this the command means "stop" */
-#define FRICTION_STALL_MS 100U
-
-/* Start-up speed plausibility (drive_speed_plausible). Ground logs 2026-10-16/17:
- * the first reading after standstill was > 2.5x the target on 20 of 107 FR
- * starts (6-11 of ~100 on the others), e.g. -212 RPM 8 ms after breaking free
- * at 4.6 A, where the loaded wheel can reach ~20 RPM. The PI then reversed
- * the current and the pulse guard aborted. Real overshoot still shows once
- * the FIFO holds a full electrical turn. */
-#define STARTUP_MAX_RATIO_PCT 150
-#define STARTUP_MARGIN_RPM 10
-
 /* Hall alignment: hold the rotor with d-axis current at a forced angle, sweep
  * the angle slowly forward then back, and compare it with the angle the Hall
  * decoder assigns at each edge. Averaging both directions cancels rotor lag. */
@@ -89,26 +71,17 @@ static volatile int16_t capture_step_counts;
 static uint32_t capture_ms, capture_vbus_cv;
 static uint32_t read_next, read_end, read_bank, read_ch67; /* poll context only */
 
-dsc_cfg_t drive_dsc_cfg;
-dsc_state_t drive_dsc;
-dsc_rev_t drive_rev;
-uint8_t drive_rev_enable = SPEED_REV_FILTER_DEFAULT;
-uint8_t drive_edge_speed = SPEED_EDGE_EST_DEFAULT;
-
-static uint32_t ff_broken_free, ff_stall_ms;
-static int32_t ff_peak; /* highest forward speed since the start, <= FRICTION_FADE_RPM */
+struct motor_speed drive_speed;
+static struct motor_speed_config speed_cfg;
+static struct motor_speed_outputs speed_out; /* this tick's loop results, for replies and the recorder */
 
 static uint32_t align_ms, align_prev_hall;
 static int16_t align_saved_shift, align_ref;
 static int32_t align_sum;
 
+/* The speed loop reads the limit every tick, so a derate or a CONFIG change applies at once. */
 static void set_iq_limit(int32_t counts)
 {
-  const int32_t integral = counts * (int32_t)PID_GetKIDivisor(&PIDSpeedHandle_M1);
-  PID_SetUpperOutputLimit(&PIDSpeedHandle_M1, (int16_t)counts);
-  PID_SetLowerOutputLimit(&PIDSpeedHandle_M1, (int16_t)-counts);
-  PID_SetUpperIntegralTermLimit(&PIDSpeedHandle_M1, integral);
-  PID_SetLowerIntegralTermLimit(&PIDSpeedHandle_M1, -integral);
   drive_app.iq_limit_counts = counts;
 }
 
@@ -116,24 +89,10 @@ void drive_app_init(void)
 {
   drive_app.iq_max_counts = (int32_t)IQMAX;
   set_iq_limit(drive_app.iq_max_counts);
-  drive_app.ff_static_counts = FRICTION_FF_STATIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
-  drive_app.ff_kinetic_counts = FRICTION_FF_KINETIC_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000;
-  drive_dsc_cfg = (dsc_cfg_t){
-    .enable = DSC_ENABLE_DEFAULT,
-    .ff_run = (int16_t)(DSC_FF_RUN_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
-    .ff_per_krpm = (int16_t)(DSC_FF_PER_KRPM_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
-    .start_from = (int16_t)(DSC_START_FROM_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
-    .start_cap = (int16_t)(DSC_START_CAP_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
-    .start_slope = (int16_t)((DSC_START_SLOPE_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000),
-    .start_hold_ms = DSC_START_HOLD_MS_DEFAULT,
-    .pcap = (int16_t)(DSC_PCAP_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR / 1000),
-    .pcap_ms = DSC_PCAP_MS_DEFAULT,
-    .pcap_updates = DSC_PCAP_UPDATES_DEFAULT,
-    .pcap_fallback_ms = DSC_PCAP_FALLBACK_MS_DEFAULT,
-    .hold_decay = (int16_t)((DSC_HOLD_DECAY_MA_DEFAULT * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000),
-    .watch_ms = DSC_WATCH_MS_DEFAULT,
-    .preload_pct = DSC_PRELOAD_PCT_DEFAULT };
-  dsc_reset(&drive_dsc);
+  speed_cfg = (struct motor_speed_config){
+    .kp = PID_SPEED_KP_DEFAULT, .ki = PID_SPEED_KI_DEFAULT,
+    .stall_ramp_ma_per_s = SPEED_STALL_RAMP_MA_PER_S_DEFAULT, .stall_ms = SPEED_STALL_MS_DEFAULT };
+  motor_speed_init(&drive_speed, &speed_cfg, HALL_M1.EdgesPos, HALL_M1.EdgesNeg);
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by scripts/esc_build.sh --hall-shift */
 #endif
@@ -141,7 +100,6 @@ void drive_app_init(void)
    * ARM sent in answer to its own reply (which carries the session) can arm it. */
   const struct motor_cmd_config cfg = {
     .select = MOTOR_CAN_ID, .max_rpm = MAX_APPLICATION_SPEED_RPM, .max_ma = (int16_t)(IQMAX_A * 1000),
-    .ff_supported = 0U,      /* the current speed loops do not take a commanded feed-forward */
     .current_supported = 0U  /* current mode arrives with Stage 5 */ };
   motor_cmd_init(&drive_cmd, &cfg, MOTOR_CAN_ID);
 }
@@ -186,86 +144,6 @@ void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
   if (i + 1U >= ESC_CAPTURE_SAMPLES) capture_armed = 0U;
 }
 
-int16_t drive_speed_iq_ref(int16_t pi_out, int16_t ref_rpm, int16_t rpm)
-{
-  int32_t ff = 0;
-  if (drive_app.active && (ref_rpm >= FRICTION_MIN_REF_RPM || ref_rpm <= -FRICTION_MIN_REF_RPM)) {
-    const int32_t dir = ref_rpm > 0 ? 1 : -1;
-    const int32_t along = dir * rpm; /* speed in the commanded direction */
-    if (along > 0) ff_stall_ms = 0U;
-    else if (++ff_stall_ms >= FRICTION_STALL_MS) { ff_broken_free = 0U; ff_peak = 0; }
-    if (!ff_broken_free && along > ff_peak) ff_peak = along;
-    if (ff_peak >= FRICTION_FADE_RPM) ff_broken_free = 1U;
-    const int32_t st = drive_app.ff_static_counts, kin = drive_app.ff_kinetic_counts;
-    ff = ff_broken_free ? kin : kin + (st - kin) * (FRICTION_FADE_RPM - ff_peak) / FRICTION_FADE_RPM;
-    ff *= dir;
-  } else {
-    ff_broken_free = 0U;
-    ff_peak = 0;
-    ff_stall_ms = 0U;
-  }
-  int32_t out = (int32_t)pi_out + ff;
-  const int32_t limit = drive_app.iq_limit_counts;
-  if (out > limit) out = limit;
-  if (out < -limit) out = -limit;
-  return (int16_t)out;
-}
-
-void drive_speed_plausible(int16_t *rpm, int16_t ref_rpm)
-{
-  if (!drive_app.active || HALL_M1.BufferFilled >= HALL_M1.SpeedBufferSize) return;
-  if (ref_rpm < FRICTION_MIN_REF_RPM && ref_rpm > -FRICTION_MIN_REF_RPM) return;
-  const int32_t ref = ref_rpm > 0 ? ref_rpm : -ref_rpm;
-  const int32_t cap = ref * STARTUP_MAX_RATIO_PCT / 100 + STARTUP_MARGIN_RPM;
-  if (*rpm > cap) *rpm = (int16_t)cap;
-  else if (*rpm < -cap) *rpm = (int16_t)-cap;
-}
-
-int drive_dsc_enabled(void)
-{
-  return drive_dsc_cfg.enable != 0U;
-}
-
-int16_t drive_speed_pi(PID_Handle_t *pid, int16_t ref_rpm, int16_t rpm)
-{
-  const uint16_t pos = HALL_M1.EdgesPos, neg = HALL_M1.EdgesNeg, caps = HALL_M1.Captures;
-  const int16_t filtered = dsc_reversal_filter(&drive_rev, pos, neg, caps, rpm);
-  const int on = drive_rev_enable != 0U;
-  if (on) rpm = filtered;
-  if (drive_edge_speed) { /* low speed, or the SDK speed not alive yet: edge timing */
-    const int16_t edge = dsc_edge_rpm(&drive_rev);
-    if (rpm == 0 || (edge < DSC_EDGE_SPEED_MAX_RPM && edge > -DSC_EDGE_SPEED_MAX_RPM)) rpm = edge;
-  }
-  drive_speed_plausible(&rpm, ref_rpm); /* the edge estimate has no FIFO guard of its own */
-  if (!drive_dsc_cfg.enable) return PI_Controller(pid, (int32_t)ref_rpm - rpm);
-  const dsc_in_t in = { .ref_rpm = ref_rpm, .meas_rpm = rpm,
-                        .edges_pos = on ? drive_rev.qpos : pos,
-                        .edges_neg = on ? drive_rev.qneg : neg,
-                        .captures = on ? drive_rev.qcaps : caps,
-                        .limit = (int16_t)drive_app.iq_limit_counts,
-                        .active = drive_app.active ? 1U : 0U,
-                        .raw_pos = pos, .raw_neg = neg };
-  const uint8_t was = drive_dsc.state;
-  const int16_t out = dsc_step(&drive_dsc_cfg, &drive_dsc, &in, pid);
-  if (drive_dsc.state == DSC_STARTING && was != DSC_STARTING)
-    dsc_rev_rebase(&drive_rev, pos, neg, caps); /* this tick's edges are already consumed */
-  return out;
-}
-
-static volatile int16_t rec_pi_out, rec_iq_ref;
-static volatile uint32_t rec_loop_ran;
-
-void drive_record_tick(int16_t pi_out, int16_t iq_ref)
-{
-  rec_pi_out = pi_out;
-  rec_iq_ref = iq_ref;
-  rec_loop_ran = 1U;
-}
-
-/* One recorder sample per drive_app_tick (1 kHz in every MCSDK state), so it
- * sees the stopped reference before a start and finishes after a stop. Speed
- * loop values are those of this tick's FOC_CalcCurrRef, or 0 when the speed
- * loop did not run (IDLE, STOP, alignment, capture). */
 /* Measured q-axis current, SDK counts. MCSDK computes Iq from phase-current offsets that are only
  * calibrated on the first start, and keeps computing it with the bridge off, so outside the states
  * where the current loop drives the bridge it reads up to ~25 A of garbage (hardware 2026-10-21).
@@ -276,32 +154,30 @@ static int16_t measured_iq(void)
   return state == START || state == SWITCH_OVER || state == RUN ? MC_GetIqdMotor1().q : 0;
 }
 
-static void record_sample(void)
+/* One recorder sample per drive_app_tick (1 kHz in every MCSDK state), so it sees the stopped
+ * reference before a start and finishes after a stop. Loop values are this tick's motor_speed
+ * results; they are 0 while the loop is off (IDLE, STOP, alignment, capture). */
+static void record_sample(uint8_t speed_mode)
 {
   const uint32_t status = rec_status;
-  const uint32_t ran = rec_loop_ran;
-  rec_loop_ran = 0U;
   if (status != ESC_RECORD_ARMED && status != ESC_RECORD_TRIGGERED) return;
-  const int16_t pi_out = ran ? rec_pi_out : 0, iq_ref = ran ? rec_iq_ref : 0;
-  const int16_t ref = ran ? (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedReferenceMotor1()) : 0;
-  const uint32_t moving = ref >= DSC_STOP_RPM || ref <= -DSC_STOP_RPM;
+  const struct motor_speed_outputs *o = &speed_out;
+  const uint32_t ran = speed_mode != MOTOR_SPEED_OFF;
+  const uint32_t moving = o->ref_rpm >= MOTOR_SPEED_MOVING_RPM || o->ref_rpm <= -MOTOR_SPEED_MOVING_RPM;
+  const uint32_t mode = speed_mode == MOTOR_SPEED_HOLD ? ESC_REC_MODE_HOLD
+                        : o->stall_ramp ? ESC_REC_MODE_STALL_RAMP : ran ? ESC_REC_MODE_RUN : ESC_REC_MODE_OFF;
   int16_t *s = capture_mem.rec[rec_index % ESC_RECORD_SAMPLES];
-  s[0] = ref;
-  s[1] = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
-  if (!ran) {
-    s[2] = 0; s[3] = 0; s[4] = 0; /* speed loop not running this tick */
-  } else if (drive_dsc_cfg.enable) {
-    s[2] = drive_dsc.p; s[3] = drive_dsc.i; s[4] = drive_dsc.ff;
-  } else {
-    const int32_t i = PIDSpeedHandle_M1.wIntegralTerm / (int32_t)PID_GetKIDivisor(&PIDSpeedHandle_M1);
-    s[2] = (int16_t)(pi_out - i); s[3] = (int16_t)i; s[4] = (int16_t)(iq_ref - pi_out);
-  }
-  s[5] = iq_ref;
+  s[0] = o->ref_rpm;
+  s[1] = o->w_hat_rpm;
+  s[2] = o->p_counts;
+  s[3] = o->i_counts;
+  s[4] = o->ff_counts;
+  s[5] = o->iq_ref_counts;
   s[6] = measured_iq();
-  s[7] = (int16_t)((drive_dsc.state & 3U) | ((drive_dsc.reason & 15U) << 2) |
-                   ((ran ? drive_dsc.capped & 1U : 0U) << 6) | ((drive_dsc_cfg.enable & 1U) << 7) |
+  s[7] = (int16_t)(mode | ((o->valid & 1U) << 2) | ((o->saturated & 1U) << 3) | ((o->bleed & 1U) << 4) |
+                   ((o->stall_timer & 1U) << 5) |
                    (((uint32_t)(HALL_M1.EdgesPos - HALL_M1.EdgesNeg) & 15U) << 8) |
-                   (((uint32_t)HALL_M1.HallState & 7U) << 12) | ((ran ? 1U : 0U) << 15));
+                   (((uint32_t)HALL_M1.HallState & 7U) << 12) | (ran << 15));
   if (status == ESC_RECORD_ARMED) {
     if (rec_delay == UINT32_MAX) { /* waiting for the reference to leave zero */
       if (moving && !rec_prev_moving) rec_delay = (rx_record_word >> 9) & 0xFFFU;
@@ -540,8 +416,13 @@ static void apply_config(uint32_t word)
 {
   const int16_t value = (int16_t)(word >> 16);
   switch (word & 0xFFFFU) {
-    case ESC_CFG_SPEED_KP: PID_SetKP(&PIDSpeedHandle_M1, value); break;
-    case ESC_CFG_SPEED_KI: PID_SetKI(&PIDSpeedHandle_M1, value); break;
+    case ESC_CFG_SPEED_KP:
+    case ESC_CFG_SPEED_KI:
+      if (value < 0) { ++drive_app.rejected; return; }
+      if ((word & 0xFFFFU) == ESC_CFG_SPEED_KP) speed_cfg.kp = value;
+      else speed_cfg.ki = value;
+      motor_speed_configure(&drive_speed, &speed_cfg);
+      break;
     case ESC_CFG_HALL_SHIFT_DEG:
       HALL_M1.PhaseShift = (int16_t)((int32_t)value * 65536 / 360);
       drive_app.aligned = 1U;
@@ -561,71 +442,15 @@ static void apply_config(uint32_t word)
       PID_SetKI(&PIDIqHandle_M1, value);
       PID_SetKI(&PIDIdHandle_M1, value);
       break;
-    case ESC_CFG_FF_STATIC_MA:
-    case ESC_CFG_FF_KINETIC_MA: {
-      if (value < 0 || value > (int16_t)(IQMAX_A * 1000)) { ++drive_app.rejected; return; }
-      const int32_t counts = (int32_t)value * (int32_t)CURRENT_CONV_FACTOR / 1000;
-      if ((word & 0xFFFFU) == ESC_CFG_FF_STATIC_MA) drive_app.ff_static_counts = counts;
-      else drive_app.ff_kinetic_counts = counts;
+    case ESC_CFG_STALL_RAMP_MA_PER_S:
+      if (value < 2000 || value > 30000) { ++drive_app.rejected; return; }
+      speed_cfg.stall_ramp_ma_per_s = (uint16_t)value;
+      motor_speed_configure(&drive_speed, &speed_cfg);
       break;
-    }
-    case ESC_CFG_DSC_ENABLE:
-      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
-      drive_dsc_cfg.enable = (uint8_t)value;
-      dsc_reset(&drive_dsc);
-      break;
-    case ESC_CFG_DSC_FF_RUN_MA:
-    case ESC_CFG_DSC_FF_PER_KRPM_MA:
-    case ESC_CFG_DSC_START_FROM_MA:
-    case ESC_CFG_DSC_START_CAP_MA:
-    case ESC_CFG_DSC_START_SLOPE_MA:
-    case ESC_CFG_DSC_PCAP_MA:
-    case ESC_CFG_DSC_HOLD_DECAY_MA: {
-      if (value < 0 || value > (int16_t)(IQMAX_A * 1000)) { ++drive_app.rejected; return; }
-      const int16_t counts = (int16_t)((int32_t)value * (int32_t)CURRENT_CONV_FACTOR / 1000);
-      switch (word & 0xFFFFU) {
-        case ESC_CFG_DSC_FF_RUN_MA: drive_dsc_cfg.ff_run = counts; break;
-        case ESC_CFG_DSC_FF_PER_KRPM_MA: drive_dsc_cfg.ff_per_krpm = counts; break;
-        case ESC_CFG_DSC_START_FROM_MA: drive_dsc_cfg.start_from = counts; break;
-        case ESC_CFG_DSC_START_CAP_MA: drive_dsc_cfg.start_cap = counts; break;
-        case ESC_CFG_DSC_START_SLOPE_MA: {
-          if (value == 0) { ++drive_app.rejected; return; } /* a ramp that never rises */
-          const int32_t slope = ((int32_t)value * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000;
-          drive_dsc_cfg.start_slope = (int16_t)(slope > 0 ? slope : 1);
-          break;
-        }
-        case ESC_CFG_DSC_HOLD_DECAY_MA:
-          drive_dsc_cfg.hold_decay = (int16_t)(((int32_t)value * (int32_t)CURRENT_CONV_FACTOR + 500) / 1000);
-          break;
-        default: drive_dsc_cfg.pcap = counts; break;
-      }
-      break;
-    }
-    case ESC_CFG_DSC_START_HOLD_MS:
-    case ESC_CFG_DSC_PCAP_MS:
-    case ESC_CFG_DSC_PCAP_FALLBACK_MS:
-    case ESC_CFG_DSC_WATCH_MS:
-      if (value < 0 || value > 2000) { ++drive_app.rejected; return; }
-      if ((word & 0xFFFFU) == ESC_CFG_DSC_START_HOLD_MS) drive_dsc_cfg.start_hold_ms = (uint16_t)value;
-      else if ((word & 0xFFFFU) == ESC_CFG_DSC_PCAP_MS) drive_dsc_cfg.pcap_ms = (uint16_t)value;
-      else if ((word & 0xFFFFU) == ESC_CFG_DSC_WATCH_MS) drive_dsc_cfg.watch_ms = (uint16_t)value;
-      else drive_dsc_cfg.pcap_fallback_ms = (uint16_t)value;
-      break;
-    case ESC_CFG_DSC_PRELOAD_PCT:
-      if (value < 0 || value > 90) { ++drive_app.rejected; return; }
-      drive_dsc_cfg.preload_pct = (uint8_t)value;
-      break;
-    case ESC_CFG_SPEED_REV_FILTER:
-      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
-      drive_rev_enable = (uint8_t)value;
-      break;
-    case ESC_CFG_SPEED_EDGE_EST:
-      if (value != 0 && value != 1) { ++drive_app.rejected; return; }
-      drive_edge_speed = (uint8_t)value;
-      break;
-    case ESC_CFG_DSC_PCAP_UPDATES:
-      if (value < 1 || value > 6) { ++drive_app.rejected; return; }
-      drive_dsc_cfg.pcap_updates = (uint8_t)value;
+    case ESC_CFG_STALL_MS:
+      if (value < 200 || value > 2000) { ++drive_app.rejected; return; }
+      speed_cfg.stall_ms = (uint16_t)value;
+      motor_speed_configure(&drive_speed, &speed_cfg);
       break;
     default: ++drive_app.rejected; break;
   }
@@ -648,8 +473,6 @@ static uint32_t esc_stop_reason(uint8_t cause)
     case MOTOR_CMD_STOP_DISABLE: return ESC_STOP_COMMAND;
     case MOTOR_CMD_STOP_TIMEOUT: case MOTOR_CMD_STOP_OVERFLOW: return ESC_STOP_TIMEOUT;
     case MOTOR_CMD_STOP_FAULT: return ESC_STOP_FAULT;
-    case MOTOR_CMD_STOP_PARKED: return ESC_STOP_PARKED;
-    case MOTOR_CMD_STOP_LOOP_FAILED: return ESC_STOP_START_FAILED;
     default: return ESC_STOP_NONE;
   }
 }
@@ -666,8 +489,11 @@ static void command_tick(uint16_t state)
     .now_ms = drive_app.now_ms, .mc = mc_state(state),
     .mc_fault_present = MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS,
     .aligned = drive_app.aligned != 0U, .busy = (uint8_t)busy(),
-    .loop_failed = drive_dsc_cfg.enable && drive_dsc.state == DSC_FAILED,
-    .rpm = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1()),
+    /* the loop's verdicts are from the previous tick: it runs after the lifecycle decides its mode */
+    .standstill = speed_out.standstill, .stall_fault = speed_out.stall_fault,
+    .hall_lost = speed_out.hall_lost ||
+                 ((MC_GetCurrentFaultsMotor1() | MC_GetOccurredFaultsMotor1()) & MC_SPEED_FDBK) != 0U,
+    .rpm = speed_out.w_hat_rpm,
     .iq_ma = (int16_t)((int32_t)measured_iq() * 1000 / (int32_t)CURRENT_CONV_FACTOR),
     .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg };
   struct motor_cmd_actions act;
@@ -691,14 +517,11 @@ static void command_tick(uint16_t state)
     drive_app.stop_reason = esc_stop_reason(act.stop_cause);
   }
   if (act.ack_fault) (void)MC_AcknowledgeFaultMotor1();
-  /* Stage 2 adapter: the old speed loop with the same 20 ms MCSDK ramp it always had,
-   * which also reconstructs the Nucleo's 50 Hz trajectory between frames. */
-  if (act.set_target && act.mode == MOTOR_MODE_SPEED)
-    MC_ProgramSpeedRampMotor1((int16_t)RPM_2_SPEED_UNIT(act.setpoint), (uint16_t)MOTOR_PROTOCOL_PERIOD_MS);
+  if (act.set_target && act.mode == MOTOR_MODE_SPEED) motor_speed_set(&drive_speed, act.setpoint, act.ff_ma);
   if (act.start) {
-    dsc_reset(&drive_dsc); /* a FAILED attempt must not outlive the stop */
-    dsc_rev_rebase(&drive_rev, HALL_M1.EdgesPos, HALL_M1.EdgesNeg, HALL_M1.Captures);
     drive_app.stop_reason = ESC_STOP_NONE;
+    /* Torque mode from the first period: MCSDK holds Iq 0 until the speed loop takes over in RUN. */
+    MC_SetCurrentReferenceMotor1((qd_t){ .q = 0, .d = 0 });
     (void)MC_StartMotor1(); /* refused only off IDLE, which motor_cmd waits for; its start timeout covers the rest */
   }
   drive_app.active = motor_cmd_output_on(&drive_cmd) ? 1U : 0U;
@@ -725,6 +548,26 @@ static void i2t_tick(uint16_t state)
   }
 }
 
+/* The speed loop runs only while the lifecycle owns a running bridge; alignment and capture own it
+ * otherwise and set their own references. */
+static uint8_t speed_tick(uint16_t state)
+{
+  const uint8_t lc = drive_cmd.lifecycle;
+  const uint8_t mode = state != RUN ? MOTOR_SPEED_OFF
+                       : lc == MOTOR_LC_RUNNING ? MOTOR_SPEED_RUNNING
+                       : lc == MOTOR_LC_HOLD ? MOTOR_SPEED_HOLD : MOTOR_SPEED_OFF;
+  const uint8_t hall = HALL_M1.HallState;
+  const struct motor_speed_inputs in = {
+    .mode = mode, .limit_counts = (int16_t)drive_app.iq_limit_counts,
+    .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg,
+    .mcsdk_avg_rpm = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1()),
+    .mcsdk_buffer_full = HALL_M1.BufferFilled >= HALL_M1.SpeedBufferSize,
+    .hall_code_invalid = hall == 0U || hall == 7U };
+  motor_speed_tick(&drive_speed, &in, &speed_out);
+  if (mode != MOTOR_SPEED_OFF) MC_SetCurrentReferenceMotor1((qd_t){ .q = speed_out.iq_ref_counts, .d = 0 });
+  return mode;
+}
+
 /* Service commands (align, capture, config) need the motor off and not latched in a fault. */
 static int service_allowed(uint16_t state)
 {
@@ -737,6 +580,7 @@ void drive_app_tick(void)
   ++drive_app.now_ms;
   const uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
   command_tick(state); /* first: a DISABLE in it cancels service requests queued before it */
+  const uint8_t speed_mode = speed_tick(state);
   const uint32_t align_count = rx_align_count, config_count = rx_config_count;
   const uint32_t capture_count = rx_capture_count, record_count = rx_record_count;
   align_tick(state);
@@ -766,7 +610,7 @@ void drive_app_tick(void)
     else ++drive_app.rejected;
   }
   i2t_tick(state);
-  record_sample();
+  record_sample(speed_mode);
 }
 
 int drive_app_idle(void)
@@ -821,7 +665,7 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     motor_cmd_reply_pop(&drive_cmd);
   }
   if (status_pending) {
-    const int16_t rpm = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
+    const int16_t rpm = speed_out.w_hat_rpm;
     const int16_t iq = measured_iq();
     const qd_t ref = MC_GetIqdrefMotor1();
     const uint8_t flags = (uint8_t)((drive_app.stop_reason & 0x0FU) |

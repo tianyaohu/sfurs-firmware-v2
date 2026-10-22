@@ -23,7 +23,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "speed_torq_ctrl.h"
-#include "drive_app.h"
 #include "speed_pos_fdbk.h"
 
 #include "mc_type.h"
@@ -454,9 +453,7 @@ __weak int16_t STC_CalcTorqueReference(SpeednTorqCtrl_Handle_t *pHandle)
 #endif
       hMeasuredSpeed = SPD_GetAvrgMecSpeedUnit(pHandle->SPD);
       hError = hTargetSpeed - hMeasuredSpeed;
-      (void)hError;
-      /* USER: PI_Controller, or the startup speed loop (drive_app.c) */
-      hTorqueReference = drive_speed_pi(pHandle->PISpeed, hTargetSpeed, hMeasuredSpeed);
+      hTorqueReference = PI_Controller(pHandle->PISpeed, (int32_t)hError);
 
       pHandle->SpeedRefUnitExt = wCurrentReference;
       pHandle->TorqueRef = ((int32_t)hTorqueReference) * 65536;

@@ -13,7 +13,7 @@
  *                 [--gap-ms N [--gap-at S]]        omit sending once (default S=1 second)
  *                                                one wheel at a speed setpoint (motion!)
  *   esc_tool pulse [--axis vy|vx] [--speed 0.2] [--accel RPMPS] [--seconds 1.5] [--reps 3]
- *                  [--kp N --ki N] [--ff-static MA] [--ff-kinetic MA] [--log f.jsonl]
+ *                  [--kp N --ki N] [--log f.jsonl]
  *                                                scripted ground drive out and back (motion!)
  *   esc_tool stop                                broadcast DISABLE
  *   esc_tool clear                               clear latched ESC faults while stopped
@@ -24,8 +24,8 @@
  * position but makes no torque; battery ON. spin arms and streams SPEED to one wheel; --kp/--ki are
  * set in RAM first and the firmware defaults (drive_parameters.h) restored afterwards; DISABLE on exit,
  * and the ESC stops itself 0.1 s after the stream. pulse drives the whole robot through the Nucleo:
- * each rep goes out along --axis for --seconds and back; gains and friction feed-forward are set in
- * RAM on all four wheels and the defaults restored afterwards. Ctrl-C or switching the battery off
+ * each rep goes out along --axis for --seconds and back; the speed-loop gains and stall settings are
+ * set in RAM on all four wheels and the defaults restored afterwards. Ctrl-C or switching the battery off
  * stops it: the Nucleo brakes 0.3 s after the heartbeat stops.
  * reject waits for watchdog disarm and re-arms for each case; only rejected range/conflict frames
  * have nonzero speed setpoints. stream preserves enable=1 for the fault hold so the fault latch
@@ -389,8 +389,8 @@ read_spin_reply:
 typedef struct {
   const char *axis, *log;
   double speed, seconds;
-  int accel, reps, kp, ki, ff_static, ff_kinetic;
-  bool has_kp, has_ki, has_ffs, has_ffk;
+  int accel, reps, kp, ki;
+  bool has_kp, has_ki;
 } pulse_args_t;
 
 static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
@@ -399,9 +399,9 @@ static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
     return die("pulse: 0 < speed <= 2 m/s, 0 < seconds <= 3, 1 <= reps <= 10");
   /* Send every tunable, not only the non-default ones: the ESCs may still hold values from an earlier run
    * whose restore did not land. */
-  pulse_settings_t settings = {.n_keys = 4, .keys = {"kp", "ki", "ff_static_ma", "ff_kinetic_ma"}};
-  const bool has[4] = {a->has_kp, a->has_ki, a->has_ffs, a->has_ffk};
-  const int given[4] = {a->kp, a->ki, a->ff_static, a->ff_kinetic};
+  pulse_settings_t settings = {.n_keys = 4, .keys = {"kp", "ki", "stall_ramp_ma_per_s", "stall_ms"}};
+  const bool has[4] = {a->has_kp, a->has_ki, false, false};
+  const int given[4] = {a->kp, a->ki, 0, 0};
   int used[4];
   for (int k = 0; k < 4; k++) {
     int def;
@@ -440,8 +440,8 @@ static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
       if (res.log[i].vbus_v[w] > 0) vmin = fmin(vmin, res.log[i].vbus_v[w]);
     }
   if (res.aborted[0]) printf("ABORTED: %s\n", res.aborted);
-  printf("pulse %s %g m/s x%d (kp %d ki %d ff %d/%d mA): faults %s, Vbus min %.2f V\n", a->axis, a->speed, a->reps,
-         used[0], used[1], used[2], used[3], faults[0] ? faults : "-", vmin > 1e8 ? 0.0 : vmin);
+  printf("pulse %s %g m/s x%d (kp %d ki %d): faults %s, Vbus min %.2f V\n", a->axis, a->speed, a->reps,
+         used[0], used[1], faults[0] ? faults : "-", vmin > 1e8 ? 0.0 : vmin);
   for (int i = 0; i < IK_WHEELS; i++) {
     const esc_wheel_breakaway_t *b = &s.wheel[i];
     char med[16] = "-", worst[16] = "-";
@@ -768,8 +768,6 @@ int main(int argc, char **argv)
     else if (!strcmp(o, "--speed")) pa.speed = atof(v);
     else if (!strcmp(o, "--accel")) pa.accel = atoi(v);
     else if (!strcmp(o, "--reps")) pa.reps = atoi(v);
-    else if (!strcmp(o, "--ff-static")) pa.ff_static = atoi(v), pa.has_ffs = true;
-    else if (!strcmp(o, "--ff-kinetic")) pa.ff_kinetic = atoi(v), pa.has_ffk = true;
     else return die("unknown option %s", o);
     i++;
   }

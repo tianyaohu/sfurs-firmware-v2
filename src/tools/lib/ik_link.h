@@ -102,8 +102,12 @@ typedef struct { int16_t ref_rpm, rpm, p, i, ff, iq_ref, iq, packed; } ik_record
 typedef struct {
   int ref_rpm, rpm;
   double p_a, i_a, ff_a, iq_ref_a, iq_a;
-  const char *state, *reason;
-  bool capped, dsc, loop;
+  const char *mode;  /**< Loop mode (bits 0-1): "off", "run", "hold", "stall_ramp". */
+  bool valid;        /**< Speed estimate valid. */
+  bool saturated;    /**< Current request saturated at the limit. */
+  bool bleed;        /**< Over-speed bleed applied this tick. */
+  bool stall_timer;  /**< Stall timer counting (high current, no Hall progress). */
+  bool loop;         /**< Speed loop ran this tick (else ref, P, I, ff, Iq ref are 0). */
   int edges_mod16;
   int hall_state; /**< Raw Hall state 1..6 sampled in the same tick; 0/7 invalid. */
 } ik_record_unpacked_t;

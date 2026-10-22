@@ -65,7 +65,7 @@ static void setup(void)
 {
   for (unsigned w = 0; w < 4U; ++w) {
     const struct motor_cmd_config cfg = { .select = 1U << w, .max_rpm = 2976, .max_ma = 6000,
-                                          .ff_supported = 0U, .current_supported = 0U };
+                                          .current_supported = 0U };
     motor_cmd_init(&esc[w], &cfg, 100U + w);
     esc_in[w] = (struct motor_cmd_inputs){ .mc = MOTOR_CMD_MC_IDLE, .aligned = 1U };
   }
@@ -340,7 +340,7 @@ static void test_feed_forward_rides_in_speed_frames(void)
     for (unsigned k = count; k-- > 0;)
       if (ids[k] == (MOTOR_CAN_ID_CONTROL | (1U << i)) && decode(k, &c) && c.mode == MOTOR_MODE_SPEED) break;
     CHECK(c.ff_ma == ik_drive_ff_ma[i] && c.ff_ma != 0 && (c.ff_ma > 0) == (fwd1[i] > 0)); /* along the motion */
-    CHECK(ik_drive_link[i].reason == MOTOR_R_FF_UNUSED); /* this ESC's loop ignores it, and says so */
+    CHECK(ik_drive_link[i].reason == MOTOR_R_NONE); /* applied by the ESC speed loop */
   }
 }
 

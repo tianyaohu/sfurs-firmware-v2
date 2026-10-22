@@ -43,6 +43,11 @@
     FR 1.50/2.00, BR 2.00/2.25, BL 2.25/2.75, FL 2.50/2.75 ms; exact max 1.94/2.77/2.68/2.79 ms. Rising in send order
     (frames queue FR, BR, BL, FL), which is the ~1 ms apply skew. Bus load ~19.6 % of 500 kbit/s (130 bits per 8-byte
     frame, 100 per 4-byte poll; 120357 frames received, 60167 sent + ~60060 polls in 300.3 s).
-- Not done yet (H2): LOST disables all four on hardware (host-tested only), remaining mat runs (skipped, see design log).
+  - LOST: BL put in its bootloader (one-off helper sending the documented 0x654 `BOOT 01 04 FB 00` through the raw
+    mailbox; status "no reply"), then `esc_tool stream --seconds 5`: fault word 0x40 (BL LOST), drive STOPPING,
+    FR/BR/FL answered the broadcast DISABLE (APPLIED/NONE), no motion (needs all four armed); latched while enable was
+    held 2 s, cleared at enable 0. Tests LOST at session start, not mid-stream. BL restored with
+    `esc_update SW --can --target-in-boot` (same CRC B938A36F), all four IDLE.
+- H2 result: protocol checks pass. Mat starts not repeated (old loop stalls on static friction; design log 2026-10-21).
 - Data: /home/fh/sfurs_firmware/hw-data/2026-10-21-h2-raised/ (runs, log); spins in
   /home/fh/sfurs_firmware/hw-data/2026-10-21-stage0-baseline/new_spin_*.jsonl.

@@ -9,7 +9,7 @@
   bus. Flash: CAN bootloader 16 KiB at `0x08000000`, app 110 KiB at
   `0x08004000`, validity page at `0x0801F800`.
 - **Motors**: 8 pole pairs, Hall sensors (120°), direct drive, 65.5 mm omni
-  wheels. **Battery**: 3S, ~12.4 V full.
+  wheels. **Battery**: 4S, ~16.8 V full.
 
 ## Wheel map
 
@@ -44,7 +44,7 @@ few characters; check the full serial before any write.
   no ESC USB): battery ON is allowed when every ESC reports IDLE with no
   fault, Vbus is measured, and the bootloader verifies the image CRC.
 - Battery state is measured: ESC Vbus over CAN (`esc_tool status`) or SWD;
-  < 8 V is off (USB alone ~4.6 V, the 3S pack ~12 V).
+  < 8 V is off (USB alone ~4.6 V, the 4S pack ~15-16.8 V).
 - Power an ESC from the battery before USB: USB-first latches undervolt
   (FAULT_OVER). `esc_tool clear` clears it.
 - Wheels off the ground for alignment and first runs after any firmware change.

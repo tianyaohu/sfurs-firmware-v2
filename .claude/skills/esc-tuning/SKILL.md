@@ -30,7 +30,7 @@ Wheels: FR=NE (sel 1), BR=SE (2), BL=SW (4), FL=NW (8).
 ## Safety, and why
 
 - **Know the battery state; measure it.** `esc_tool status` shows each
-  ESC's Vbus: ~12 V is the 3S pack, ~4.6 V is USB only, "no reply" is dark.
+  ESC's Vbus: ~15-16.8 V is the 4S pack, ~4.6 V is USB only, "no reply" is dark.
   Only a row whose reply count moved is live — the Nucleo keeps old values.
 - **Wheels off the ground** for align, capture and the first spin after any
   firmware change; a wrong shift or sign drives the robot off the bench.

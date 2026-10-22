@@ -12,7 +12,7 @@
 #include "esc_ops.h"
 #include "ik_link.h"
 
-#define PULSE_MAX_KEYS 8
+#define PULSE_MAX_KEYS 8 /**< CONFIG keys a run can set per wheel */
 
 /** Per-wheel RAM settings sent before the run (CONFIG keys; defaults restored after). */
 typedef struct {
@@ -29,6 +29,7 @@ typedef struct {
   double vbus_v[IK_WHEELS];
 } pulse_entry_t;
 
+/** @brief Run result: log, guard abort reason and the log's time origin. */
 typedef struct {
   pulse_entry_t *log;
   size_t n;
@@ -38,12 +39,19 @@ typedef struct {
 
 /** @brief CLOCK_MONOTONIC seconds. */
 double pulse_now_s(void);
-/** @brief Sleep for s seconds. */
+/** @brief Sleep for s seconds.
+ * @param s duration, s
+ */
 void pulse_sleep_s(double s);
 
 /**
  * @brief Wait until the given wheels report IDLE: CONFIG is refused in any other
- *        state, and STOP -> IDLE takes ~0.7 s after a parked or aborted run.
+ *        state, and STOP -> IDLE takes ~0.7 s after a run.
+ * @param l             open mailbox link
+ * @param wheel_indices wheel indices 0..3 to wait for
+ * @param n             entries in wheel_indices
+ * @param timeout_s     deadline, s
+ * @return nonzero when all of them are IDLE in time
  */
 int pulse_wait_idle(ik_link_t *l, const int *wheel_indices, int n, double timeout_s);
 
@@ -51,7 +59,9 @@ int pulse_wait_idle(ik_link_t *l, const int *wheel_indices, int n, double timeou
  * @brief Run the plan. Refuses (returns -1, nothing sent) if a wheel has no live reply.
  *        Always stops driving, waits for STOPPED/IDLE and restores the defaults of
  *        every key in settings, even after an error or a guard abort.
+ * @param l          open mailbox link.
  * @param plan       moves from esc_pulse_plan.
+ * @param n_moves    number of moves.
  * @param duration   total run time, s.
  * @param settings   keys and per-wheel values to set first (every tunable, not only the
  *                   non-default ones: the ESCs may still hold values from an earlier run).
@@ -62,11 +72,21 @@ int pulse_wait_idle(ik_link_t *l, const int *wheel_indices, int n, double timeou
 int pulse_run(ik_link_t *l, const esc_move_t *plan, size_t n_moves, double duration,
               const pulse_settings_t *settings, int accel_rpmps, pulse_result_t *out);
 
+/** @brief Free the log of a result.
+ * @param r result to clear
+ */
 void pulse_result_free(pulse_result_t *r);
-/** @brief Write the log as JSON lines (the format of the Python tools). */
+/** @brief Write the log as JSON lines (the format of the Python tools).
+ * @param path output file
+ * @param r    result whose log is written
+ * @return 0 or -1
+ */
 int pulse_log_write(const char *path, const pulse_result_t *r);
 
-/** @brief JSON array of the space-separated names, e.g. `["a","b"]`. */
+/** @brief JSON array of the space-separated names, e.g. `["a","b"]`.
+ * @param f     output
+ * @param names space-separated names
+ */
 void pulse_json_names(FILE *f, const char *names);
 
 #endif

@@ -22,16 +22,19 @@ builds all four plus the Nucleo images.
 
 ## What is ours vs generated
 
-Ours: `Src/drive_app.c`, `Inc/drive_app.h` (all application behaviour, see
-`architecture/drive.md`), the `USER CODE` sections of `Src/main.c`, the angle hook in
-`FOC_CurrControllerM1` (`Src/mc_tasks_foc.c`), and parameter edits in
-`Inc/drive_parameters.h`, `Inc/pmsm_motor_parameters.h` and
+Ours: `Src/drive_app.c`, `Inc/drive_app.h` (application glue on MCSDK, see
+`architecture/drive.md`), `Src/motor_cmd.c` / `Inc/motor_cmd.h` (command lifecycle) and
+`Src/motor_speed.c` / `Inc/motor_speed.h` (speed loop), the `USER CODE` sections of
+`Src/main.c`, the angle and capture hooks in `FOC_CurrControllerM1` (`Src/mc_tasks_foc.c`),
+the `USER` Hall edge counters `EdgesPos`/`EdgesNeg` in `hall_speed_pos_fdbk.h/.c`, and
+parameter edits in `Inc/drive_parameters.h`, `Inc/pmsm_motor_parameters.h` and
 `SPEED_UNIT` in `Inc/mc_stm_types.h`. Everything else is MCSDK/CubeMX output.
 
 Regenerating from Workbench overwrites the parameter headers: re-apply the
-values listed in `architecture/drive.md` (speed PI, 6 A, `U_RPM`, Hall FIFO depth 6,
-OV 18 V, default speed 0) and keep the `drive_app.c` link in
-`STM32CubeIDE/.project`.
+values listed in `architecture/drive.md` (speed-loop gains and stall defaults, 6 A, `U_RPM`,
+Hall FIFO depth 6, OV 18 V, default speed 0) and keep the `drive_app.c`, `motor_cmd.c` and
+`motor_speed.c` links in `STM32CubeIDE/.project` (the build itself uses
+`scripts/esc_sources.txt`).
 
 ## CAN timing
 

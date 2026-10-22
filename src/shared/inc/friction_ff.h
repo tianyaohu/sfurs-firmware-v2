@@ -41,7 +41,8 @@ struct friction_ff_params {
  *
  * @param geometry wheel table, ::ROVER_WHEEL_COUNT entries, as for ::rover_ik
  * @param params   friction model, non-NULL
- * @param vx, vy   commanded body velocity, m/s (x right, y forward)
+ * @param vx       commanded body velocity along x (right), m/s
+ * @param vy       commanded body velocity along y (forward), m/s
  * @param omega    commanded yaw rate, rad/s (CCW positive)
  * @param amps     out: current in A in FR/BR/BL/FL order; must hold four floats
  * @return 1 on success, 0 for invalid input or a singular geometry (amps zeroed

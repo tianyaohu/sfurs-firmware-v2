@@ -19,7 +19,6 @@
 
 #define IK_ABI 0x494B0008U
 #define IK_WHEELS 4
-#define IK_RECORD_CHANNELS 8
 #define IK_CAPTURE_READ_MAX 32U
 #define IK_ROW_WORDS 19
 #define IK_LINK_WORDS 25
@@ -44,6 +43,7 @@ typedef enum {
   IK_FF_A_PER_NM_MILLI, IK_FF_SCALE_PCT, IK_FF_MA, IK_REPLY_LAT_HIST, IK_REPLY_LAT_MAX_US, IK_MODE, IK_CURRENT_MA, IK_SYM_COUNT
 } ik_sym_t;
 
+/** @brief Open mailbox link: OpenOCD session, symbol addresses, heartbeat, last error. */
 typedef struct {
   ocd_t *ocd;
   uint32_t addr[IK_SYM_COUNT];
@@ -84,12 +84,15 @@ typedef struct {
   int32_t target_rpm[IK_WHEELS], rpm[IK_WHEELS];
 } ik_status_t;
 
+/** @brief Cumulative counters, reply latency bins (250 us) and protocol rows. */
 typedef struct {
   uint32_t tx_count, tx_fail, fault, can_rx;
   uint32_t hist[IK_WHEELS][IK_LAT_BINS], max_us[IK_WHEELS];
   ik_link_row_t rows[IK_WHEELS];
 } ik_counters_t;
 /** @brief Read cumulative counters and 250 us latency bins; take snapshots while stopped for stable CONTROL totals.
+ * @param l Open mailbox link.
+ * @param out Counter snapshot.
  * @param can_rx_addr Address of can_rx_frame_count resolved from the same ELF.
  */
 int ik_counters(ik_link_t *l, uint32_t can_rx_addr, ik_counters_t *out);
@@ -97,6 +100,7 @@ int ik_counters(ik_link_t *l, uint32_t can_rx_addr, ik_counters_t *out);
 /** Capture header words in Nucleo RAM (updated by every CAN reply). */
 typedef struct { uint32_t frames, source, status, vbus_centivolts, samples; } ik_capture_header_t;
 
+/** @brief One capture sample: Id, Iq, Id ref (counts), Vd, Vq (s16V), electrical angle (s16). */
 typedef struct { int16_t id, iq, vd, vq, id_ref, angle; } ik_capture_sample_t;
 
 /** One speed-loop recorder sample; channel order matches the Python tools. */
@@ -116,24 +120,62 @@ typedef struct {
   int hall_state; /**< Raw Hall state 1..6 sampled in the same tick; 0/7 invalid. */
 } ik_record_unpacked_t;
 
-/** @brief Resolve every ik_drive_* symbol from the ELF. Returns 0, or -1 with err set. */
+/** @brief Resolve every ik_drive_* symbol from the ELF. Returns 0, or -1 with err set.
+ * @param elf Nucleo drive ELF that is flashed.
+ * @param addr out: RAM address per ::ik_sym_t.
+ * @param err out: error text.
+ * @param errlen size of err, bytes.
+ */
 int ik_resolve(const char *elf, uint32_t addr[IK_SYM_COUNT], char *err, size_t errlen);
 
-/** @brief Attach (no halt/reset) and check the ABI word. Returns 0, or -1 with l->err set. */
+/** @brief Attach (no halt/reset) and check the ABI word. Returns 0, or -1 with l->err set.
+ * @param l out: link state.
+ * @param serial Nucleo ST-LINK serial.
+ * @param elf Nucleo drive ELF that is flashed.
+ */
 int ik_link_open(ik_link_t *l, const char *serial, const char *elf);
-/** @brief Detach; the Nucleo keeps running. */
+/** @brief Detach; the Nucleo keeps running.
+ * @param l Link to close.
+ */
 void ik_link_close(ik_link_t *l);
 
-/** @brief Read/write one mailbox word. Return 0 or -1. */
+/** @brief Read one mailbox word. Returns 0 or -1.
+ * @param l Open mailbox link.
+ * @param sym Mailbox symbol.
+ * @param value out: word.
+ */
 int ik_read(ik_link_t *l, ik_sym_t sym, uint32_t *value);
+/** @brief Write one mailbox word. Returns 0 or -1.
+ * @param l Open mailbox link.
+ * @param sym Mailbox symbol.
+ * @param value Word to write.
+ */
 int ik_write(ik_link_t *l, ik_sym_t sym, uint32_t value);
 
-/** @brief Publish a body twist (mm/s, mm/s, mrad/s) and bump the heartbeat (call at >= 10 Hz). */
+/** @brief Publish a body twist (mm/s, mm/s, mrad/s) and bump the heartbeat (call at >= 10 Hz).
+ * @param l Open mailbox link.
+ * @param vx_mmps Body velocity x (right), mm/s.
+ * @param vy_mmps Body velocity y (forward), mm/s.
+ * @param omega_mradps Yaw rate, CCW positive, mrad/s.
+ * @param enable false decelerates to zero and stops (also acknowledges a drive fault).
+ * @return 0 or -1.
+ */
 int ik_drive(ik_link_t *l, int32_t vx_mmps, int32_t vy_mmps, int32_t omega_mradps, bool enable);
+/** @brief Read the drive state snapshot. Returns 0 or -1.
+ * @param l Open mailbox link.
+ * @param s out: state, counters, target and slewed RPM per wheel.
+ */
 int ik_status(ik_link_t *l, ik_status_t *s);
-/** @brief Four decoded telemetry rows; rows[i].valid is false if torn three times. */
+/** @brief Four decoded telemetry rows; rows[i].valid is false if torn three times.
+ * @param l Open mailbox link.
+ * @param rows out: FR/BR/BL/FL rows.
+ * @return 0, or -1 on a transport error.
+ */
 int ik_rows(ik_link_t *l, ik_row_t rows[IK_WHEELS]);
-/** @brief Decode IK_ROW_WORDS raw words. */
+/** @brief Decode IK_ROW_WORDS raw words.
+ * @param words Stable telemetry words of one wheel.
+ * @param row out: decoded row (RPM, A, V).
+ */
 void ik_decode_row(const uint32_t words[IK_ROW_WORDS], ik_row_t *row);
 /** @brief Read four seqlocked protocol rows; invalid rows must not be used.
  * @param l Open mailbox link.
@@ -141,7 +183,12 @@ void ik_decode_row(const uint32_t words[IK_ROW_WORDS], ik_row_t *row);
  * @return 0, or -1 with l->err on a transport error.
  */
 int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS]);
-/** @brief Read one seqlocked reply row (wheel 0..3); reply clocks are wrapping microseconds. */
+/** @brief Read one seqlocked reply row (wheel 0..3); reply clocks are wrapping microseconds.
+ * @param l Open mailbox link.
+ * @param wheel Index 0..3 (FR/BR/BL/FL).
+ * @param row out: snapshot; valid is false after three torn reads.
+ * @return 0, or -1 with l->err on a transport error.
+ */
 int ik_link_row(ik_link_t *l, int wheel, ik_link_row_t *row);
 /** @brief Decode IK_LINK_WORDS mailbox words, including stable protocol names.
  * @param words Stable mailbox words, in ABI 8 order; clocks are wrapping microseconds.
@@ -158,9 +205,20 @@ const char *ik_reason_name(uint32_t reason);
  * @return 0 if healthy, -1 on fault or transport error.
  */
 int ik_check_fault(ik_link_t *l, uint32_t fault);
+/** @brief Read the capture header words in Nucleo RAM.
+ * @param l Open mailbox link.
+ * @param h out: frames, source, status, Vbus (cV), samples.
+ * @return 0 or -1.
+ */
 int ik_capture_header(ik_link_t *l, ik_capture_header_t *h);
 
-/** @brief One 4-byte CAN frame through the Nucleo; only accepted while STOPPED. */
+/** @brief One 4-byte CAN frame through the Nucleo; only accepted while STOPPED.
+ * @param l Open mailbox link.
+ * @param can_id 11-bit CAN ID.
+ * @param word Payload as one little-endian word.
+ * @param timeout_s Maximum wait for raw_done, seconds.
+ * @return 0 on transmission, -1 with l->err on failure.
+ */
 int ik_send_raw(ik_link_t *l, uint32_t can_id, uint32_t word, double timeout_s);
 /** @brief Send 8 CAN payload bytes while STOPPED.
  * @param l Open mailbox link.
@@ -171,19 +229,54 @@ int ik_send_raw(ik_link_t *l, uint32_t can_id, uint32_t word, double timeout_s);
  */
 int ik_send_raw8(ik_link_t *l, uint32_t can_id, const uint8_t data[8], double timeout_s);
 
-/* Command words (can_datatypes.h). Each returns 0 or -1 on an out-of-range argument. */
+/** @brief CAPTURE command word that starts a current-loop step (can_datatypes.h).
+ * @param step_ma Id step, mA.
+ * @param word out: command word.
+ * @return 0, or -1 on an out-of-range argument.
+ */
 int ik_capture_start_word(int step_ma, uint32_t *word);
+/** @brief CAPTURE command word that reads capture data (can_datatypes.h).
+ * @param bank Readout bank.
+ * @param first First sample index.
+ * @param count Samples to read, 1..32.
+ * @param word out: command word.
+ * @return 0, or -1 on an out-of-range argument.
+ */
 int ik_capture_read_word(int bank, int first, int count, uint32_t *word);
+/** @brief CAPTURE command word that arms the speed-loop recorder (can_datatypes.h).
+ * @param pre Samples kept from before the trigger, 0..ESC_RECORD_SAMPLES-1.
+ * @param delay_ms Trigger delay after the reference leaves zero, 0..4095 ms.
+ * @param word out: command word.
+ * @return 0, or -1 on an out-of-range argument.
+ */
 int ik_record_start_word(int pre, int delay_ms, uint32_t *word);
+/** @brief CAPTURE command word that reads recorder data (can_datatypes.h).
+ * @param bank Readout bank.
+ * @param first First sample index.
+ * @param count Samples to read, 1..32.
+ * @param ch67 Bank 0 carries channels 6, 7, 0 instead of 0-2.
+ * @param word out: command word.
+ * @return 0, or -1 on an out-of-range argument.
+ */
 int ik_record_read_word(int bank, int first, int count, bool ch67, uint32_t *word);
-/** @brief Resolve a canonical CONFIG key name or numeric ID (base 0), or -1. */
+/** @brief Resolve a canonical CONFIG key name or numeric ID (base 0), or -1.
+ * @param key Key name (e.g. "kp") or number string.
+ * @param id out: protocol key ID.
+ */
 int ik_config_key(const char *key, uint16_t *id);
-/** @brief Number of CONFIG keys and their canonical names. */
+/** @brief Number of CONFIG keys known by name. */
 size_t ik_config_key_count(void);
+/** @brief Canonical name of CONFIG key i, or NULL past the end.
+ * @param i Index 0..ik_config_key_count()-1.
+ * @param number out (may be NULL): protocol key ID.
+ */
 const char *ik_config_key_name(size_t i, int *number);
-/** @brief CONFIG status name: OK, protocol reason, UNKNOWN_KEY, BAD_VALUE or UNKNOWN. */
+/** @brief CONFIG status name: OK, protocol reason, UNKNOWN_KEY, BAD_VALUE or UNKNOWN.
+ * @param status CONFIG_REPLY status byte.
+ */
 const char *ik_config_status_name(uint32_t status);
 /** @brief Send CONFIG while stopped and wait for a fresh matching wheel/seq/key reply.
+ * @param l Open mailbox link.
  * @param wheel Mailbox index FR/BR/BL/FL = 0/1/2/3.
  * @param op MOTOR_CONFIG_SET or MOTOR_CONFIG_GET; GET requires value zero.
  * @param key Protocol key ID; ik_config_key resolves names and numeric strings.
@@ -194,17 +287,31 @@ const char *ik_config_status_name(uint32_t status);
  */
 int ik_config_exchange(ik_link_t *l, int wheel, int op, uint16_t key, int value,
                        double timeout_s, struct motor_config_reply *reply);
-/** @brief Select SPEED=0 or CURRENT=1 only while IK_STOPPED; invalid modes are refused. */
+/** @brief Values of the ik_drive_mode mailbox word. */
 enum { IK_MODE_SPEED = 0, IK_MODE_CURRENT = 1 };
+/** @brief Select SPEED=0 or CURRENT=1 only while IK_STOPPED; invalid modes are refused.
+ * @param l Open mailbox link.
+ * @param mode IK_MODE_SPEED or IK_MODE_CURRENT.
+ * @return 0, or -1 with l->err set.
+ */
 int ik_set_mode(ik_link_t *l, unsigned mode);
-/** @brief Publish four q-current setpoints (mA, clamped to +/-6000), then bump heartbeat/enable. */
+/** @brief Publish four q-current setpoints (mA, clamped to +/-6000), then bump heartbeat/enable.
+ * @param l Open mailbox link.
+ * @param current_ma FR/BR/BL/FL q-current, mA.
+ * @param enable false stops the session.
+ * @return 0 or -1.
+ */
 int ik_drive_current(ik_link_t *l, const int32_t current_ma[IK_WHEELS], bool enable);
 
-/** @brief Decode one recorder sample into physical units. */
+/** @brief Decode one recorder sample into physical units.
+ * @param s Raw sample (RPM, current counts, packed bits).
+ * @param u out: RPM, A and flag fields.
+ */
 void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u);
 
 /**
  * @brief Run one current-loop step test on one wheel (IDLE, battery on) and read it back.
+ * @param l        open mailbox link.
  * @param selector wheel select bit.
  * @param step_ma  step current, 0..6000 mA.
  * @param header   receives the capture header (status, Vbus, count).
@@ -213,8 +320,22 @@ void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u);
  */
 int ik_capture(ik_link_t *l, uint32_t selector, int step_ma, ik_capture_header_t *header,
                ik_capture_sample_t *samples);
+/** @brief Arm the speed-loop recorder of one wheel (allowed while driving).
+ * @param l Open mailbox link.
+ * @param selector Wheel select bit.
+ * @param pre Samples kept from before the trigger, 0..ESC_RECORD_SAMPLES-1.
+ * @param delay_ms Trigger delay after the reference leaves zero, 0..4095 ms.
+ * @return 0, or -1 with l->err set.
+ */
 int ik_record_start(ik_link_t *l, uint32_t selector, int pre, int delay_ms);
-/** @brief Read a finished recording: samples gets up to ESC_RECORD_SAMPLES entries; *count and *trigger are set. */
+/** @brief Read a finished recording: samples gets up to ESC_RECORD_SAMPLES entries; *count and *trigger are set.
+ * @param l Open mailbox link.
+ * @param selector Wheel select bit.
+ * @param samples out: ESC_RECORD_SAMPLES entries.
+ * @param count out: samples recorded.
+ * @param trigger out: index of the trigger sample.
+ * @return 0, or -1 with l->err set.
+ */
 int ik_record_read(ik_link_t *l, uint32_t selector, ik_record_sample_t *samples, int *count, int *trigger);
 
 #endif

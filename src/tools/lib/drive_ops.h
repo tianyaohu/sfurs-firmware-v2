@@ -7,14 +7,18 @@
 #include "tune_analysis.h"
 
 #define DRIVE_KEYS 4 /**< kp, ki, stall_ramp_ma_per_s, stall_ms: every RAM tunable the tools restore */
-#define DRIVE_MAX_MOVES 20
+#define DRIVE_MAX_MOVES 20 /**< moves per staged plan */
 
+/** @brief Keyboard state: per axis (x, y, yaw) the held sign and its expiry, s; hold_s is the hold time, s. */
 typedef struct { double hold_s, expiry_s[3]; int sign[3]; } drive_keys_t;
+/** @brief Recorder window summary: samples, trigger index, peak |RPM|. */
 typedef struct {
   int samples, trigger, peak_rpm;
 } drive_record_summary_t;
+/** @brief Per-wheel values of DRIVE_SETTING_KEYS, in each key's CONFIG unit. */
 typedef struct { int value[IK_WHEELS][DRIVE_KEYS]; } drive_settings_t;
 extern const char *const DRIVE_SETTING_KEYS[DRIVE_KEYS];
+/** @brief One staged run: telemetry, its analysis, fault names and lowest Vbus (V). */
 typedef struct {
   pulse_result_t pulse;
   tune_log_entry *analysis;
@@ -23,54 +27,124 @@ typedef struct {
   double vbus_min_v;
 } drive_stage_t;
 
-/** @brief Hold the latest direction per axis until expiry; SPACE clears all. */
+/** @brief Hold the latest direction per axis until expiry; SPACE clears all.
+ *  @param keys  key state
+ *  @param key   character read (a/d x, w/s y, q/e yaw, ' ' clears; others ignored)
+ *  @param now_s CLOCK_MONOTONIC time, s */
 void drive_key_press(drive_keys_t *keys, int key, double now_s);
-/** @brief Combined body twist in mm/s and mrad/s, with expired axes released. */
+/** @brief Combined body twist in mm/s and mrad/s, with expired axes released.
+ *  @param keys      key state
+ *  @param now_s     CLOCK_MONOTONIC time, s
+ *  @param speed_mps translation speed per held key, m/s
+ *  @param yaw_radps yaw rate per held key, rad/s
+ *  @param out       out: vx, vy (mm/s), omega (mrad/s) */
 void drive_key_vector(drive_keys_t *keys, double now_s, double speed_mps, double yaw_radps, int32_t out[3]);
-/** @brief Summarize one recorder window: sample count, trigger index, peak |RPM|. */
+/** @brief Summarize one recorder window: sample count, trigger index, peak |RPM|.
+ *  @param rows    unpacked recorder samples
+ *  @param n       sample count
+ *  @param trigger trigger sample index */
 drive_record_summary_t drive_record_summary(const ik_record_unpacked_t *rows, int n, int trigger);
-/** @brief Compare two four-wheel snapshots for live IDLE, fault-free replies and Vbus. */
+/** @brief Compare two four-wheel snapshots for live IDLE, fault-free replies and Vbus.
+ *  @param before     telemetry rows read first
+ *  @param rows       telemetry rows read later (a live row has a newer status count)
+ *  @param min_vbus_v lowest acceptable bus voltage, V
+ *  @param problems   out: one line per failing wheel
+ *  @param capacity   size of problems, bytes
+ *  @return number of failing wheels */
 int drive_preflight_rows(const ik_row_t before[4], const ik_row_t rows[4], double min_vbus_v,
                          char *problems, size_t capacity);
-/** @brief Read snapshots 0.3 s apart and refuse unsafe ground drive. */
+/** @brief Read snapshots 0.3 s apart and refuse unsafe ground drive.
+ *  @param link       open mailbox link
+ *  @param min_vbus_v lowest acceptable bus voltage, V
+ *  @return 0 safe, -1 refused or link error (link->err set) */
 int drive_preflight(ik_link_t *link, double min_vbus_v);
-/** @brief Initialize every ground-tool tunable (DRIVE_SETTING_KEYS) from firmware defaults. */
+/** @brief Initialize every ground-tool tunable (DRIVE_SETTING_KEYS) from firmware defaults.
+ *  @param settings out: per-wheel values
+ *  @return 0, or -1 when a default is missing */
 int drive_settings_defaults(drive_settings_t *settings);
-/** @brief Override a named tunable on all four wheels, validating CONFIG range. */
+/** @brief Override a named tunable on all four wheels, validating CONFIG range.
+ *  @param settings per-wheel values
+ *  @param key      one of DRIVE_SETTING_KEYS
+ *  @param value    new value in the key's CONFIG unit (int16 range)
+ *  @return 0, or -1 for an unknown key or out-of-range value */
 int drive_setting_set(drive_settings_t *settings, const char *key, int value);
-/** @brief Analyze a pulse result, retaining per-wheel faults and minimum Vbus. */
+/** @brief Analyze a pulse result, retaining per-wheel faults and minimum Vbus.
+ *  @param stage stage whose pulse result is analysed in place
+ *  @return a TUNE_* status */
 int drive_stage_analyze(drive_stage_t *stage);
-/** @brief Run through pulse_run, log monotonic timestamps, restore every setting. */
+/** @brief Run through pulse_run, log monotonic timestamps, restore every setting.
+ *  @param link        open mailbox link
+ *  @param directory   output directory
+ *  @param name        stage name; the log is <directory>/<name>.jsonl
+ *  @param plan        moves
+ *  @param count       number of moves
+ *  @param duration_s  total run time, s
+ *  @param settings    per-wheel tunables to send first
+ *  @param accel_rpmps wheel acceleration limit, RPM/s (0 = Nucleo default)
+ *  @param out         out: result; free with drive_stage_free
+ *  @return 0, or -1 with link->err set */
 int drive_stage_run(ik_link_t *link, const char *directory, const char *name,
                     const esc_move_t *plan, size_t count, double duration_s,
                     const drive_settings_t *settings, int accel_rpmps, drive_stage_t *out);
-/** @brief Free the stage's pulse and analysis samples. */
+/** @brief Free the stage's pulse and analysis samples.
+ *  @param stage stage to clear */
 void drive_stage_free(drive_stage_t *stage);
-/** @brief Write stage fields including absolute and relative move windows (seconds). */
+/** @brief Write stage fields including absolute and relative move windows (seconds).
+ *  @param f        output
+ *  @param name     stage name ("drive" writes wheel 0's settings only)
+ *  @param stage    analysed stage
+ *  @param settings tunables used
+ *  @param plan     moves
+ *  @param count    number of moves */
 void drive_stage_json(FILE *f, const char *name, const drive_stage_t *stage,
                        const drive_settings_t *settings, const esc_move_t *plan, size_t count);
-/** @brief Write telemetry response with Python-compatible null missing metrics. */
+/** @brief Write telemetry response with Python-compatible null missing metrics.
+ *  @param f        output
+ *  @param response start metrics (s, RPM ratios) */
 void drive_response_json(FILE *f, const tune_response_result *response);
-/** @brief Print per-wheel start and overshoot metrics. */
+/** @brief Print per-wheel start and overshoot metrics.
+ *  @param response start metrics (s, RPM ratios) */
 void drive_response_show(const tune_response_result *response);
-/** @brief Write a JSON string with control-character escaping. */
+/** @brief Write a JSON string with control-character escaping.
+ *  @param f    output
+ *  @param text string, or NULL for null */
 void drive_json_string(FILE *f, const char *text);
-/** @brief Write a finite JSON number or null. */
+/** @brief Write a finite JSON number or null.
+ *  @param f     output
+ *  @param value number; NaN or infinity writes null */
 void drive_json_number(FILE *f, double value);
-/** @brief Write all tunables, for one wheel or an array of four wheels. */
+/** @brief Write all tunables, for one wheel or an array of four wheels.
+ *  @param f        output
+ *  @param settings per-wheel values
+ *  @param wheel    wheel index 0..3, or < 0 for all four */
 void drive_settings_json(FILE *f, const drive_settings_t *settings, int wheel);
-/** @brief Write JSONL pulse telemetry with a CLOCK_MONOTONIC origin on every row. */
+/** @brief Write JSONL pulse telemetry with a CLOCK_MONOTONIC origin on every row.
+ *  @param path   output file
+ *  @param result pulse result
+ *  @return 0 or -1 */
 int drive_log_write(const char *path, const pulse_result_t *result);
-/** @brief Create an output directory and its parents. */
+/** @brief Create an output directory and its parents.
+ *  @param path directory
+ *  @return 0 or -1 */
 int drive_mkdir(const char *path);
-/** @brief Join an output path, rejecting truncation. */
+/** @brief Join an output path, rejecting truncation.
+ *  @param out       out: "<directory>/<name>"
+ *  @param capacity  size of out, bytes
+ *  @param directory directory part
+ *  @param name      file name
+ *  @return 0, or -1 when it does not fit */
 int drive_path(char *out, size_t capacity, const char *directory, const char *name);
-/** @brief Median of a copied array; NaN on empty input or allocation failure. */
+/** @brief Median of a copied array; NaN on empty input or allocation failure.
+ *  @param values input (not modified)
+ *  @param count  number of values */
 double drive_median(const double *values, size_t count);
-/** @brief Write the local date and time as a JSON string. */
+/** @brief Write the local date and time as a JSON string.
+ *  @param f output */
 void drive_date_json(FILE *f);
 
+/** @brief Value type of a CLI option. */
 typedef enum { DRIVE_BOOL, DRIVE_INT, DRIVE_DOUBLE, DRIVE_STRING } drive_option_type;
+/** @brief One long CLI option: name, type, destination, and whether it was given. */
 typedef struct {
   const char *name;
   drive_option_type type;
@@ -78,8 +152,15 @@ typedef struct {
   bool seen;
 } drive_option;
 #define DRIVE_OPT(n, t, v) {n, DRIVE_##t, v, false}
-/** @brief Parse long CLI options; 1 means help, -1 means invalid input. */
+/** @brief Parse long CLI options; 1 means help, -1 means invalid input.
+ *  @param argc    argument count
+ *  @param argv    arguments
+ *  @param options option table; values written through their pointers, seen set
+ *  @param count   entries in options */
 int drive_parse(int argc, char **argv, drive_option *options, size_t count);
-/** @brief Save parsed arguments as string values, matching the Python result schema. */
+/** @brief Save parsed arguments as string values, matching the Python result schema.
+ *  @param f       output
+ *  @param options parsed option table
+ *  @param count   entries in options */
 void drive_args_json(FILE *f, const drive_option *options, size_t count);
 #endif

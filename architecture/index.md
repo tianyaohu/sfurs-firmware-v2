@@ -4,7 +4,7 @@
 
 ```
 PC (src/tools/) --SWD mailbox--> Nucleo-H755 CM7 --CAN FD--> 4 x B-G431B-ESC1
- keyboard / rig / tuning        inverse kinematics          Hall FOC, speed PI
+ keyboard / rig / tuning        inverse kinematics          Hall FOC, speed loop
 ```
 
 Data flow, CAN protocol and protections: [DRIVE.md](drive.md). Boards, wheel
@@ -25,7 +25,7 @@ When you add a file or folder, add a line here in the same commit.
 | `src/nucleo/CM7/Core/Src/fwu_updater.c`, `can_fwu_host.c` | Updater image: push an ESC app over CAN |
 | `src/shared/src/rover_kinematics.c` | Body twist <-> wheel speeds (IK table) |
 | `src/shared/src/motor_protocol.c` | Motor command protocol v1 codec (CONTROL / CONTROL_REPLY, sequence and session rules), used by the Nucleo, the ESCs and the tools |
-| `src/shared/src/friction_ff.c` | Body-frame friction model: commanded twist -> per-wheel feed-forward current (not wired into the drive yet) |
+| `src/shared/src/friction_ff.c` | Body-frame friction model: commanded twist -> per-wheel feed-forward current; `ik_drive.c` sends it when `ik_drive_ff_enable` is set (off by default) |
 | `src/shared/src/can_fwu_protocol.c`, `can_fwu_boot.c` | CAN firmware-update protocol, shared host/bootloader |
 | `src/nucleo/CM4/` | Unused CubeMX skeleton |
 | `src/nucleo/Common/Src/system_stm32h7xx_dualcore_boot_cm4_cm7.c` | CubeMX-generated dual-core boot; stays beside the `.ioc` |
@@ -60,6 +60,7 @@ Programs (one `targets/<tool>.cmake` each):
 | `tune_ground.c` | Ground friction identification: breakaway and kinetic current per wheel |
 | `friction_map.c` | Guarded floor SPEED out-and-back friction map and CURRENT breakaway ramps; result.json |
 | `sweep.c` | Oblique out-and-back pulses for friction identification |
+| `startup_report.c` | Aggregate `move_test --startup-metrics` `startup.tsv` files into a startup acceptance verdict |
 | `fwu_image/fwu_image.c` | ESC app to Nucleo FWU payload (own CMake project) |
 
 Library `lib/` (every file joins library `tools`):
@@ -75,7 +76,8 @@ Library `lib/` (every file joins library `tools`):
 | `friction_fit.c` | Pure steady-segment rejection, per-direction Coulomb/viscous least squares and consecutive motion detection |
 | `friction_run.c` | Guarded friction acquisition: plateau samples, current ramps, telemetry freshness/Vbus/speed checks and stop cleanup |
 | `pulse_run.c` | Run a plan through the Nucleo, guard it, log it, restore defaults |
-| `capture_analysis.c`, `tune_analysis.c` | Current-loop R/L/PI fit; friction fit, overshoot, acceptance |
+| `startup_metrics.c` | Pure startup acceptance measurements from recorder data: Hall sector, deadlines, direction, overshoot, wheel synchronisation |
+| `capture_analysis.c`, `tune_analysis.c` | Current-loop R/L/PI fit; friction currents, breakaway time, overshoot |
 | `flashimg_*.c` | ESC update checks (Vbus, flash vs ELF, bus readiness) and install flow |
 | `drive_*.c` | Keyboard control, record summary, staged drive helpers |
 
@@ -99,6 +101,7 @@ four wheels.
 
 ## Control structure
 
-16 kHz current loop (PI, d/q), 1 kHz speed PI, Hall angle with a per-wheel
-shift. Friction feed-forward is set through `CONFIG_SET`. Body-level control
+16 kHz current loop (PI, d/q), 1 kHz speed loop (`motor_speed.c`: P + I + ff, ESC in
+torque mode), Hall angle with a per-wheel shift. Friction feed-forward travels in each
+CONTROL frame from the Nucleo's body-frame model (off by default). Body-level control
 is open-loop velocity today; see [PRD.md](../prd/index.md) phase 3 for estimation.

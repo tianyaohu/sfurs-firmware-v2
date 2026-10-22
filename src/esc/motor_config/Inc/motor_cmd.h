@@ -176,14 +176,17 @@ void motor_cmd_tick(struct motor_cmd *m, const struct motor_cmd_inputs *in, stru
  */
 int motor_cmd_reply_peek(struct motor_cmd *m, uint32_t *id, uint8_t data[MOTOR_PROTOCOL_DLC]);
 
-/** @brief Main loop: remove the reply returned by the last successful ::motor_cmd_reply_peek. */
+/** @brief Main loop: remove the reply returned by the last successful ::motor_cmd_reply_peek.
+ *  @param m state */
 void motor_cmd_reply_pop(struct motor_cmd *m);
 
 /** @brief Nonzero when the output is off and no motion is possible without a new frame
- *  (lifecycle DISARMED, READY or FAULTED): CONFIG, alignment and capture are allowed. */
+ *  (lifecycle DISARMED, READY or FAULTED): CONFIG, alignment and capture are allowed.
+ *  @param m state */
 int motor_cmd_output_off(const struct motor_cmd *m);
 
-/** @brief Nonzero while the output is on under this lifecycle (STARTING, RUNNING, HOLD). */
+/** @brief Nonzero while the output is on under this lifecycle (STARTING, RUNNING, HOLD).
+ *  @param m state */
 int motor_cmd_output_on(const struct motor_cmd *m);
 
 #ifdef __cplusplus

@@ -8,14 +8,11 @@ enum { IDLE = 0, START = 4, SWITCH_OVER = 19, CHARGE_BOOT_CAP = 16, OFFSET_CALIB
 #define MC_SPEED_FDBK 0x0020U /* mc_type.h */
 #define U_RPM 60
 #define SPEED_UNIT U_RPM
-#define RPM_2_SPEED_UNIT(rpm) ((int16_t)(((rpm)*SPEED_UNIT)/U_RPM))
 #define SPEED_UNIT_2_RPM(speed) ((int16_t)(((speed)*U_RPM)/SPEED_UNIT))
 bool MC_StartMotor1(void); bool MC_StopMotor1(void);
-void MC_ProgramSpeedRampMotor1(int16_t, uint16_t);
 void MC_SetCurrentReferenceMotor1(qd_t);
 int MC_GetSTMStateMotor1(void);
 uint16_t MC_GetCurrentFaultsMotor1(void); uint16_t MC_GetOccurredFaultsMotor1(void);
 bool MC_AcknowledgeFaultMotor1(void);
 int16_t MC_GetMecSpeedAverageMotor1(void);
-int16_t MC_GetMecSpeedReferenceMotor1(void);
 qd_t MC_GetIqdMotor1(void); qd_t MC_GetIqdrefMotor1(void);

@@ -46,7 +46,7 @@ enum motor_lifecycle {
   MOTOR_LC_READY = 1,    /**< armed, output off */
   MOTOR_LC_STARTING = 2, /**< MCSDK start in progress */
   MOTOR_LC_RUNNING = 3,  /**< regulating */
-  MOTOR_LC_HOLD = 4,     /**< parked at zero speed: output on, Iq = 0 */
+  MOTOR_LC_HOLD = 4,     /**< at standstill with a zero target: output on, Iq = 0 */
   MOTOR_LC_FAULTED = 5   /**< output off, cause latched */
 };
 
@@ -228,11 +228,18 @@ enum motor_reason motor_config_decode(uint32_t id, const uint8_t *data, uint32_t
 enum motor_reason motor_config_encode(const struct motor_config *c, uint32_t select, uint32_t *id,
                                       uint8_t data[MOTOR_PROTOCOL_DLC]);
 
-/** @brief Encode a CONFIG_REPLY payload. */
+/**
+ * @brief Encode a CONFIG_REPLY payload.
+ * @param r    reply fields
+ * @param data out: 8 payload bytes
+ */
 void motor_config_reply_encode(const struct motor_config_reply *r, uint8_t data[MOTOR_PROTOCOL_DLC]);
 
 /**
  * @brief Decode a CONFIG_REPLY payload.
+ * @param data payload bytes
+ * @param dlc  payload length, bytes (must be 8)
+ * @param out  out: decoded fields
  * @return ::MOTOR_R_NONE or ::MOTOR_R_BAD_LENGTH
  */
 enum motor_reason motor_config_reply_decode(const uint8_t *data, uint32_t dlc, struct motor_config_reply *out);

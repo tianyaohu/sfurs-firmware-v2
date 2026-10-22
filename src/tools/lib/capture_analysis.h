@@ -11,7 +11,6 @@
 #define CAPTURE_PWM_HZ 16000
 #define CAPTURE_TF_KPDIV 512
 #define CAPTURE_TF_KIDIV 4096
-#define CAPTURE_PRE_SAMPLES 64
 #define CAPTURE_STEP_WINDOW 64
 
 typedef struct {

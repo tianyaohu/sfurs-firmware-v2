@@ -8,9 +8,11 @@
 #define STARTUP_TRANSITIONS 8
 #define STARTUP_MAX_SAMPLES 384
 
+/** @brief Outcome of a startup check. */
 typedef enum {
   STARTUP_PASS, STARTUP_FAIL, STARTUP_NOT_MEASURABLE, STARTUP_INACTIVE
 } startup_verdict_t;
+/** @brief Rule that decided a non-PASS verdict. */
 typedef enum {
   STARTUP_RULE_NONE, STARTUP_RULE_DEADLINE, STARTUP_RULE_DIRECTION,
   STARTUP_RULE_OVERSHOOT, STARTUP_RULE_INPUT, STARTUP_RULE_BASELINE,
@@ -27,11 +29,13 @@ typedef struct {
    * Hall state on the last zero-reference row overrides -1 and must agree otherwise. */
   int starting_sector;
 } startup_calibration_t;
+/** @brief One Hall boundary crossing: time and deadline (ms from row 0), travel (mechanical degrees). */
 typedef struct {
   double time_ms, distance_deg, deadline_ms, tolerance_ms;
   int direction; /**< -1/+1; zero means no observed transition. */
   bool measurable, met;
 } startup_transition_t;
+/** @brief Startup evaluation of one wheel record. */
 typedef struct {
   startup_verdict_t verdict, tracking, overshoot;
   startup_rule_t rule;
@@ -41,15 +45,20 @@ typedef struct {
   double first_transition_ms, max_speed_rpm, overshoot_ratio;
   double steady_rpm; /**< Final reference magnitude, or NAN without a valid plateau. */
 } startup_result_t;
+/** @brief Wheel synchronisation: verdict and apply-time skew, ms. */
 typedef struct {
   startup_verdict_t verdict;
   double skew_ms;
 } startup_sync_t;
 
 /** @brief Sector 0..5 of a raw Hall state (1..6) in the positive electrical order, or -1
- * for an invalid state (0, 7, or out of range). */
+ * for an invalid state (0, 7, or out of range).
+ * @param hall_state raw Hall state (HALL_M1.HallState)
+ */
 int startup_hall_sector(int hall_state);
-/** @brief Nominal 7.5 degree sectors, unknown starting sector, given spread in degrees. */
+/** @brief Nominal 7.5 degree sectors, unknown starting sector, given spread in degrees.
+ * @param spread_deg sector boundary uncertainty, mechanical degrees
+ */
 startup_calibration_t startup_nominal(double spread_deg);
 /** @brief Integrate linearly interpolated reference in its first nonzero direction.
  * @param rows Consecutive 1 ms samples, including the zero baseline.
@@ -64,11 +73,16 @@ double startup_t_ref(const ik_record_unpacked_t *rows, size_t n, double angle_de
  * When the last zero-reference row has a valid Hall state, the starting sector is
  * taken from it and every later row's Hall state must equal the sector reached by
  * the recorded net edges; any mismatch is NOT_MEASURABLE (hall_sequence).
+ * @param rows recorder samples, 1 ms apart
+ * @param n    sample count
+ * @param cal  sector widths (mechanical degrees) and starting sector
  */
 startup_result_t startup_evaluate(const ik_record_unpacked_t *rows, size_t n,
                                  const startup_calibration_t *cal);
 /** @brief Skew of 1..4 active-wheel apply timestamps in seconds; missing timestamps
  * must be supplied as NAN (never omitted). Zero active wheels is not measurable.
+ * @param apply_s apply time per active wheel, s
+ * @param n       number of active wheels
  */
 startup_sync_t startup_synchronization(const double *apply_s, size_t n);
 /** @brief Synchronize recorded active wheels using first-start reply times in wrapping uint32 microseconds.
@@ -79,7 +93,12 @@ startup_sync_t startup_synchronization(const double *apply_s, size_t n);
  */
 startup_sync_t startup_link_synchronization(const startup_result_t results[IK_WHEELS],
                                            const ik_link_row_t links[IK_WHEELS]);
-/** @brief Stable verdict and failed-rule names for human and machine reports. */
+/** @brief Stable verdict name for human and machine reports.
+ * @param verdict verdict
+ */
 const char *startup_verdict_name(startup_verdict_t verdict);
+/** @brief Stable failed-rule name for human and machine reports.
+ * @param rule rule
+ */
 const char *startup_rule_name(startup_rule_t rule);
 #endif

@@ -110,7 +110,7 @@ int main(int argc, char **argv)
     friction[w].breakaway = (tune_values){friction_storage + (2 * w) * samples, samples, 0};
     friction[w].kinetic = (tune_values){friction_storage + (2 * w + 1) * samples, samples, 0};
   }
-  rc = tune_friction_samples(stage.analysis, stage.pulse.n, 40, 0.3, friction);
+  rc = tune_friction_samples(stage.analysis, stage.pulse.n, TUNE_MIN_TARGET_RPM, TUNE_TRACK_TOL, friction);
   if (rc || save(out, options, n_options, &stage, &settings, friction, plan, n_moves)) { rc = -1; goto done; }
   drive_response_show(&stage.response);
   if (stage.pulse.aborted[0] || stage.faults[0]) {

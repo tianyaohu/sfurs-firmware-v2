@@ -85,7 +85,7 @@ extern volatile int32_t ik_drive_omega_mradps; /**< yaw rate, CCW positive, mrad
 extern volatile uint32_t ik_drive_enable;      /**< nonzero allows driving; 0 also acknowledges ::ik_drive_fault */
 extern volatile uint32_t ik_drive_heartbeat;   /**< host bumps this to show it is alive */
 extern volatile int32_t ik_drive_accel_rpmps;  /**< wheel acceleration limit, RPM/s; <= 0 selects the default */
-/* One-shot raw frame (HALL_ALIGN, CONFIG_SET, a CONTROL frame for a test, ...): write id, data,
+/* One-shot raw frame (HALL_ALIGN, CONFIG, a CONTROL frame for a test, ...): write id, data,
  * data_hi and len, then bump raw_seq. Sent only while IK_STOPPED; raw_done echoes raw_seq. */
 extern volatile uint32_t ik_drive_raw_id;      /**< raw frame CAN ID (11 bit) */
 extern volatile uint32_t ik_drive_raw_data;    /**< raw payload bytes 0-3 as one little-endian word */

@@ -12,7 +12,7 @@ are in `architecture/drive.md`, `system-info/hardware.md`, `architecture/can-fwu
    rewrite it cleanly instead of adding another layer.
 3. Keep one way to do each thing. No parallel build profiles, diagnostic
    `#ifdef` variants or duplicate scripts; use runtime configuration
-   (e.g. CAN `CONFIG_SET`) or a short-lived branch for experiments, and delete
+   (e.g. CAN `CONFIG`) or a short-lived branch for experiments, and delete
    what you replaced.
 
 ## Documentation rules

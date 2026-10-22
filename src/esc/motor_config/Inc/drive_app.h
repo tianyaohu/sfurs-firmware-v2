@@ -59,7 +59,13 @@ extern volatile int16_t drive_align_angle; /**< forced electrical angle, s16 deg
  *  @param[in,out] id_ref Id reference; may be replaced before the PI controllers. */
 void drive_capture_isr_ref(int16_t *id_ref);
 /** @brief Record one FOC period: measured Id/Iq, applied Vd/Vq after circle
- *  limitation, the Id reference and the electrical angle. */
+ *  limitation, the Id reference and the electrical angle.
+ *  @param id      measured d-axis current, counts (ESC_COUNTS_PER_AMP per A)
+ *  @param iq      measured q-axis current, counts
+ *  @param vd      applied d-axis voltage, s16V (32767 = Vbus / sqrt(3))
+ *  @param vq      applied q-axis voltage, s16V
+ *  @param id_ref  d-axis current reference, counts
+ *  @param el_angle electrical angle, s16 degrees (65536 = 360 degrees) */
 void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
                              int16_t id_ref, int16_t el_angle);
 
@@ -68,7 +74,10 @@ extern struct motor_speed drive_speed;
 
 /** @brief Initialise the application state. */
 void drive_app_init(void);
-/** @brief FDCAN ISR entry: latch one received command frame. */
+/** @brief FDCAN ISR entry: latch one received command frame.
+ *  @param id     11-bit CAN ID
+ *  @param data   payload bytes
+ *  @param length payload length, bytes (decoded from the DLC) */
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length);
 /** @brief Main-loop entry: send pending replies.
  *  @param send queues an 8-byte frame; returns nonzero once queued. */

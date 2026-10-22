@@ -1,5 +1,5 @@
 /** @file tune_analysis.h
- * @brief Pure telemetry and camera-move analysis for ground feed-forward tuning.
+ * @brief Pure telemetry analysis of wheel starts: friction currents, breakaway time and overshoot.
  */
 #ifndef TUNE_ANALYSIS_H
 #define TUNE_ANALYSIS_H
@@ -8,9 +8,9 @@
 #include <stddef.h>
 
 #define TUNE_WHEELS 4
-#define TUNE_MIN_TARGET_RPM 40.0
-#define TUNE_TRACK_TOL 0.3
-#define TUNE_OVERSHOOT_WINDOW_S 0.6
+#define TUNE_MIN_TARGET_RPM 40.0    /**< smallest |target| that counts as a start, RPM */
+#define TUNE_TRACK_TOL 0.3          /**< kinetic samples need |rpm - target| <= this x target */
+#define TUNE_OVERSHOOT_WINDOW_S 0.6 /**< overshoot is the peak within this long after a start, s */
 
 /* Wheel order throughout is FR, BR, BL, FL, matching ik_link.WHEELS. */
 typedef struct {
@@ -35,32 +35,6 @@ typedef struct {
   tune_wheel_response wheels[TUNE_WHEELS];
   double spread_s, spread_worst_s;
 } tune_response_result;
-
-typedef struct {
-  double breakaway_s, spread_s, overshoot;
-  double direction_deg, heading_deg, ratio_spread;
-} tune_limits;
-typedef struct { bool slow, over; } tune_judgement;
-
-typedef struct {
-  double twist[3]; /**< Commanded vx, vy [mm/s], yaw [deg/s]. */
-  bool seen;
-  double distance_mm, direction_deg, max_sideways_mm, heading_change_deg;
-  double commanded_mm; /**< 0 or NaN uses hypot(vx, vy), as in Python. */
-} tune_move;
-typedef struct {
-  double twist[3];
-  double distance_mm, ratio, direction_error_deg, sideways_mm, heading_change_deg;
-} tune_move_row;
-typedef struct {
-  bool ok;
-  size_t missing, count;
-  double mount_yaw_deg;
-  struct {
-    double direction_error_deg, heading_change_deg, sideways_per_m, ratio_spread;
-  } worst;
-  char reason[128]; /**< Empty for a complete set of at least two moves. */
-} tune_accept_result;
 
 enum { TUNE_OK = 0, TUNE_INVALID = -1, TUNE_CAPACITY = -2, TUNE_MEMORY = -3 };
 
@@ -98,29 +72,5 @@ int tune_overshoot(const tune_log_entry *log, size_t n, double min_target,
  * Returns TUNE_* status; an empty log produces zero counts and NaN metrics.
  */
 int tune_response(const tune_log_entry *log, size_t n, tune_response_result *out);
-
-/** @brief Judge start speed [s] and overshoot [RPM ratio] against limits and
- * baseline overshoot [RPM ratio]; NaN metrics represent Python None.
- */
-tune_judgement tune_judge(const tune_response_result *resp, const tune_limits *limits,
-                          double baseline_overshoot);
-
-/** @brief Next dimensionless feed-forward fraction, or NaN when done/bounded.
- * Defaults: step_down=0.15, step_up=0.1, lo=0.2, hi=1.0; rounded to 0.001.
- */
-double tune_next_fraction(double frac, bool slow, bool over, double step_down,
-                          double step_up, double lo, double hi);
-
-/** @brief Wrap angle [deg] into [-180, 180), including negative input angles. */
-double tune_wrap_deg(double a);
-
-/** @brief Camera acceptance [mm, deg, dimensionless ratios] after removing
- * circular mean mounting yaw. Caller supplies n rows; returns TUNE_* status.
- * Unseen/short (<=20 mm) moves or fewer than two moves produce ok=false and
- * zero rows, with reason/missing set. Sideways drift [mm/m] is reported only,
- * matching Python: it is not an acceptance limit.
- */
-int tune_accept_moves(const tune_move *moves, size_t n, const tune_limits *limits,
-                      tune_move_row *rows, size_t capacity, tune_accept_result *out);
 
 #endif

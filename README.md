@@ -12,7 +12,7 @@ All code is under `src/`; each documentation concern has its own top-level folde
 |---|---|
 | `src/nucleo/` | Nucleo application (CubeMX project: `CM7/`, unused `CM4/`, `Drivers/`, `.ioc`, CMake). Ours: `CM7/Core/Src/{main.c USER CODE, ik_drive.c, ik_telemetry.c, fwu_updater.c, can_fwu_host.c}` |
 | `src/esc/` | ESC application (`motor_config/`) and CAN bootloader ([README](src/esc/README.md)) |
-| `src/shared/` | Code shared by Nucleo and ESC: kinematics, CAN-FWU protocol (`inc/`, `src/`) and the Nucleo ↔ ESC CAN protocol (`can/can_datatypes.h`) |
+| `src/shared/` | Code shared by Nucleo, ESC and tools: kinematics, friction model, motor protocol v1 codec, CAN-FWU protocol (`inc/`, `src/`) and the Nucleo ↔ ESC service IDs (`can/can_datatypes.h`) |
 | `src/sensors/stm32h7/` | Sensor app for the same Nucleo (FreeRTOS; optical flow, IMU, wheel encoder modules with gtests). Separate CubeMX project, not part of the drive image |
 | `src/tools/` | PC tools in C (ESC update, setup, drive, tuning, sweep) and `lib/` (OpenOCD client, mailbox link, analysis) |
 | `scripts/` | `build.sh` (all firmware images), `esc_build.sh`, `boot_build.sh`, `test.sh` |

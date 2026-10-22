@@ -1,6 +1,6 @@
-# B. ESC command lifecycle (design, for review)
+# ESC command lifecycle
 
-Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2.md), Stage 1. Wire format:
+Implemented by `src/esc/motor_config/Src/motor_cmd.c` (pure logic; `drive_app.c` executes its actions). Wire format:
 [protocol.md](protocol.md). Who owns the current request in each state: [C](../technical-development-plans/esc-command-v2/C-ownership.md).
 
 ## States
@@ -52,7 +52,7 @@ Notes:
 - A DISABLE keeps the session: the Nucleo can resume with the next sequence without a new ARM. Losing commands
   (timeout) or clearing a fault always requires a fresh ARM against a new session.
 - Mode (SPEED or CURRENT) is latched on READY -> STARTING and only changes through DISABLE. CURRENT with setpoint 0
-  keeps the output on with zero q-current; it is not HOLD and has no parking timer.
+  keeps the output on with zero q-current; it is not HOLD and never enters HOLD.
 - No automatic restart after FAULTED: the Nucleo must DISABLE, CLEAR_FAULT, ARM.
 - Stall monitor (RUNNING only, in `motor_speed.c`): counts while |Iq request| >= 80 % of the effective limit and
   |applied reference| >= 10 RPM, pauses below that current, and fires after 500 ms (CONFIG 200-2000 ms) with no

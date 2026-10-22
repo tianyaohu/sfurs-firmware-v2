@@ -1,7 +1,7 @@
-# A. Motor command protocol v1 (design, for review)
+# Motor command protocol v1
 
-Status: design freeze draft for [phase1-esc-command-v2](../phase1-esc-command-v2.md), Stage 1. Moves to
-`architecture/protocol.md` in Stage 2, when it is implemented. Lifecycle semantics: [command-lifecycle.md](command-lifecycle.md).
+Implemented by the shared codec `src/shared/src/motor_protocol.c` (`src/shared/inc/motor_protocol.h`), used by the
+Nucleo, the ESCs and the tools. Lifecycle semantics: [command-lifecycle.md](command-lifecycle.md).
 
 ## Transport
 

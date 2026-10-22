@@ -14,7 +14,7 @@
 
 #define OTHER_WHEEL (MOTOR_CAN_ID == 1U ? 2U : 1U)
 
-PID_Handle_t PIDSpeedHandle_M1 = { .kidiv = 16384 }, PIDIqHandle_M1, PIDIdHandle_M1;
+PID_Handle_t PIDIqHandle_M1, PIDIdHandle_M1;
 HALL_Handle_t HALL_M1;
 RDivider_Handle_t BusVoltageSensor_M1 = { ._Super = { .ConversionFactor = 34, .raw = 23831 } };
 
@@ -25,14 +25,12 @@ static int16_t speed;
 static qd_t iqd, iqdref;
 bool MC_StartMotor1(void) { if (state != IDLE) return false; start_pending = 1; ++starts; return true; }
 bool MC_StopMotor1(void) { stop_pending = 1; return true; }
-void MC_ProgramSpeedRampMotor1(int16_t rpm, uint16_t ms) { (void)rpm; (void)ms; CHECK(0); /* torque mode only */ }
 void MC_SetCurrentReferenceMotor1(qd_t r) { iqdref = r; }
 int MC_GetSTMStateMotor1(void) { return state; }
 uint16_t MC_GetCurrentFaultsMotor1(void) { return cur_faults; }
 uint16_t MC_GetOccurredFaultsMotor1(void) { return occ_faults; }
 bool MC_AcknowledgeFaultMotor1(void) { if (state != FAULT_OVER) return false; state = IDLE; occ_faults = 0; ++acks; return true; }
 int16_t MC_GetMecSpeedAverageMotor1(void) { return speed; }
-int16_t MC_GetMecSpeedReferenceMotor1(void) { return 0; }
 qd_t MC_GetIqdMotor1(void) { return iqd; }
 qd_t MC_GetIqdrefMotor1(void) { return iqdref; }
 

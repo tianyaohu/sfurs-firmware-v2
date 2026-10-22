@@ -19,7 +19,8 @@ Tools (all in `src/tools/`, Nucleo must run the drive image, one tool at a time)
 | `esc_tool clear` | clear latched ESC and Nucleo faults whose cause is gone (drive stopped) | no |
 | `esc_tool align <W\|all>` | measure Hall phase shift (RAM) | ~¼ turn each way |
 | `esc_tool capture <W>` | 1 A → 3 A d-axis current step, 16 kHz, R/L/step metrics | clicks, no torque |
-| `esc_tool set <W\|all> KEY N` | RAM gain: `kp ki` (speed), `current_kp current_ki` | no |
+| `esc_tool set <W\|all> KEY N` | acknowledged CONFIG in RAM (IDLE only): `kp ki` (speed), `current_kp current_ki`, `iq_limit_ma`, `stall_ramp_ma_per_s stall_ms`, `hall_shift_deg` | no |
+| `esc_tool get <W> [KEY\|all]` | stored and effective CONFIG values | no |
 | `esc_tool spin <W> --rpm N` | one-wheel speed step, logged; optional `--kp --ki` | yes |
 | `esc_tool pulse [--kp --ki]` | whole robot out and back on the ground, per-wheel breakaway time and spread | yes |
 | `esc_update <W> --can` | install `build/esc/<W>` over CAN, verify by IDENT CRC | no |
@@ -123,7 +124,8 @@ stall_ramp) and the bleed and stall-timer bits.
 - **Static friction**: Iq ref climbs at the stall-ramp rate (`stall_ramp` mode)
   for hundreds of ms before any rotation → friction, not gain. The rate is
   CONFIG `stall_ramp_ma_per_s`; the real fix is the Nucleo's friction
-  feed-forward (Stage 5), not a higher Ki.
+  feed-forward (`friction_ff.c`, mailbox `ik_drive_ff_*`, off by default; measure the
+  floor with `friction_map`), not a higher Ki.
 - **Ground limit cycle**: all wheels at the 6 A limit, loud buzz, no motion
   (Kp 4096 / Ki 2200 here). Back off Ki; a higher current limit only makes it
   louder.
@@ -134,7 +136,7 @@ Bake into `PID_SPEED_*_DEFAULT` and `SPEED_STALL_*_DEFAULT` (`drive_parameters.h
 ### 4. Bake and record
 
 1. Update the parameter headers (with a comment saying what was measured).
-2. `scripts/test.sh`, `src/tools/scripts/build.sh --shift ...` (no warnings).
+2. `scripts/test.sh`, `scripts/build.sh --shift ...` (no warnings).
 3. `esc_update <W> --can` for each wheel; check `status` shows the new
    CRCs and `(known)` shifts.
 4. Capture/spin once more to confirm the baked build behaves like RAM did.

@@ -2,7 +2,6 @@
 
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -260,103 +259,5 @@ int tune_response(const tune_log_entry *log, size_t n, tune_response_result *out
   if (spread_count)
     out->spread_worst_s = spreads[spread_count - 1];
   free(storage);
-  return TUNE_OK;
-}
-
-tune_judgement tune_judge(const tune_response_result *resp, const tune_limits *limits,
-                          double baseline_overshoot) {
-  tune_judgement result = {false, false};
-  for (size_t w = 0; w < TUNE_WHEELS; ++w) {
-    const tune_wheel_response *r = &resp->wheels[w];
-    result.slow |= r->moved < r->starts || isnan(r->breakaway_s) || r->breakaway_s > limits->breakaway_s;
-    result.over |= !isnan(r->overshoot) && r->overshoot > fmax(limits->overshoot, baseline_overshoot + 0.1);
-  }
-  result.slow |= !isnan(resp->spread_s) && resp->spread_s > limits->spread_s;
-  return result;
-}
-
-static double decimal_round(double x, int digits) {
-  char text[512];
-  snprintf(text, sizeof(text), "%.*f", digits, x);
-  return strtod(text, NULL);
-}
-
-double tune_next_fraction(double frac, bool slow, bool over, double step_down,
-                          double step_up, double lo, double hi) {
-  double next;
-  if (over)
-    next = frac - step_down;
-  else if (slow)
-    next = frac + step_up;
-  else
-    return NAN;
-  next = decimal_round(fmin(hi, fmax(lo, next)), 3);
-  return next == frac ? NAN : next;
-}
-
-double tune_wrap_deg(double a) {
-  double r = fmod(a + 180.0, 360.0);
-  if (r < 0)
-    r += 360.0;
-  return r - 180.0;
-}
-
-int tune_accept_moves(const tune_move *moves, size_t n, const tune_limits *limits,
-                      tune_move_row *rows, size_t capacity, tune_accept_result *out) {
-  if ((!moves && n) || !limits || !out || (!rows && capacity))
-    return TUNE_INVALID;
-  memset(out, 0, sizeof(*out));
-  out->mount_yaw_deg = NAN;
-  double sin_sum = 0, cos_sum = 0, pi = acos(-1.0);
-  size_t seen = 0;
-  for (size_t k = 0; k < n; ++k) {
-    const tune_move *m = &moves[k];
-    if (m->seen && m->distance_mm > 20) {
-      ++seen;
-      double diff = (m->direction_deg - atan2(m->twist[1], m->twist[0]) * (180.0 / pi)) * (pi / 180.0);
-      sin_sum += sin(diff);
-      cos_sum += cos(diff);
-    }
-  }
-  out->missing = n - seen;
-  if (seen < n || seen < 2) {
-    snprintf(out->reason, sizeof(out->reason),
-             "%zu of %zu moves not seen still at both ends (or under 20 mm)", n - seen, n);
-    return TUNE_OK;
-  }
-  if (capacity < n)
-    return TUNE_CAPACITY;
-  double mount = atan2(sin_sum, cos_sum) * (180.0 / pi);
-  double min_ratio = INFINITY, max_ratio = -INFINITY, ratio_sum = 0;
-  out->worst.sideways_per_m = -INFINITY;
-  for (size_t k = 0; k < n; ++k) {
-    const tune_move *m = &moves[k];
-    double cmd = m->commanded_mm && !isnan(m->commanded_mm) ? m->commanded_mm : hypot(m->twist[0], m->twist[1]);
-    rows[k] = (tune_move_row){
-      .twist = {m->twist[0], m->twist[1], m->twist[2]},
-      .distance_mm = decimal_round(m->distance_mm, 1),
-      .ratio = decimal_round(m->distance_mm / cmd, 3),
-      .direction_error_deg = decimal_round(tune_wrap_deg(m->direction_deg -
-                             atan2(m->twist[1], m->twist[0]) * (180.0 / pi) - mount), 2),
-      .sideways_mm = decimal_round(m->max_sideways_mm, 1),
-      .heading_change_deg = decimal_round(m->heading_change_deg, 2)
-    };
-    out->worst.direction_error_deg = fmax(out->worst.direction_error_deg, fabs(rows[k].direction_error_deg));
-    out->worst.heading_change_deg = fmax(out->worst.heading_change_deg, fabs(rows[k].heading_change_deg));
-    out->worst.sideways_per_m = fmax(out->worst.sideways_per_m, rows[k].sideways_mm / rows[k].distance_mm * 1000);
-    min_ratio = fmin(min_ratio, rows[k].ratio);
-    max_ratio = fmax(max_ratio, rows[k].ratio);
-    ratio_sum += rows[k].ratio;
-  }
-  out->worst.ratio_spread = (max_ratio - min_ratio) / (ratio_sum / n);
-  out->ok = out->worst.direction_error_deg <= limits->direction_deg &&
-            out->worst.heading_change_deg <= limits->heading_deg &&
-            out->worst.ratio_spread <= limits->ratio_spread;
-  out->mount_yaw_deg = decimal_round(mount, 2);
-  out->worst.direction_error_deg = decimal_round(out->worst.direction_error_deg, 3);
-  out->worst.heading_change_deg = decimal_round(out->worst.heading_change_deg, 3);
-  out->worst.sideways_per_m = decimal_round(out->worst.sideways_per_m, 3);
-  out->worst.ratio_spread = decimal_round(out->worst.ratio_spread, 3);
-  out->count = n;
   return TUNE_OK;
 }

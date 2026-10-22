@@ -1,13 +1,9 @@
 #include "tune_analysis.h"
 #include "check.h"
 
-#include <string.h>
-
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 #define MAX_LOG 512
 #define MAX_STARTS 16
-
-static const tune_limits LIMITS = {0.08, 0.03, 1.3, 3, 2, 0.05};
 
 /* Extracted once with jq from tests/golden/tune_ground.json. */
 static const tune_log_entry golden_log[] = {
@@ -525,108 +521,6 @@ static void test_overshoot_ratio(void) {
   }
 }
 
-static tune_response_result simulated_response(double breakaway, const double *peak) {
-  tune_log_entry log[MAX_LOG];
-  double ba[4] = {breakaway, breakaway, breakaway, breakaway};
-  size_t n = start_log(log, ba, SAME_KINETIC, TARGET, peak);
-  tune_response_result r;
-  CHECK_EQ(tune_response(log, n, &r), TUNE_OK);
-  return r;
-}
-
-static double next_fraction(double frac, bool slow, bool over) {
-  return tune_next_fraction(frac, slow, over, 0.15, 0.1, 0.2, 1);
-}
-
-static void test_judge_and_next_fraction(void) {
-  tune_response_result fast_over = simulated_response(0.1, (double[]){150, 144, 144, 150});
-  tune_judgement j = tune_judge(&fast_over, &LIMITS, 0);
-  CHECK(!j.slow && j.over);
-  CHECK_NEAR(next_fraction(0.8, j.slow, j.over), 0.65, 1e-12);
-  tune_response_result slow_ok = simulated_response(2, NULL);
-  j = tune_judge(&slow_ok, &LIMITS, 0);
-  CHECK(j.slow && !j.over);
-  CHECK_NEAR(next_fraction(0.8, true, false), 0.9, 1e-12);
-  tune_response_result good = simulated_response(0.1, NULL);
-  j = tune_judge(&good, &LIMITS, 0);
-  CHECK(!j.slow && !j.over);
-  CHECK(isnan(next_fraction(0.8, false, false)));
-  CHECK(isnan(next_fraction(1, true, false)));
-  CHECK_NEAR(next_fraction(0.8, true, true), 0.65, 1e-12);
-  CHECK(isnan(next_fraction(0.2, false, true)));
-  CHECK_NEAR(next_fraction(0.25, false, true), 0.2, 1e-12);
-}
-
-static void test_baseline_overshoot_is_tolerated(void) {
-  tune_response_result resp = simulated_response(0.1, (double[]){80, 77, 77, 80});
-  CHECK(tune_judge(&resp, &LIMITS, 0).over);
-  CHECK(!tune_judge(&resp, &LIMITS, 1.6).over);
-}
-
-static tune_move summary(double vx, double vy, double direction) {
-  return (tune_move){.twist = {vx, vy, 0}, .seen = true, .distance_mm = 160,
-                     .direction_deg = direction, .max_sideways_mm = 2,
-                     .heading_change_deg = 0.5, .commanded_mm = 160};
-}
-
-static tune_accept_result accept(const tune_move *moves, size_t n) {
-  tune_move_row rows[8];
-  CHECK(n <= ARRAY_LEN(rows));
-  tune_accept_result result;
-  CHECK_EQ(tune_accept_moves(moves, n, &LIMITS, rows, ARRAY_LEN(rows), &result), TUNE_OK);
-  return result;
-}
-
-static void test_mount_yaw_removed_and_pass(void) {
-  tune_move moves[] = {summary(0, 200, 120), summary(0, -200, -59),
-                       summary(200, 0, 29), summary(-200, 0, 210)};
-  tune_accept_result a = accept(moves, ARRAY_LEN(moves));
-  CHECK(a.ok);
-  CHECK_NEAR(a.mount_yaw_deg, 30, 0.5);
-  CHECK(a.worst.direction_error_deg <= 1.1);
-  CHECK_EQ(a.count, 4);
-  CHECK_EQ(a.missing, 0);
-  relative(a.worst.sideways_per_m, 12.5);
-  relative(a.worst.heading_change_deg, 0.5);
-  relative(a.worst.ratio_spread, 0);
-}
-
-static void test_fails_on_curve_heading_and_scale_spread(void) {
-  tune_move base[] = {summary(0, 200, 90), summary(0, -200, -90),
-                      summary(200, 0, 0), summary(-200, 0, 180)};
-  tune_move changed[4];
-  memcpy(changed, base, sizeof(base));
-  changed[2].direction_deg = 10;
-  CHECK(!accept(changed, 4).ok);
-  memcpy(changed, base, sizeof(base));
-  changed[0].heading_change_deg = 5;
-  CHECK(!accept(changed, 4).ok);
-  memcpy(changed, base, sizeof(base));
-  changed[1].distance_mm = 140;
-  CHECK(!accept(changed, 4).ok);
-}
-
-static void test_missing_moves(void) {
-  tune_move moves[3] = {summary(0, 200, 90), summary(0, -200, -90), summary(200, 0, 0)};
-  moves[0].seen = false;
-  tune_accept_result a = accept(moves, 1);
-  CHECK(!a.ok);
-  CHECK_EQ(a.missing, 1);
-  CHECK_EQ(a.count, 0);
-  CHECK(strcmp(a.reason, "1 of 1 moves not seen still at both ends (or under 20 mm)") == 0);
-  moves[0].seen = true;
-  moves[1].seen = moves[2].seen = false;
-  CHECK(!accept(moves, 3).ok);
-  a = accept(moves, 1);
-  CHECK(!a.ok);
-  CHECK_EQ(a.missing, 0);
-  moves[1].seen = true;
-  moves[1].distance_mm = 20;
-  a = accept(moves, 2);
-  CHECK(!a.ok);
-  CHECK_EQ(a.missing, 1);
-}
-
 static void test_golden_data(void) {
   const tune_log_entry *input = golden_log;
   const size_t n = ARRAY_LEN(golden_log);
@@ -736,7 +630,6 @@ static void test_response_windows_and_missing_metrics(void) {
   CHECK_EQ(tune_response(NULL, 0, &r), TUNE_OK);
   CHECK(isnan(r.spread_s));
   CHECK(isnan(r.spread_worst_s));
-  CHECK(tune_judge(&r, &LIMITS, 0).slow);
   for (size_t w = 0; w < 4; ++w) {
     CHECK_EQ(r.wheels[w].starts, 0);
     CHECK_EQ(r.wheels[w].moved, 0);
@@ -751,7 +644,6 @@ static void test_response_windows_and_missing_metrics(void) {
     for (size_t w = 0; w < 4; ++w)
       log[k].rpm_valid[w] = false;
   CHECK_EQ(tune_response(log, n, &r), TUNE_OK);
-  CHECK(tune_judge(&r, &LIMITS, 0).slow);
   for (size_t w = 0; w < 4; ++w) {
     CHECK_EQ(r.wheels[w].starts, 1);
     CHECK_EQ(r.wheels[w].moved, 0);
@@ -777,39 +669,6 @@ static void test_response_windows_and_missing_metrics(void) {
   }
 }
 
-static void test_wrap_and_camera_rows(void) {
-  relative(tune_wrap_deg(180), -180);
-  relative(tune_wrap_deg(-180), -180);
-  relative(tune_wrap_deg(540), -180);
-  relative(tune_wrap_deg(-541), 179);
-  relative(tune_wrap_deg(721), 1);
-  tune_move moves[2] = {summary(160, 0, 179), summary(-160, 0, 1)};
-  moves[0].commanded_mm = 0;
-  moves[1].commanded_mm = NAN;
-  moves[0].max_sideways_mm = 100;
-  moves[0].heading_change_deg = 1.125;
-  moves[1].heading_change_deg = -1.125;
-  tune_move_row rows[2];
-  tune_accept_result a;
-  CHECK_EQ(tune_accept_moves(moves, 2, &LIMITS, rows, 2, &a), TUNE_OK);
-  CHECK(a.ok);
-  CHECK_NEAR(fabs(a.mount_yaw_deg), 180, 1e-9);
-  CHECK_EQ(a.count, 2);
-  CHECK_EQ(a.reason[0], '\0');
-  for (size_t k = 0; k < 2; ++k) {
-    relative(rows[k].twist[0], moves[k].twist[0]);
-    relative(rows[k].twist[1], moves[k].twist[1]);
-    relative(rows[k].twist[2], moves[k].twist[2]);
-    relative(rows[k].distance_mm, 160);
-    relative(rows[k].ratio, 1);
-    relative(fabs(rows[k].direction_error_deg), 1);
-    relative(fabs(rows[k].heading_change_deg), 1.12);
-  }
-  relative(a.worst.sideways_per_m, 625);
-  relative(a.worst.ratio_spread, 0);
-  CHECK_EQ(tune_accept_moves(moves, 2, &LIMITS, rows, 1, &a), TUNE_CAPACITY);
-}
-
 static void test_buffer_errors(void) {
   tune_log_entry log[MAX_LOG];
   size_t n = start_log(log, (double[]){0.1, 0.1, 0.1, 0.1}, SAME_KINETIC, TARGET, NULL);
@@ -821,7 +680,6 @@ static void test_buffer_errors(void) {
   CHECK_EQ(tune_overshoot(NULL, 0, 40, 0.6, over), TUNE_OK);
   CHECK_EQ(tune_response(NULL, 1, &(tune_response_result){0}), TUNE_INVALID);
   CHECK_EQ(tune_segments(NULL, 1, 40, NULL, 0, &(size_t){0}), TUNE_INVALID);
-  CHECK_EQ(tune_accept_moves(NULL, 1, &LIMITS, NULL, 0, &(tune_accept_result){0}), TUNE_INVALID);
 }
 
 int main(void) {
@@ -829,16 +687,10 @@ int main(void) {
   test_wheel_that_never_moves_gives_no_breakaway();
   test_spread();
   test_overshoot_ratio();
-  test_judge_and_next_fraction();
-  test_baseline_overshoot_is_tolerated();
-  test_mount_yaw_removed_and_pass();
-  test_fails_on_curve_heading_and_scale_spread();
-  test_missing_moves();
   test_golden_data();
   test_segments_and_missing_samples();
   test_response_windows_and_missing_metrics();
-  test_wrap_and_camera_rows();
   test_buffer_errors();
-  puts("tune analysis: 14 test cases passed");
+  puts("tune analysis: 8 test cases passed");
   return 0;
 }

@@ -46,11 +46,6 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Src/drive_app.c</locationURI>
 		</link>
 		<link>
-			<name>Application/User/drive_speed_ctrl.c</name>
-			<type>1</type>
-			<locationURI>PARENT-1-PROJECT_LOC/Src/drive_speed_ctrl.c</locationURI>
-		</link>
-		<link>
 			<name>Application/User/hall_speed_pos_fdbk.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Src/hall_speed_pos_fdbk.c</locationURI>
@@ -124,6 +119,16 @@
 			<name>Application/User/mcp_config.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Src/mcp_config.c</locationURI>
+		</link>
+		<link>
+			<name>Application/User/motor_cmd.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Src/motor_cmd.c</locationURI>
+		</link>
+		<link>
+			<name>Application/User/motor_speed.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Src/motor_speed.c</locationURI>
 		</link>
 		<link>
 			<name>Application/User/motorcontrol.c</name>

@@ -81,3 +81,15 @@ Append only; format in design/README.md.
 - Rejected: Stage 3 first (better tuning workflow, but the ground start waits); a RAM friction ff on the old loop to
   drive today (the three-ff stack is what Stage 4a removes).
 - Touches: technical-development-plans/phase1-esc-command-v2.md (order), src/esc/motor_config/.
+
+## 2026-10-21  Stage 4a speed loop: stall ramp, slip clamp, over-speed bleed; HALL_LOST redefined  (who: Frank H + claude)
+- Decision: P + I with three integrator rules (stalled ramp at 10 A/s once the reference is 4 edges ahead, slip
+  clamped at 4 edges; conditional integration; halve I on a progress edge above 1.15x target), one speed estimate,
+  output via MCSDK torque mode from drive_app's tick (MCSDK files back to stock), Ki kept, HALL_LOST = Hall-code fault
+  not "estimate invalid after motion". Spec: technical-development-plans/esc-command-v2/E-speed-loop.md.
+- Why: today's records show the stuck-then-runaway start comes from the I term winding up while the reference runs
+  away from a stuck wheel; a re-stuck loaded wheel looks like an invalid estimate, so faulting on that would stop
+  normal mat starts. Ki 0 cannot hold speed against kinetic friction with ff 0.
+- Rejected: the DSC STARTING state machine (14 keys, hand-off hold, same 2.25x overshoot), Ki 0, chasing D's
+  tracking deadlines before Stage 5 measures friction ff.
+- Touches: src/esc/motor_config/, src/tools/, tests, architecture/drive.md, command-lifecycle.md.

@@ -54,9 +54,9 @@ Mat:
    currents with 2026-10-21 (3.3-4.7 A on the mat).
 3. Turn the fit into the Nucleo friction model: `move_test` / `keyboard_drive` take `--ff-coulomb-xy-n`,
    `--ff-viscous-xy-n-per-mps`, `--ff-coulomb-w-nm`, `--ff-viscous-w-nm-per-radps`, `--ff-a-per-nm` (1/Kt) and
-   `--ff-scale FR,BR,BL,FL`. The fit is in wheel mA; with no Kt measured, use `--ff-a-per-nm 1` and give the forces in
-   "mA-equivalent" units only if the model maps them one to one; otherwise derive Kt from the datasheet first. Check one
-   keyboard_drive run with the values before H6.
+   `--ff-scale FR,BR,BL,FL`. The fit is per wheel in mA; the model is in body-frame N and N*m, so converting needs the
+   wheel radius and Kt (`--ff-a-per-nm` = 1/Kt): take Kt from the motor datasheet and record its source (Ke is not
+   measured). Per-wheel differences go into `--ff-scale`. Check one keyboard_drive run with the values before H6.
 
 ## H6: final gate (mat)
 

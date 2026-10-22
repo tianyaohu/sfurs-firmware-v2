@@ -33,7 +33,7 @@ int main(int argc, char **argv)
     if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.6 --accel 0 --log F]\n"
                          "W/S forward/back, A/D left/right, Q/E CCW/CW, SPACE zero, +/- speed, X/ESC quit.\n"
                          "Axes combine and expire without repeat. Streams at 50 Hz; Nucleo stops after 0.3 s\n"
-                         "without heartbeat, ESCs after 0.1 s without the Nucleo. Log files must be new.\n"
+                         "without heartbeat, ESCs after 0.1 s without the Nucleo. An existing log file is overwritten.\n"
                          DRIVE_FF_USAGE);
     return parsed < 0;
   }
@@ -48,7 +48,7 @@ int main(int argc, char **argv)
   }
   struct termios saved;
   if (tcgetattr(STDIN_FILENO, &saved)) { perror("keyboard input needs a terminal"); return 1; }
-  FILE *log = log_path ? fopen(log_path, "wx") : NULL;
+  FILE *log = log_path ? fopen(log_path, "w") : NULL; /* reruns reuse the name (user, 2026-10-22) */
   if (log_path && !log) { perror(log_path); return 1; }
   struct sigaction action = {.sa_handler = interrupt_handler}, old_int, old_term, old_hup;
   sigemptyset(&action.sa_mask);

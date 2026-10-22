@@ -171,6 +171,8 @@ static void terminal_case(int mode)
   int master, slave; CHECK_EQ(openpty(&master, &slave, NULL, NULL, NULL), 0);
   struct termios before, after; CHECK_EQ(tcgetattr(slave, &before), 0);
   char log_path[256]; snprintf(log_path, sizeof log_path, "%s/keyboard-%d.jsonl", directory, mode);
+  FILE *stale = fopen(log_path, "w"); CHECK(stale != NULL); /* a previous run's log is overwritten, not refused */
+  fputs("STALE_PREVIOUS_RUN\n", stale); fclose(stale);
   const char *args[] = {"--elf", FAKE_ELF, "--log", log_path, NULL};
   pid_t pid = spawn(KEYBOARD_TOOL, args, slave);
   await_text(log_path, "\"vector\":[0,0,0]");
@@ -185,6 +187,7 @@ static void terminal_case(int mode)
   CHECK_EQ(after.c_lflag, before.c_lflag); CHECK_EQ(after.c_iflag, before.c_iflag);
   CHECK_EQ(after.c_cc[VMIN], before.c_cc[VMIN]); CHECK_EQ(after.c_cc[VTIME], before.c_cc[VTIME]);
   CHECK(file_contains(log_path, "\"t0_monotonic_s\":")); CHECK(file_contains(log_path, "\"t_monotonic_s\":"));
+  CHECK(!file_contains(log_path, "STALE_PREVIOUS_RUN"));
   CHECK(file_contains(output_path, "stopping..."));
   close(master); close(slave); unlink(log_path); unsetenv("FAKE_OCD_MEM");
 }
@@ -193,12 +196,8 @@ static void test_keyboard_x_restores_terminal(void) { terminal_case(0); }
 static void test_keyboard_escape_restores_terminal(void) { terminal_case(1); }
 static void test_keyboard_signal_waits_three_seconds_and_restores(void) { terminal_case(2); }
 
-static void test_keyboard_log_exclusive_and_nonterminal_refusal(void)
+static void test_keyboard_nonterminal_refusal(void)
 {
-  int master, slave; CHECK_EQ(openpty(&master, &slave, NULL, NULL, NULL), 0);
-  CHECK_EQ(wait_child(spawn(KEYBOARD_TOOL, (const char *const[]){"--log", output_path, NULL}, slave), 5), 1);
-  CHECK(file_contains(output_path, "File exists"));
-  close(master); close(slave);
   int fd = open("/dev/null", O_RDONLY); CHECK(fd >= 0);
   CHECK_EQ(wait_child(spawn(KEYBOARD_TOOL, NULL, fd), 5), 1); close(fd);
   CHECK(file_contains(output_path, "needs a terminal"));
@@ -226,7 +225,7 @@ int main(int argc, char **argv)
   } else {
     test_help_and_invalid_arguments();
     test_non_camera_options_parse_before_elf_refusal();
-    test_keyboard_log_exclusive_and_nonterminal_refusal();
+    test_keyboard_nonterminal_refusal();
     puts("drive CLI: 3 test cases passed");
   }
   unlink(output_path); CHECK_EQ(rmdir(directory), 0);

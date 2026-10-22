@@ -220,6 +220,7 @@ static void test_stop_and_status_reply(void)
   setup(4); /* DISABLE, status reply */
   arm(); speed_cmd(200); tick(5); CHECK(state == RUN);
   iqd.q = 1234; iqdref.q = 1300; speed = 187;
+  speed_cmd(200); tick(1); CHECK(last_reply().iq_ma == 2250); /* 1234 / 544 A in 50 mA steps */
   rx(STATUS_READ | MOTOR_CAN_ID, 0); drive_app_poll(send);
   CHECK(sent_id == (STATUS_REPLY | MOTOR_CAN_ID));
   CHECK((int16_t)(sent[0] | sent[1] << 8) == 187 && (int16_t)(sent[2] | sent[3] << 8) == 1234);
@@ -227,6 +228,10 @@ static void test_stop_and_status_reply(void)
   CHECK(sent[7] == (ESC_FLAG_ACTIVE | ESC_FLAG_ALIGNED));
   disable(0xFU); tick(2);
   CHECK(state == IDLE && drive_app.stop_reason == ESC_STOP_COMMAND && !drive_app.active);
+  iqd.q = 13270; /* bridge off: the SDK's Iq is garbage (uncalibrated offsets), reported as 0 */
+  rx(STATUS_READ | MOTOR_CAN_ID, 0); drive_app_poll(send);
+  CHECK(sent_id == (STATUS_REPLY | MOTOR_CAN_ID) && (int16_t)(sent[2] | sent[3] << 8) == 0);
+  disable(MOTOR_CAN_ID); tick(1); CHECK(last_reply().iq_ma == 0);
   ctl(MOTOR_MODE_SPEED, 0, 100, ++ctl_seq, OTHER_WHEEL); tick(3); CHECK(starts == 1); /* other wheel's */
   rx((1U << 7) | MOTOR_CAN_ID, 100); tick(3); CHECK(starts == 1); /* retired SPEED_WRITE: ignored */
   speed_cmd(100); tick(3); CHECK(starts == 2 && state == RUN);   /* DISABLE kept the session */
@@ -564,7 +569,7 @@ static void test_speed_loop_recorder(void)
   rx(CAPTURE | MOTOR_CAN_ID, rec | 10U); tick(1);                   /* sample 0, moving: no trigger */
   tick(19);                                               /* already moving: no trigger */
   speed_ref = 0; tick(30);
-  speed_ref = 51; speed = 7; iqd.q = 99;
+  speed_ref = 51; speed = 7; iqd.q = 99; state = RUN; /* measured Iq is reported only with the bridge on */
   tick(373);
   rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == ESC_RECORD_TRIGGERED);
@@ -580,6 +585,7 @@ static void test_speed_loop_recorder(void)
   rx(CAPTURE | MOTOR_CAN_ID, read | ESC_RECORD_READ_CH67 | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
   CHECK(frames == 1 && f16(frame[0] + 2) == 99 && f16(frame[0] + 6) == 0); /* measured Iq; pad */
   CHECK((f16(frame[0] + 4) & 0x80) == 0);                                 /* legacy: not enabled */
+  state = IDLE;
   rx(CAPTURE | MOTOR_CAN_ID, read | (2U << 16) | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
   CHECK(frames == 0);                                                     /* no bank 2 */
   rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (32U << 10) | 380U); frames = 0; drive_app_poll(send);

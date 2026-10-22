@@ -266,6 +266,16 @@ void drive_record_tick(int16_t pi_out, int16_t iq_ref)
  * sees the stopped reference before a start and finishes after a stop. Speed
  * loop values are those of this tick's FOC_CalcCurrRef, or 0 when the speed
  * loop did not run (IDLE, STOP, alignment, capture). */
+/* Measured q-axis current, SDK counts. MCSDK computes Iq from phase-current offsets that are only
+ * calibrated on the first start, and keeps computing it with the bridge off, so outside the states
+ * where the current loop drives the bridge it reads up to ~25 A of garbage (hardware 2026-10-21).
+ * No current flows with the bridge off: report 0 there. */
+static int16_t measured_iq(void)
+{
+  const int state = MC_GetSTMStateMotor1();
+  return state == START || state == SWITCH_OVER || state == RUN ? MC_GetIqdMotor1().q : 0;
+}
+
 static void record_sample(void)
 {
   const uint32_t status = rec_status;
@@ -287,7 +297,7 @@ static void record_sample(void)
     s[2] = (int16_t)(pi_out - i); s[3] = (int16_t)i; s[4] = (int16_t)(iq_ref - pi_out);
   }
   s[5] = iq_ref;
-  s[6] = MC_GetIqdMotor1().q;
+  s[6] = measured_iq();
   s[7] = (int16_t)((drive_dsc.state & 3U) | ((drive_dsc.reason & 15U) << 2) |
                    ((ran ? drive_dsc.capped & 1U : 0U) << 6) | ((drive_dsc_cfg.enable & 1U) << 7) |
                    (((uint32_t)(HALL_M1.EdgesPos - HALL_M1.EdgesNeg) & 15U) << 8) |
@@ -652,14 +662,13 @@ static int busy(void)
 /* Run the command lifecycle for this tick and carry out what it decided, in its field order. */
 static void command_tick(uint16_t state)
 {
-  const qd_t iqd = MC_GetIqdMotor1();
   const struct motor_cmd_inputs in = {
     .now_ms = drive_app.now_ms, .mc = mc_state(state),
     .mc_fault_present = MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS,
     .aligned = drive_app.aligned != 0U, .busy = (uint8_t)busy(),
     .loop_failed = drive_dsc_cfg.enable && drive_dsc.state == DSC_FAILED,
     .rpm = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1()),
-    .iq_ma = (int16_t)((int32_t)iqd.q * 1000 / (int32_t)CURRENT_CONV_FACTOR),
+    .iq_ma = (int16_t)((int32_t)measured_iq() * 1000 / (int32_t)CURRENT_CONV_FACTOR),
     .edges_pos = HALL_M1.EdgesPos, .edges_neg = HALL_M1.EdgesNeg };
   struct motor_cmd_actions act;
   motor_cmd_tick(&drive_cmd, &in, &act);
@@ -813,7 +822,8 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
   }
   if (status_pending) {
     const int16_t rpm = (int16_t)SPEED_UNIT_2_RPM(MC_GetMecSpeedAverageMotor1());
-    const qd_t iqd = MC_GetIqdMotor1(), ref = MC_GetIqdrefMotor1();
+    const int16_t iq = measured_iq();
+    const qd_t ref = MC_GetIqdrefMotor1();
     const uint8_t flags = (uint8_t)((drive_app.stop_reason & 0x0FU) |
         (drive_app.active ? ESC_FLAG_ACTIVE : 0U) |
         (drive_app.derated ? ESC_FLAG_DERATED : 0U) |
@@ -821,7 +831,7 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
              ? ESC_FLAG_ALIGN : 0U) |
         (drive_app.aligned ? ESC_FLAG_ALIGNED : 0U));
     data[0] = (uint8_t)rpm; data[1] = (uint8_t)((uint16_t)rpm >> 8);
-    data[2] = (uint8_t)iqd.q; data[3] = (uint8_t)((uint16_t)iqd.q >> 8);
+    data[2] = (uint8_t)iq; data[3] = (uint8_t)((uint16_t)iq >> 8);
     data[4] = (uint8_t)ref.q; data[5] = (uint8_t)((uint16_t)ref.q >> 8);
     data[6] = (uint8_t)MC_GetSTMStateMotor1();
     data[7] = flags;

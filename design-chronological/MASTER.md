@@ -70,3 +70,14 @@ Append only; format in design/README.md.
 - Rejected: keeping the 4/8-byte SPEED_WRITE (length changes meaning, no version); separate frames for speed and
   feed-forward (they can disagree); copying TIGERs' SPI struct (unverified, different transport, licence).
 - Touches: `src/shared/`, `src/esc/motor_config/`, `src/nucleo/CM7/`, `src/tools/`, tests, `architecture/`.
+
+## 2026-10-21  Stage 4a (new speed loop) before Stage 3 (config ack)  (who: Frank H + claude)
+- Decision: after the Stage 2 protocol checks, build the new speed loop next and do config ack/readback after it;
+  the remaining Stage 2 mat starts are skipped.
+- Why: the first mat start on protocol v1 stalled on static friction: Iq followed its reference, the old PI's I term
+  climbed ~7.4 A/s to ~3 A over 360 ms with the wheels creeping, then the wound-up I term overshot one wheel to
+  450 RPM (hardware-test-results/2026-10-21-h2-install-raised.md). The protocol is not the limit; the loop is.
+  More starts on the old loop would each end in the overspeed abort and add nothing.
+- Rejected: Stage 3 first (better tuning workflow, but the ground start waits); a RAM friction ff on the old loop to
+  drive today (the three-ff stack is what Stage 4a removes).
+- Touches: technical-development-plans/phase1-esc-command-v2.md (order), src/esc/motor_config/.

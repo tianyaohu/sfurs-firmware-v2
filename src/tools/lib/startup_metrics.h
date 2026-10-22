@@ -69,7 +69,8 @@ startup_calibration_t startup_nominal(double spread_deg);
 double startup_t_ref(const ik_record_unpacked_t *rows, size_t n, double angle_deg);
 /** @brief Evaluate one record (at most 384 rows). The steady target is the last
  * reference magnitude, >= 2 RPM, with all last 50 magnitudes within +/-1 RPM.
- * Missing inputs produce NOT_MEASURABLE. Tracking and overshoot remain separate.
+ * A record whose |reference| never reaches ESC_RECORD_TRIGGER_RPM (the ESC recorder's
+ * trigger) is INACTIVE. Missing inputs produce NOT_MEASURABLE. Tracking and overshoot remain separate.
  * When the last zero-reference row has a valid Hall state, the starting sector is
  * taken from it and every later row's Hall state must equal the sector reached by
  * the recorded net edges; any mismatch is NOT_MEASURABLE (hall_sequence).

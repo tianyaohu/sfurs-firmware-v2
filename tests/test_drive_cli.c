@@ -101,6 +101,15 @@ static void test_help_and_invalid_arguments(void)
     CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, retired[k], "1", NULL}), 1);
     CHECK(strstr(output, "invalid option"));
   }
+  /* Feed-forward values are refused before any link is opened. */
+  const char *bad_ff[][4] = {{"--ff-coulomb-xy-n", "3", NULL, NULL}, {"--ff-coulomb-xy-n", "-1", "--ff-a-per-nm", "35"},
+                             {"--ff-scale", "100,0,100,100", "--ff-a-per-nm", "35"}, {"--ff-a-per-nm", "0", NULL, NULL}};
+  for (size_t k = 0; k < sizeof bad_ff / sizeof *bad_ff; k++) for (int t = 0; t < 2; t++) {
+    const char *args[] = {t ? "--elf" : "--out", t ? "/nonexistent.elf" : directory,
+                          bad_ff[k][0], bad_ff[k][1], bad_ff[k][2], bad_ff[k][3], NULL};
+    CHECK_EQ(run(t ? KEYBOARD_TOOL : MOVE_TOOL, args), 1);
+    CHECK(strstr(output, "ff")); CHECK(!strstr(output, "IK ELF"));
+  }
   CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--frac", "0.5", NULL}), 1);
   CHECK(strstr(output, "invalid option"));
   CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--speed", "0.31", NULL}), 1);
@@ -115,6 +124,8 @@ static void test_non_camera_options_parse_before_elf_refusal(void)
   CHECK_EQ(run(MOVE_TOOL, (const char *const[]){"--out", directory, "--no-camera", "--axis", "wz",
     "--distance", "0.6", "--speed", "0.2", "--reps", "3", "--accel", "900", "--first-back", "--pause", "1.5",
     "--kp", "100", "--ki", "20", "--record", "--record-pre", "50", "--record-delay", "1000", "--min-vbus", "11", "--check",
+    "--ff-coulomb-xy-n", "4", "--ff-viscous-xy-n-per-mps", "1", "--ff-coulomb-w-nm", "0.3",
+    "--ff-viscous-w-nm-per-radps", "0.1", "--ff-a-per-nm", "35", "--ff-scale", "100,100,95,105",
     "--elf", "/nonexistent.elf", "--sn", "FAKE", NULL}), 1);
   CHECK(strstr(output, "IK ELF not found"));
   CHECK_EQ(run(TUNE_TOOL, (const char *const[]){"--out", directory, "--no-camera", "--speed", "0.2", "--x-speed", "0.3",

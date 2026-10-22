@@ -64,8 +64,9 @@ friction_fit_t friction_fit(const friction_point_t *p, size_t n, int direction)
 
 bool friction_motion(friction_motion_t *s, unsigned count, double rpm, int sign, double threshold)
 {
+  /* The host polls slower than the ESC replies, so several replies may land between
+   * reads; any advance is one fresh observation, and only the newest reply is seen. */
   if (count == s->count) return false;
-  if (count - s->count != 1U) s->streak = 0;
   s->count = count;
   if ((sign == 1 || sign == -1) && isfinite(rpm) && isfinite(threshold) && threshold > 0 && rpm * sign >= threshold)
     ++s->streak;

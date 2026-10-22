@@ -9,6 +9,7 @@
 
 #include "can_datatypes.h"
 #include "elfsym.h"
+#include "gen_esc_defaults.h"
 #include "motor_protocol.h"
 
 const char *const IK_WHEEL_POS[IK_WHEELS] = {"FR", "BR", "BL", "FL"};
@@ -339,7 +340,7 @@ int ik_send_raw8(ik_link_t *l, uint32_t can_id, const uint8_t data[8], double ti
 
 int ik_capture_start_word(int step_ma, uint32_t *word)
 {
-  if (step_ma < 0 || step_ma > 6000) return -1; /* IQMAX */
+  if (step_ma < 0 || step_ma > ESC_IQMAX_A * 1000) return -1;
   *word = ((uint32_t)ESC_CAPTURE_START << 24) | (uint32_t)step_ma;
   return 0;
 }
@@ -405,8 +406,8 @@ int ik_drive_current(ik_link_t *l, const int32_t current_ma[IK_WHEELS], bool ena
   if (!current_ma) return fail(l, "current setpoints required");
   for (int w = 0; w < IK_WHEELS; w++) {
     int32_t ma = current_ma[w];
-    if (ma > 6000) ma = 6000;
-    if (ma < -6000) ma = -6000;
+    if (ma > ESC_IQMAX_A * 1000) ma = ESC_IQMAX_A * 1000;
+    if (ma < -ESC_IQMAX_A * 1000) ma = -ESC_IQMAX_A * 1000;
     if (ocd_write32(l->ocd, l->addr[IK_CURRENT_MA] + (uint32_t)w * 4U, (uint32_t)ma))
       return fail(l, "%s", ocd_error(l->ocd));
   }
@@ -490,7 +491,7 @@ static int read_samples(ik_link_t *l, size_t n, int16_t (*out)[6])
 int ik_capture(ik_link_t *l, uint32_t selector, int step_ma, ik_capture_header_t *info, ik_capture_sample_t *samples)
 {
   uint32_t word;
-  if (ik_capture_start_word(step_ma, &word)) return fail(l, "step must be 0..6000 mA (IQMAX)");
+  if (ik_capture_start_word(step_ma, &word)) return fail(l, "step must be 0..%d mA (IQMAX)", ESC_IQMAX_A * 1000);
   if (ik_send_raw(l, CAPTURE | selector, word, 1.0)) return -1;
   double deadline = now_s() + 3.0;
   for (;;) {

@@ -1,5 +1,6 @@
 #include "friction_run.h"
 #include "pulse_run.h"
+#include "gen_esc_defaults.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -175,7 +176,7 @@ int friction_breakaway_run(ik_link_t *l, unsigned selected, int sign, double rat
 {
   memset(out, 0, 4 * sizeof *out);
   if (!limits_ok(a) || !selected || (selected & ~15U) || (sign != -1 && sign != 1) ||
-      !isfinite(rate) || !isfinite(cap) || rate <= 0 || cap <= 0 || cap > 6000 || cap / rate > 5 ||
+      !isfinite(rate) || !isfinite(cap) || rate <= 0 || cap <= 0 || cap > ESC_IQMAX_A * 1000 || cap / rate > 5 ||
       !isfinite(threshold) || threshold <= 0 || threshold >= a->max_rpm)
     return failure(l, "invalid breakaway ramp/limits");
   for (int w = 0; w < 4; w++) out[w].attempted = (selected & (1U << w)) != 0;

@@ -19,24 +19,32 @@ int main(int argc, char **argv)
 {
   const char *elf = IK_DEFAULT_ELF, *sn = IK_DEFAULT_SN, *log_path = NULL;
   int accel_rpmps = 0;
+  drive_ff_args_t ff_args = {0};
   drive_keyboard_t controls = {.keys = {.hold_s = 0.6}, .speed_mps = 0.5, .max_speed_mps = 2.5, .yaw_radps = 2};
   drive_option options[] = {
     DRIVE_OPT("elf", STRING, &elf), DRIVE_OPT("sn", STRING, &sn),
     DRIVE_OPT("speed", DOUBLE, &controls.speed_mps), DRIVE_OPT("max-speed", DOUBLE, &controls.max_speed_mps),
     DRIVE_OPT("yaw", DOUBLE, &controls.yaw_radps), DRIVE_OPT("hold", DOUBLE, &controls.keys.hold_s),
-    DRIVE_OPT("accel", INT, &accel_rpmps), DRIVE_OPT("log", STRING, &log_path)
+    DRIVE_OPT("accel", INT, &accel_rpmps), DRIVE_OPT("log", STRING, &log_path), DRIVE_FF_OPTIONS(&ff_args)
   };
-  int parsed = drive_parse(argc, argv, options, sizeof options / sizeof *options);
+  const size_t n_options = sizeof options / sizeof *options;
+  int parsed = drive_parse(argc, argv, options, n_options);
   if (parsed) {
     if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.6 --accel 0 --log F]\n"
                          "W/S forward/back, A/D left/right, Q/E CCW/CW, SPACE zero, +/- speed, X/ESC quit.\n"
                          "Axes combine and expire without repeat. Streams at 50 Hz; Nucleo stops after 0.3 s\n"
-                         "without heartbeat, ESCs after 0.1 s without the Nucleo. Log files must be new.");
+                         "without heartbeat, ESCs after 0.1 s without the Nucleo. Log files must be new.\n"
+                         DRIVE_FF_USAGE);
     return parsed < 0;
   }
   if (fabs(controls.speed_mps) > INT32_MAX / 1000.0 || fabs(controls.max_speed_mps) > INT32_MAX / 1000.0 ||
       fabs(controls.yaw_radps) > INT32_MAX / 1000.0) {
     fprintf(stderr, "speed/yaw outside the mailbox int32 range\n"); return 1;
+  }
+  drive_ff_t ff;
+  char ff_error[160];
+  if (drive_ff_from_options(options, n_options, &ff, ff_error, sizeof ff_error)) {
+    fprintf(stderr, "%s\n", ff_error); return 1;
   }
   struct termios saved;
   if (tcgetattr(STDIN_FILENO, &saved)) { perror("keyboard input needs a terminal"); return 1; }
@@ -49,7 +57,7 @@ int main(int argc, char **argv)
   sigaction(SIGHUP, &action, &old_hup);
   ik_link_t link;
   int rc = ik_link_open(&link, sn, elf);
-  bool opened = !rc, raw_enabled = false;
+  bool opened = !rc, raw_enabled = false, ff_written = false;
   if (rc) goto done;
   uint32_t fault, state, mode;
   if (ik_read(&link, IK_FAULT, &fault) || ik_check_fault(&link, fault)) { rc = -1; goto done; }
@@ -59,6 +67,11 @@ int main(int argc, char **argv)
     snprintf(link.err, sizeof link.err, "stop the current-mode session before keyboard drive"); rc = -1; goto done;
   }
   if (ik_write(&link, IK_ACCEL_RPMPS, (uint32_t)accel_rpmps)) { rc = -1; goto done; }
+  /* Only a stopped drive takes a new model; without ff options the running one is left alone. */
+  if (ff.enable) {
+    if (drive_ff_write(&link, &ff)) { rc = -1; goto done; }
+    ff_written = true;
+  }
   struct termios raw = saved;
   raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
   raw.c_iflag &= (tcflag_t)~(IXON | ICRNL);
@@ -110,6 +123,7 @@ done:
   /* Never keep streaming during cleanup: the unchanged firmware heartbeat timeouts remain the fallback. */
   if (opened) {
     if (ik_write(&link, IK_ENABLE, 0)) rc = -1;
+    if (ff_written && drive_ff_clear(&link)) rc = -1;
     ik_link_close(&link);
   }
   if (raw_enabled) {

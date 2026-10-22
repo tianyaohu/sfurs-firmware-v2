@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "check.h"
+#include "gen_esc_defaults.h"
+#include <stdio.h>
 #include <fcntl.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -25,9 +27,11 @@ static void friction_arguments(void)
 {
   CHECK_EQ(run(FRICTION_TOOL, (const char *const[]){"--help", NULL}), 0);
   CHECK(strstr(output, "MOTION")); CHECK(strstr(output, "--breakaway"));
+  char over_cap[16];
+  snprintf(over_cap, sizeof over_cap, "%d", ESC_IQMAX_A * 1000 + 1);
   const char *bad[][2] = {{"--axis", "bad"}, {"--speeds", "0.1,0.2"}, {"--speeds", "-0.2,nan,0.2"},
     {"--speeds", "-0.2,0.2,"}, {"--speeds", "-0.2,0,0.2"}, {"--speeds", "-0.01,0.01"},
-    {"--min-vbus", "7"}, {"--max-rpm", "601"}, {"--rate-ma-s", "0"}, {"--cap-ma", "6001"},
+    {"--min-vbus", "7"}, {"--max-rpm", "601"}, {"--rate-ma-s", "0"}, {"--cap-ma", over_cap},
     {"--motion-rpm", "301"}, {"--reps", "0"}, {"--wheel", "nope"}, {"--distance", "1.1"},
     {"--transient", "4"}, {"--pause", "-1"}, {"--distance", "nan"}};
   for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {

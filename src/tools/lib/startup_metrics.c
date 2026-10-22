@@ -1,4 +1,5 @@
 #include "startup_metrics.h"
+#include "can_datatypes.h"
 #include <math.h>
 
 static int direction(const ik_record_unpacked_t *r, size_t n)
@@ -78,7 +79,8 @@ startup_result_t startup_evaluate(const ik_record_unpacked_t *r, size_t n,
   bool active = false;
   for (size_t i = 0; i < n; ++i) {
     if (r[i].edges_mod16 < 0 || r[i].edges_mod16 > 15) return out;
-    if (fabs((double)r[i].ref_rpm) >= 2) active = true;
+    /* Same threshold the ESC recorder triggers on: a smaller reference is not a start. */
+    if (fabs((double)r[i].ref_rpm) >= ESC_RECORD_TRIGGER_RPM) active = true;
   }
   if (!active) {
     out.verdict = out.tracking = out.overshoot = STARTUP_INACTIVE;
@@ -102,7 +104,7 @@ startup_result_t startup_evaluate(const ik_record_unpacked_t *r, size_t n,
    * not the task's 60 deg. Reject inconsistent maps rather than rescaling them. */
   if (fabs(sum - 45) > 1e-6 || !isfinite(cal->spread_deg) || cal->spread_deg < 0 ||
       cal->starting_sector < -1 || cal->starting_sector > 5) return out;
-  /* SPEC-QUESTION: trigger is 2 RPM, not apply. Require a zero baseline and
+  /* SPEC-QUESTION: the record triggers at ESC_RECORD_TRIGGER_RPM, not at apply. Require a zero baseline and
    * integrate from row 0; a clipped/delayed record cannot establish deadlines. */
   if (r[0].ref_rpm != 0) { out.rule = STARTUP_RULE_BASELINE; return out; }
   for (size_t i = 0; i < n; ++i)

@@ -128,7 +128,11 @@ values into `drive_parameters.h`.
 On the ground each wheel needs 3.3–4.7 A before it turns (mat 2026-10-21; free air
 0.1 A): that is the stall ramp's job. The Nucleo can instead send it as feed-forward from
 its body-frame friction model (`friction_ff.c`, mailbox words `ik_drive_ff_*`); the model is
-off by default and no tool sets it yet. `friction_map` measures the floor friction it needs.
+off by default. `move_test` and `keyboard_drive` set it with `--ff-coulomb-xy-n` (N),
+`--ff-viscous-xy-n-per-mps` (N per m/s), `--ff-coulomb-w-nm` (N·m), `--ff-viscous-w-nm-per-radps`
+(N·m per rad/s), `--ff-a-per-nm` (motor A per N·m, required) and `--ff-scale FR,BR,BL,FL` (%, 1–200);
+they write it only while the drive is stopped and switch it off again on exit, and `move_test`
+records it under `settings.ff` in result.json. `friction_map` measures the floor friction it needs.
 
 Motor constants in `pmsm_motor_parameters.h` are the Workbench placeholder
 (Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM). Measured by capture on all four motors:

@@ -1,5 +1,6 @@
 #include "startup_metrics.h"
 #include "check.h"
+#include "can_datatypes.h"
 #include <string.h>
 #include <unistd.h>
 
@@ -165,6 +166,14 @@ static void interpolation_and_incomplete(void)
   CHECK_EQ(nominal().verdict, STARTUP_INACTIVE);
   for (int i = 0; i < 384; ++i) rows[i].ref_rpm = -1;
   CHECK_EQ(nominal().verdict, STARTUP_INACTIVE);
+  /* A reference that peaks below the recorder trigger (2..9 RPM) is not a start. */
+  for (int sign = -1; sign <= 1; sign += 2) {
+    memset(rows, 0, sizeof rows);
+    for (int i = 1; i < 384; ++i) rows[i].ref_rpm = sign * (i < 100 ? i / 12 + 1 : 2);
+    CHECK_EQ(nominal().verdict, STARTUP_INACTIVE);
+    rows[150].ref_rpm = sign * ESC_RECORD_TRIGGER_RPM;
+    CHECK(nominal().verdict != STARTUP_INACTIVE);
+  }
   c.spread_deg = NAN;
   trace(1, 0, 0, &c);
   CHECK_EQ(startup_evaluate(rows, 384, &c).verdict, STARTUP_NOT_MEASURABLE);

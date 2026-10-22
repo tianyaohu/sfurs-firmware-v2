@@ -39,14 +39,17 @@ const char *friction_verdict_name(friction_verdict_t verdict);
 friction_fit_t friction_fit(const friction_point_t *points, size_t n, int direction);
 /** @brief Motion detector state: last reply count seen and current streak. */
 typedef struct { unsigned count, streak; } friction_motion_t;
-/** @brief Count three consecutive fresh, contiguous replies with signed RPM >= threshold; duplicates do not count.
- * Sequence gaps reset the streak. Caller initializes count to the baseline reply_count.
+/** @brief Confirm motion after three consecutive fresh reads with signed RPM >= threshold.
+ * A read is fresh when reply_count advanced by one or more since the last read (the host
+ * poll is slower than the reply rate, so gaps are normal and do not reset). A fresh read
+ * below the threshold, in the wrong direction or non-finite resets the streak; a read with
+ * no new reply changes nothing. Caller initializes count to the baseline reply_count.
  * @param state       detector state
  * @param reply_count the wheel's link reply counter
  * @param rpm         measured speed in that reply, RPM
  * @param sign        expected direction, -1 or +1
  * @param threshold   speed that counts as motion, RPM (> 0)
- * @return true once three such replies arrived in a row
+ * @return true once three such fresh reads arrived in a row
  */
 bool friction_motion(friction_motion_t *state, unsigned reply_count, double rpm, int sign, double threshold);
 #endif

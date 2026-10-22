@@ -20,6 +20,7 @@ int main(int argc, char **argv)
   bool startup_metrics = false;
   double sector_spread_deg = 0;
   int kp = INT_MIN, ki = INT_MIN;
+  drive_ff_args_t ff_args = {0};
   drive_option options[] = {
     DRIVE_OPT("out", STRING, &out), DRIVE_OPT("no-camera", BOOL, &no_camera),
     DRIVE_OPT("axis", STRING, &axis), DRIVE_OPT("distance", DOUBLE, &distance_m),
@@ -31,7 +32,7 @@ int main(int argc, char **argv)
     DRIVE_OPT("startup-metrics", BOOL, &startup_metrics),
     DRIVE_OPT("sector-spread-deg", DOUBLE, &sector_spread_deg),
     DRIVE_OPT("min-vbus", DOUBLE, &min_vbus_v), DRIVE_OPT("check", BOOL, &check),
-    DRIVE_OPT("elf", STRING, &elf), DRIVE_OPT("sn", STRING, &sn)
+    DRIVE_OPT("elf", STRING, &elf), DRIVE_OPT("sn", STRING, &sn), DRIVE_FF_OPTIONS(&ff_args)
   };
   size_t n_options = sizeof options / sizeof *options;
   int parsed = drive_parse(argc, argv, options, n_options);
@@ -40,6 +41,7 @@ int main(int argc, char **argv)
                          "  [--reps 1 --first-back --pause 1.5 --accel RPMPS --kp N --ki N]\n"
                          "  [--record --record-pre N --record-delay MS] [--min-vbus 11 --check --elf F --sn SERIAL]\n"
                          "  [--startup-metrics --record --sector-spread-deg 0]\n"
+                         DRIVE_FF_USAGE "\n"
                          "Camera capture belongs to the external tracker. MOTION unless --check.");
     return parsed < 0;
   }
@@ -70,6 +72,10 @@ int main(int argc, char **argv)
     if (drive_setting_set(&settings, keys[k], overrides[k])) {
       fprintf(stderr, "invalid setting %s\n", keys[k]); return 1;
     }
+  }
+  char ff_error[160];
+  if (drive_ff_from_options(options, n_options, &settings.ff, ff_error, sizeof ff_error)) {
+    fprintf(stderr, "%s\n", ff_error); return 1;
   }
   int32_t twists[6][3] = {{0}};
   int a = !strcmp(axis, "vx") ? 0 : !strcmp(axis, "vy") ? 1 : 2;

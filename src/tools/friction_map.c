@@ -12,8 +12,8 @@
  * Collection uses measured 50 Hz RPM/Iq after the transient and 0.2 s of constant,
  * unslewed reference. Reject <5 samples, sign reversals or speed SD >10% of mean.
  * Fits equal-weight segment means: Iq[mA] = Ic[mA]*sign(RPM) + b[mA/RPM]*RPM.
- * Breakaway ramps selected wheel(s) in both directions, zeros each after 3 fresh
- * consecutive motion replies, and stops between trials. Reports commanded current
+ * Breakaway ramps selected wheel(s) in both directions, zeros each after 3 consecutive
+ * fresh telemetry reads past the motion threshold (a read may skip replies), and stops between trials. Reports commanded current
  * at confirmation and measured Iq; a cap without motion is censored, not a threshold.
  * Heartbeat, ESC faults, fresh telemetry, Vbus and max RPM are guarded throughout.
  * Ctrl-C/SIGTERM/SIGHUP zero currents and enable, wait for STOPPED/IDLE and release SWD.
@@ -21,6 +21,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "drive_ops.h"
 #include "friction_run.h"
+#include "gen_esc_defaults.h"
 #include <errno.h>
 #include <math.h>
 #include <signal.h>
@@ -100,9 +101,10 @@ int main(int argc, char **argv)
   if (!out || !*out || a < 0 || !selected || distance <= 0 || distance > 1 || pause < 0 || pause > 10 ||
       limits.min_vbus_v < 8 || limits.max_rpm <= 0 || limits.max_rpm > 600 ||
       limits.transient_s < 0 || limits.transient_s > 4 || reps < 1 || reps > MAX_REPS ||
-      rate <= 0 || cap <= 0 || cap > 6000 || cap / rate > 5 || motion <= 0 || motion >= limits.max_rpm ||
+      rate <= 0 || cap <= 0 || cap > ESC_IQMAX_A * 1000 || cap / rate > 5 || motion <= 0 || motion >= limits.max_rpm ||
       (!breakaway && speeds_parse(speeds_text, speeds, &n_speeds))) {
-    fprintf(stderr, "invalid friction_map arguments: require --out, axis vx/vy/wz, speeds of both signs, distance <=1, Vbus >=8, RPM <=600, cap <=6000, ramp <=5s\n");
+    fprintf(stderr, "invalid friction_map arguments: require --out, axis vx/vy/wz, speeds of both signs, distance <=1, Vbus >=8, RPM <=600, cap <=%d, ramp <=5s\n",
+            ESC_IQMAX_A * 1000);
     return 1;
   }
   for (size_t i = 0; i < n_speeds; i++) if (distance / fabs(speeds[i]) > 5 ||

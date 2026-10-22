@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "esc_ctl.h"
+#include "gen_esc_defaults.h"
 #include "motor_protocol.h"
 #include <stdio.h>
 #include <string.h>
@@ -86,8 +87,10 @@ int esc_ctl_arm(esc_ctl_t *c, int w)
 
 int esc_ctl_speed(esc_ctl_t *c, int w, int rpm)
 {
-  if (w < 0 || w >= IK_WHEELS || !c->wheel[w].armed || rpm < -2976 || rpm > 2976) {
-    snprintf(c->link->err, sizeof c->link->err, "SPEED requires an armed wheel (0..3) and |rpm| <= 2976");
+  if (w < 0 || w >= IK_WHEELS || !c->wheel[w].armed || rpm < -ESC_MAX_APPLICATION_SPEED_RPM ||
+      rpm > ESC_MAX_APPLICATION_SPEED_RPM) {
+    snprintf(c->link->err, sizeof c->link->err, "SPEED requires an armed wheel (0..3) and |rpm| <= %d",
+             ESC_MAX_APPLICATION_SPEED_RPM);
     return -1;
   }
   esc_ctl_wheel_t *s = &c->wheel[w];
@@ -177,14 +180,14 @@ static int reject_frame(enum reject_kind kind, int w, uint8_t seq, uint8_t sessi
   struct motor_control c = {.mode = MOTOR_MODE_SPEED, .seq = (uint8_t)(seq + 1U), .session = session};
   switch (kind) {
     case BAD_SESSION: c.mode = MOTOR_MODE_DISABLE; c.flags = MOTOR_FLAG_ARM; c.session = 0; break;
-    case RANGE_RPM: c.setpoint = 2977; break;
-    case RANGE_FF: c.ff_ma = 6001; break;
+    case RANGE_RPM: c.setpoint = ESC_MAX_APPLICATION_SPEED_RPM + 1; break;
+    case RANGE_FF: c.ff_ma = ESC_IQMAX_A * 1000 + 1; break;
     case STALE: c.seq = (uint8_t)(seq - 1U); break;
     case AMBIGUOUS: c.seq = (uint8_t)(seq - 128U); break;
     case JUMP: c.seq = (uint8_t)(seq + 17U); break;
     case DUPLICATE: c.seq = seq; break;
     /* Range checks follow sequence checks: even broken conflict handling cannot start motion. */
-    case CONFLICT: c.seq = seq; c.setpoint = 2977; break;
+    case CONFLICT: c.seq = seq; c.setpoint = ESC_MAX_APPLICATION_SPEED_RPM + 1; break;
     case UNSUPPORTED: c.mode = MOTOR_MODE_CURRENT; break;
     default: break;
   }

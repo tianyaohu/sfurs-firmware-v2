@@ -52,12 +52,15 @@ Mat:
    and the same for vy and wz. Pass: every wheel has >= 4 accepted segments per direction and fit residual RMS < 20 % of Ic.
 2. `friction_map --out ... --breakaway --wheel all --rate-ma-s 2000 --cap-ma 4000 --reps 3`. Compare the breakaway
    currents with 2026-10-21 (3.3-4.7 A on the mat).
-3. Turn the fit into the Nucleo friction model (`ik_drive_ff_*`): this step is not tooled yet; decide then whether to set
-   it by hand for H6 or to add a tool option.
+3. Turn the fit into the Nucleo friction model: `move_test` / `keyboard_drive` take `--ff-coulomb-xy-n`,
+   `--ff-viscous-xy-n-per-mps`, `--ff-coulomb-w-nm`, `--ff-viscous-w-nm-per-radps`, `--ff-a-per-nm` (1/Kt) and
+   `--ff-scale FR,BR,BL,FL`. The fit is in wheel mA; with no Kt measured, use `--ff-a-per-nm 1` and give the forces in
+   "mA-equivalent" units only if the model maps them one to one; otherwise derive Kt from the datasheet first. Check one
+   keyboard_drive run with the values before H6.
 
 ## H6: final gate (mat)
 
-With ff on (from H5): 20 starts per axis/sign at the gate points (vx 0.72 m/s, vy 0.47 m/s, wz 4.8 rad/s), D-acceptance
+With ff on (from H5, `move_test ... --ff-*`): 20 starts per axis/sign at the gate points (vx 0.72 m/s, vy 0.47 m/s, wz 4.8 rad/s), D-acceptance
 rules, `startup_report` over all runs. Report counts, not percentages.
 
 ## Leave the hardware

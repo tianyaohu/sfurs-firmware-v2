@@ -57,8 +57,8 @@ Programs (one `targets/<tool>.cmake` each):
 |---|---|
 | `esc_update.c` | Install the ESC app over CAN or SWD, per wheel (logic in `lib/flashimg_*.c`) |
 | `esc_tool.c` | ESC setup: status, align, acknowledged CONFIG set/get, capture, spin, pulse, stop, clear |
-| `keyboard_drive.c` | WASD/QE drive |
-| `move_test.c` | Scripted straight-line moves, logged with monotonic stamps |
+| `keyboard_drive.c` | WASD/QE drive; optional Nucleo friction feed-forward (`--ff-*`) |
+| `move_test.c` | Scripted straight-line moves, logged with monotonic stamps; optional Nucleo friction feed-forward (`--ff-*`) |
 | `tune_ground.c` | Ground friction identification: breakaway and kinetic current per wheel |
 | `friction_map.c` | Guarded floor SPEED out-and-back friction map and CURRENT breakaway ramps; result.json |
 | `sweep.c` | Oblique out-and-back pulses for friction identification |
@@ -73,15 +73,15 @@ Library `lib/` (every file joins library `tools`):
 | `elfsym.c`, `crc32.c`, `sha256.c` | ELF symbol lookup, CRC-32 (IEEE, = zlib), SHA-256 |
 | `ik_link.c` | Nucleo mailbox: command words, current-mode mailbox helpers, CONFIG key names, telemetry and protocol-link decode, fault check, capture and recorder readout |
 | `esc_ctl.c` | Protocol v1 to single wheels while the drive is stopped: ARM handshake, SPEED, DISABLE, CLEAR_FAULT (frames from `motor_protocol.c`) |
-| `esc_ops.c`, `esc_defaults.c` | Breakaway timing, pulse guard and plan; ESC boot defaults from `drive_parameters.h` (generated header) |
+| `esc_ops.c`, `esc_defaults.c` | Breakaway timing, pulse guard and plan; ESC boot defaults and limits (max RPM, IQMAX) from `drive_parameters.h` (generated header) |
 | `ik_config.c` | Shared CONFIG v1 exchange: fresh per-wheel sequence/key matching, status and stored/effective readback |
-| `friction_fit.c` | Pure steady-segment rejection, per-direction Coulomb/viscous least squares and consecutive motion detection |
+| `friction_fit.c` | Pure steady-segment rejection, per-direction Coulomb/viscous least squares and motion confirmation over consecutive fresh telemetry reads |
 | `friction_run.c` | Guarded friction acquisition: plateau samples, current ramps, telemetry freshness/Vbus/speed checks and stop cleanup |
 | `pulse_run.c` | Run a plan through the Nucleo, guard it, log it, restore defaults |
 | `startup_metrics.c` | Pure startup acceptance measurements from recorder data: Hall sector, deadlines, direction, overshoot, wheel synchronisation |
 | `capture_analysis.c`, `tune_analysis.c` | Current-loop R/L/PI fit; friction currents, breakaway time, overshoot |
 | `flashimg_*.c` | ESC update checks (Vbus, flash vs ELF, bus readiness) and install flow |
-| `drive_*.c` | Keyboard control, record summary, staged drive helpers |
+| `drive_*.c` | Keyboard control, record summary, staged drive helpers, feed-forward options and mailbox write/clear |
 
 The overhead camera rig is a separate repository (history on branch `rig-split`). It meets
 these tools only through logs: both sides stamp `CLOCK_MONOTONIC` seconds, and the tools write each

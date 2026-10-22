@@ -43,7 +43,7 @@ int esc_ctl_arm(esc_ctl_t *ctl, int wheel);
 /** @brief Send SPEED, advancing the wheel sequence; call every <=40 ms.
  * @param ctl Control state; the drive must be stopped.
  * @param wheel Previously armed wheel, index 0..3.
- * @param rpm Mechanical motor/wheel speed, RPM, magnitude <=2976.
+ * @param rpm Mechanical motor/wheel speed, RPM, magnitude <= MAX_APPLICATION_SPEED_RPM (drive_parameters.h).
  * @return 0 on transmission, -1 with link->err otherwise; replies are read separately.
  */
 int esc_ctl_speed(esc_ctl_t *ctl, int wheel, int rpm);

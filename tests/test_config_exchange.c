@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "check.h"
 #include "ik_link.h"
+#include "gen_esc_defaults.h"
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -80,9 +81,9 @@ static void current_mailbox(void)
   ik_link_t link; CHECK_EQ(ik_link_open(&link, "FAKE", FAKE_ELF), 0);
   CHECK_EQ(ik_set_mode(&link, IK_MODE_CURRENT), 0);
   uint32_t value; CHECK_EQ(ik_read(&link, IK_MODE, &value), 0); CHECK_EQ(value, IK_MODE_CURRENT);
-  int32_t currents[] = {-7000, -300, 300, 7000};
+  int32_t currents[] = {-ESC_IQMAX_A * 1000 - 1, -300, 300, ESC_IQMAX_A * 1000 + 1};
   CHECK_EQ(ik_drive_current(&link, currents, true), 0);
-  int expected[] = {-6000, -300, 300, 6000};
+  int expected[] = {-ESC_IQMAX_A * 1000, -300, 300, ESC_IQMAX_A * 1000};
   for (int w = 0; w < 4; w++) {
     CHECK_EQ(ocd_read32(link.ocd, link.addr[IK_CURRENT_MA] + w * 4, &value), 0);
     CHECK_EQ((int32_t)value, expected[w]);

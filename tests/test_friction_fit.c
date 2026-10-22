@@ -81,16 +81,45 @@ static void fresh_consecutive_motion(void)
     CHECK(!friction_motion(&s, 2, -sign * 20, sign, 20));
     CHECK_EQ(s.streak, 0);
     CHECK(!friction_motion(&s, 3, sign * 20, sign, 20));
-    CHECK(!friction_motion(&s, 5, sign * 20, sign, 20)); /* gap resets */
-    CHECK(!friction_motion(&s, 6, sign * 20, sign, 20));
-    CHECK(friction_motion(&s, 7, sign * 20, sign, 20));
+    CHECK(!friction_motion(&s, 5, sign * 20, sign, 20)); /* advance by 2 still counts */
+    CHECK_EQ(s.streak, 2);
+    CHECK(friction_motion(&s, 6, sign * 20, sign, 20));
     CHECK(!friction_motion(&s, 8, NAN, sign, 20));
+    CHECK_EQ(s.streak, 0);
+  }
+}
+
+/* Host reads every 20+ ms see 1..3 new replies each; each fresh read is one observation. */
+static void motion_with_skipped_replies(void)
+{
+  for (int sign = -1; sign <= 1; sign += 2) {
+    friction_motion_t s = {100, 0};
+    CHECK(!friction_motion(&s, 101, sign * 25, sign, 20)); /* +1 */
+    CHECK(!friction_motion(&s, 104, sign * 25, sign, 20)); /* +3 */
+    CHECK(!friction_motion(&s, 104, sign * 25, sign, 20)); /* no new reply: unchanged */
+    CHECK_EQ(s.streak, 2);
+    CHECK(!friction_motion(&s, 104, 0, sign, 20)); /* stale read cannot reset either */
+    CHECK_EQ(s.streak, 2);
+    CHECK(friction_motion(&s, 107, sign * 25, sign, 20)); /* +3: third confirmation */
+
+    s = (friction_motion_t){100, 0};
+    CHECK(!friction_motion(&s, 103, sign * 25, sign, 20));
+    CHECK(!friction_motion(&s, 106, sign * 25, sign, 20));
+    CHECK(!friction_motion(&s, 109, sign * 19, sign, 20)); /* dip below threshold resets */
+    CHECK_EQ(s.streak, 0);
+    CHECK(!friction_motion(&s, 112, sign * 25, sign, 20));
+    CHECK(!friction_motion(&s, 115, -sign * 25, sign, 20)); /* wrong direction resets */
+    CHECK_EQ(s.streak, 0);
+    CHECK(!friction_motion(&s, 116, sign * 25, sign, 20));
+    CHECK(!friction_motion(&s, 119, sign * 20, sign, 20)); /* exactly at threshold counts */
+    CHECK(friction_motion(&s, 120, sign * 25, sign, 20));
   }
 }
 
 int main(void)
 {
   exact_and_signs(); residual_and_singular(); segment_rejection(); fresh_consecutive_motion();
-  puts("friction_fit: 4 test cases passed");
+  motion_with_skipped_replies();
+  puts("friction_fit: 5 test cases passed");
   return 0;
 }

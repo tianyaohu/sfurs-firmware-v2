@@ -1,6 +1,7 @@
 /* Exercise real control/mailbox code with scripted replies at the SWD boundary. */
 #include "check.h"
 #include "esc_ctl.h"
+#include "gen_esc_defaults.h"
 #include "motor_protocol.h"
 #include "startup_metrics.h"
 #include "drive_ops.h"
@@ -631,7 +632,7 @@ static void test_current_mailbox_helpers(void)
   reset();
   CHECK_EQ(ik_set_mode(&mailbox, IK_MODE_CURRENT), 0); CHECK_EQ(memory[IK_MODE][0], IK_MODE_CURRENT);
   const int32_t currents[] = {INT32_MIN, -500, 500, INT32_MAX};
-  const int32_t expected[] = {-6000, -500, 500, 6000};
+  const int32_t expected[] = {-ESC_IQMAX_A * 1000, -500, 500, ESC_IQMAX_A * 1000};
   CHECK_EQ(ik_drive_current(&mailbox, currents, true), 0);
   for (int w = 0; w < 4; w++) CHECK_EQ((int32_t)memory[IK_CURRENT_MA][w], expected[w]);
   CHECK_EQ(memory[IK_ENABLE][0], 1); CHECK_EQ(memory[IK_HEARTBEAT][0], 1);

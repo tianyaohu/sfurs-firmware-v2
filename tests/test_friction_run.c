@@ -2,6 +2,7 @@
 #include "check.h"
 #include "friction_run.h"
 #include "pulse_run.h"
+#include "gen_esc_defaults.h"
 #include <string.h>
 
 static double clock_s;
@@ -183,7 +184,7 @@ static void invalid_limits(void)
   CHECK_EQ(friction_speed_move(&l, (int32_t[]){0, 200, 0}, 1, &limits, out), -1);
   reset(); CHECK_EQ(friction_breakaway_run(&l, 16, 1, 2000, 4000, 20, &limits, b), -1);
   CHECK_EQ(friction_breakaway_run(&l, 15, 0, 2000, 4000, 20, &limits, b), -1);
-  CHECK_EQ(friction_breakaway_run(&l, 15, 1, 2000, 6001, 20, &limits, b), -1);
+  CHECK_EQ(friction_breakaway_run(&l, 15, 1, 2000, ESC_IQMAX_A * 1000 + 1, 20, &limits, b), -1);
   CHECK_EQ(friction_breakaway_run(&l, 15, 1, 1, 4000, 20, &limits, b), -1);
   CHECK_EQ(disables, 0); CHECK_EQ(current_commands, 0);
 }

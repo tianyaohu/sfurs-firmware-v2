@@ -11,6 +11,7 @@
 #include "check.h"
 #include "elfsym.h"
 #include "ik_link.h"
+#include "gen_esc_defaults.h"
 #include "motor_protocol.h"
 
 static void test_record_words(void)
@@ -34,7 +35,8 @@ static void test_capture_words(void)
   uint32_t w;
   CHECK_EQ(ik_capture_start_word(3000, &w), 0);
   CHECK_EQ(w, 0xC5U << 24 | 3000);
-  CHECK(ik_capture_start_word(6001, &w) != 0);
+  CHECK_EQ(ik_capture_start_word(ESC_IQMAX_A * 1000, &w), 0);
+  CHECK(ik_capture_start_word(ESC_IQMAX_A * 1000 + 1, &w) != 0);
   CHECK_EQ(ik_capture_read_word(3, 0, 1, &w), 0); /* info bank */
   CHECK_EQ(w, 0x3DU << 24 | 3U << 16 | 1U << 10);
   CHECK(ik_capture_read_word(2, 0, 1, &w) != 0);

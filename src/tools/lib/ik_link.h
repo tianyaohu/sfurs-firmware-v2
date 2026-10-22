@@ -295,7 +295,7 @@ enum { IK_MODE_SPEED = 0, IK_MODE_CURRENT = 1 };
  * @return 0, or -1 with l->err set.
  */
 int ik_set_mode(ik_link_t *l, unsigned mode);
-/** @brief Publish four q-current setpoints (mA, clamped to +/-6000), then bump heartbeat/enable.
+/** @brief Publish four q-current setpoints (mA, clamped to +/-IQMAX_A), then bump heartbeat/enable.
  * @param l Open mailbox link.
  * @param current_ma FR/BR/BL/FL q-current, mA.
  * @param enable false stops the session.
@@ -313,7 +313,7 @@ void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u);
  * @brief Run one current-loop step test on one wheel (IDLE, battery on) and read it back.
  * @param l        open mailbox link.
  * @param selector wheel select bit.
- * @param step_ma  step current, 0..6000 mA.
+ * @param step_ma  step current, 0..IQMAX_A*1000 mA.
  * @param header   receives the capture header (status, Vbus, count).
  * @param samples  ESC_CAPTURE_SAMPLES entries.
  * @return 0, or -1 with l->err set.

@@ -15,8 +15,17 @@ typedef struct { double hold_s, expiry_s[3]; int sign[3]; } drive_keys_t;
 typedef struct {
   int samples, trigger, peak_rpm;
 } drive_record_summary_t;
-/** @brief Per-wheel values of DRIVE_SETTING_KEYS, in each key's CONFIG unit. */
-typedef struct { int value[IK_WHEELS][DRIVE_KEYS]; } drive_settings_t;
+/** @brief Nucleo friction feed-forward mailbox words (ik_drive_ff_*, units of friction_ff.c
+ *  scaled to integers): forces mN, torques mN*m, 1/Kt mA per N*m, per-wheel trim %. */
+typedef struct {
+  bool enable;
+  int32_t coulomb_xy_mn, viscous_xy_mn_per_mps, coulomb_w_mnm, viscous_w_mnm_per_radps, a_per_nm_milli;
+  int32_t scale_pct[IK_WHEELS];
+} drive_ff_t;
+#define DRIVE_FF_SCALE_NOMINAL_PCT 100 /**< ik_drive_ff_scale_pct boot value (ik_drive.c) */
+/** @brief Per-wheel values of DRIVE_SETTING_KEYS, in each key's CONFIG unit, plus the
+ *  Nucleo feed-forward model the stage runs with (off unless a tool sets it). */
+typedef struct { int value[IK_WHEELS][DRIVE_KEYS]; drive_ff_t ff; } drive_settings_t;
 extern const char *const DRIVE_SETTING_KEYS[DRIVE_KEYS];
 /** @brief One staged run: telemetry, its analysis, fault names and lowest Vbus (V). */
 typedef struct {
@@ -58,7 +67,8 @@ int drive_preflight_rows(const ik_row_t before[4], const ik_row_t rows[4], doubl
  *  @param min_vbus_v lowest acceptable bus voltage, V
  *  @return 0 safe, -1 refused or link error (link->err set) */
 int drive_preflight(ik_link_t *link, double min_vbus_v);
-/** @brief Initialize every ground-tool tunable (DRIVE_SETTING_KEYS) from firmware defaults.
+/** @brief Initialize every ground-tool tunable (DRIVE_SETTING_KEYS) from firmware defaults;
+ *  feed-forward off (drive_ff_off).
  *  @param settings out: per-wheel values
  *  @return 0, or -1 when a default is missing */
 int drive_settings_defaults(drive_settings_t *settings);
@@ -73,6 +83,8 @@ int drive_setting_set(drive_settings_t *settings, const char *key, int value);
  *  @return a TUNE_* status */
 int drive_stage_analyze(drive_stage_t *stage);
 /** @brief Run through pulse_run, log monotonic timestamps, restore every setting.
+ *  After preflight it writes settings->ff (drive_ff_write, so it must be stopped), and
+ *  afterwards always switches feed-forward off again (drive_ff_clear).
  *  @param link        open mailbox link
  *  @param directory   output directory
  *  @param name        stage name; the log is <directory>/<name>.jsonl
@@ -113,7 +125,8 @@ void drive_json_string(FILE *f, const char *text);
  *  @param f     output
  *  @param value number; NaN or infinity writes null */
 void drive_json_number(FILE *f, double value);
-/** @brief Write all tunables, for one wheel or an array of four wheels.
+/** @brief Write all tunables, for one wheel or an array of four wheels; each object also
+ *  carries the feed-forward model as "ff" (drive_ff_json).
  *  @param f        output
  *  @param settings per-wheel values
  *  @param wheel    wheel index 0..3, or < 0 for all four */
@@ -163,4 +176,56 @@ int drive_parse(int argc, char **argv, drive_option *options, size_t count);
  *  @param options parsed option table
  *  @param count   entries in options */
 void drive_args_json(FILE *f, const drive_option *options, size_t count);
+
+/** @brief Feed-forward CLI arguments in SI units, before conversion to mailbox words. */
+typedef struct {
+  double coulomb_xy_n;           /**< translation Coulomb force, N */
+  double viscous_xy_n_per_mps;   /**< translation viscous force, N per m/s */
+  double coulomb_w_nm;           /**< yaw Coulomb torque, N*m */
+  double viscous_w_nm_per_radps; /**< yaw viscous torque, N*m per rad/s */
+  double a_per_nm;               /**< motor current per motor torque (1/Kt), A per N*m */
+  const char *scale_pct;         /**< "FR,BR,BL,FL" per-wheel trim, integer % */
+} drive_ff_args_t;
+/** @brief The six feed-forward options, for a tool's drive_option table. */
+#define DRIVE_FF_OPTIONS(a)                                                               \
+  DRIVE_OPT("ff-coulomb-xy-n", DOUBLE, &(a)->coulomb_xy_n),                               \
+  DRIVE_OPT("ff-viscous-xy-n-per-mps", DOUBLE, &(a)->viscous_xy_n_per_mps),               \
+  DRIVE_OPT("ff-coulomb-w-nm", DOUBLE, &(a)->coulomb_w_nm),                               \
+  DRIVE_OPT("ff-viscous-w-nm-per-radps", DOUBLE, &(a)->viscous_w_nm_per_radps),           \
+  DRIVE_OPT("ff-a-per-nm", DOUBLE, &(a)->a_per_nm), DRIVE_OPT("ff-scale", STRING, &(a)->scale_pct)
+/** @brief Usage text for DRIVE_FF_OPTIONS. */
+#define DRIVE_FF_USAGE                                                                      \
+  "  [--ff-coulomb-xy-n N --ff-viscous-xy-n-per-mps N --ff-coulomb-w-nm NM --ff-viscous-w-nm-per-radps NM\n" \
+  "   --ff-a-per-nm A_PER_NM --ff-scale FR,BR,BL,FL]  Nucleo friction feed-forward (SI units, scale %;\n" \
+  "   any of them turns it on and needs --ff-a-per-nm; it is switched off again on exit)"
+
+/** @brief Feed-forward off: every term zero, trims at their boot value.
+ *  @param ff out: mailbox words */
+void drive_ff_off(drive_ff_t *ff);
+/** @brief Convert the parsed DRIVE_FF_OPTIONS of a table to mailbox words.
+ *  Any ff option given enables the model; then --ff-a-per-nm (> 0) is required. Forces and
+ *  torques must be >= 0 and fit the int32 milli-unit words; trims are integers 1..200 %
+ *  (the firmware model switches off entirely if any trim is <= 0). Nothing given: drive_ff_off.
+ *  @param options parsed option table that contains DRIVE_FF_OPTIONS
+ *  @param count   entries in options
+ *  @param ff      out: mailbox words
+ *  @param err     out: reason on failure
+ *  @param errlen  size of err, bytes
+ *  @return 0, or -1 for an invalid value */
+int drive_ff_from_options(const drive_option *options, size_t count, drive_ff_t *ff, char *err, size_t errlen);
+/** @brief Write the feed-forward words while the drive is stopped: enable off first, then
+ *  the terms and trims, then the enable flag, so the Nucleo never runs a half-written model.
+ *  @param link open mailbox link
+ *  @param ff   mailbox words
+ *  @return 0, or -1 (link->err set) when not stopped or on a link error */
+int drive_ff_write(ik_link_t *link, const drive_ff_t *ff);
+/** @brief Switch feed-forward off (enable first) and restore every word to drive_ff_off.
+ *  Allowed in any drive state, since it only removes feed-forward.
+ *  @param link open mailbox link
+ *  @return 0, or -1 with link->err set */
+int drive_ff_clear(ik_link_t *link);
+/** @brief Write the model as JSON in SI units (N, N*m, A per N*m) and trims in %.
+ *  @param f  output
+ *  @param ff mailbox words */
+void drive_ff_json(FILE *f, const drive_ff_t *ff);
 #endif

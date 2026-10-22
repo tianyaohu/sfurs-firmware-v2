@@ -22,6 +22,12 @@
   Command-apply skew (new): PASS on all 30 starts, 793-1085 us (bar 2 ms).
   Same speed loop as before (Stage 2 keeps it), and the numbers match within the spread of 5 runs; wz+ median moved most
   (1.28 -> 1.39), to be watched in the mat runs.
+- On the mat (Nucleo d8c0609, 16.1 V, one `move_test` vy+ 0.47 m/s run, same flags): no wheel turned within 360 ms.
+  Iq followed its reference on all four (current loop fine); the speed PI's I term rose ~7.4 A/s to ~3 A total while the
+  wheels crept 1-2 Hall edges (static friction; earlier breakaway measurements 2.2-3.2 A). BL/FL broke away at
+  ~480 ms, then FR overshot to 450 RPM (tool abort at 238): wound-up I term after breakaway. The protocol did its part
+  (skew 1074 us, no misses, clean stop). This is the old speed loop, unchanged in Stage 2; the remaining mat runs were not
+  done, since every start would end the same way. Fix belongs to Stage 4a/5 (new loop, friction ff).
 - Not done yet (H2): reject reasons, watchdog 3 vs 4 lost frames, LOST disables all, 5 min without false trip, reply
   latency p99 and bus load (tools in progress), mat runs.
 - Data: /home/fh/sfurs_firmware/hw-data/2026-10-21-h2-raised/ (runs, log); spins in

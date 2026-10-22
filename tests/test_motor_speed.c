@@ -271,6 +271,7 @@ static void stall_ramp(void)
 static int bleed_at(int16_t r, unsigned span, unsigned k)
 {
   setup();
+  in.limit_counts = 20000; /* P alone must not saturate at 1000 RPM, or the stall ramp holds I at 0 */
   settle(r, 0);
   ticks(5);
   const int dir = r > 0 ? 1 : -1;
@@ -739,6 +740,22 @@ static void four_instances(void)
     }
 }
 
+/* (a) with a limit that drops while stuck (I2T): the integrator comes back within L - p - ff at once. */
+static void stall_ramp_limit_drop(void)
+{
+  for (int dir = -1; dir <= 1; dir += 2) {
+    setup();
+    settle((int16_t)(dir * 120), 0);
+    ticks(600);
+    CHECK(out.stall_ramp && dir * out.i_counts > 1632);
+    in.limit_counts = 1632; /* 3 A */
+    tick();
+    CHECK(out.stall_ramp);
+    CHECK(dir * out.i_counts <= 1632 - dir * (out.p_counts + out.ff_counts));
+    CHECK(dir * out.i_counts >= 0);
+  }
+}
+
 struct test_case {
   const char *name;
   void (*run)(void);
@@ -752,6 +769,7 @@ int main(int argc, char **argv)
     { "bleed_quantization", bleed_quantization }, { "reversal_clears", reversal_clears },
     { "ff_slew", ff_slew }, { "hold", hold }, { "stall_timer", stall_timer }, { "estimator", estimator },
     { "interpolation", interpolation }, { "four_instances", four_instances },
+    { "stall_ramp_limit_drop", stall_ramp_limit_drop },
   };
   unsigned ran = 0;
   for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {

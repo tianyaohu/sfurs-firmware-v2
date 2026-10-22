@@ -5,6 +5,7 @@
 #include "mc_config.h"
 #include "mc_config_common.h"
 #include "parameters_conversion.h"
+#include <string.h>
 
 /* I2T thermal model, values from the previous engineer's ea7b1a0 "Add I2T". */
 #define I2T_LIMIT_A2S 30.0f
@@ -51,11 +52,15 @@ volatile int16_t drive_align_angle;
 /* ISR -> tick mailbox for the 4-byte service commands. Each payload is one
  * word, published before its count. CONTROL frames go to drive_cmd instead. */
 static volatile uint32_t rx_align_count;
-/* CONFIG: one frame at a time (the sender waits for each reply); published before its count. */
-static volatile uint8_t rx_cfg_data[MOTOR_PROTOCOL_DLC];
-static volatile uint32_t rx_cfg_id, rx_cfg_count;
-static uint32_t seen_cfg;
-static uint8_t cfg_reply[MOTOR_PROTOCOL_DLC], cfg_reply_pending; /* tick -> poll */
+/* CONFIG frames (ISR -> tick) and their replies (tick -> main loop) pass through single-producer /
+ * single-consumer rings with release/acquire indices, so a frame or reply is never read while it is written.
+ * The sender waits for each reply; a second slot covers one overlapping request, more are dropped and counted. */
+#define CFG_SLOTS 2U
+static struct { uint8_t data[MOTOR_PROTOCOL_DLC]; uint32_t id; } cfg_in[CFG_SLOTS];
+static atomic_uint cfg_in_head, cfg_in_tail;
+static uint8_t cfg_out[CFG_SLOTS][MOTOR_PROTOCOL_DLC];
+static atomic_uint cfg_out_head, cfg_out_tail;
+static volatile uint32_t cfg_dropped; /* CONFIG frames or replies lost to a full ring */
 static volatile uint32_t rx_capture_word, rx_capture_count;
 static volatile uint32_t rx_read_word, rx_read_count;
 static volatile uint8_t status_pending, diag_pending, ident_pending;
@@ -121,9 +126,12 @@ void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length)
   }
   if ((id & MOTOR_CAN_ID_BASE_MASK) == MOTOR_CAN_ID_CONFIG) {
     if (length != MOTOR_PROTOCOL_DLC) return; /* no seq to answer */
-    for (uint32_t i = 0; i < MOTOR_PROTOCOL_DLC; ++i) rx_cfg_data[i] = data[i];
-    rx_cfg_id = id;
-    ++rx_cfg_count;
+    const unsigned head = atomic_load_explicit(&cfg_in_head, memory_order_relaxed);
+    const unsigned tail = atomic_load_explicit(&cfg_in_tail, memory_order_acquire);
+    if (head - tail >= CFG_SLOTS) { ++cfg_dropped; return; }
+    for (uint32_t i = 0; i < MOTOR_PROTOCOL_DLC; ++i) cfg_in[head % CFG_SLOTS].data[i] = data[i];
+    cfg_in[head % CFG_SLOTS].id = id;
+    atomic_store_explicit(&cfg_in_head, head + 1U, memory_order_release);
     return;
   }
   if (length != 4U) return;
@@ -513,8 +521,11 @@ static void config_frame(const uint8_t data[MOTOR_PROTOCOL_DLC], uint32_t id, in
   if (known) (void)config_read(c.key, &stored);
   r.stored = stored;
   r.effective = known && c.key == MOTOR_CFG_IQ_LIMIT_MA ? effective_limit_ma() : stored;
-  motor_config_reply_encode(&r, cfg_reply);
-  cfg_reply_pending = 1U; /* one at a time: a newer frame's reply replaces an unsent one */
+  const unsigned head = atomic_load_explicit(&cfg_out_head, memory_order_relaxed);
+  const unsigned tail = atomic_load_explicit(&cfg_out_tail, memory_order_acquire);
+  if (head - tail >= CFG_SLOTS) { ++cfg_dropped; return; }
+  motor_config_reply_encode(&r, cfg_out[head % CFG_SLOTS]);
+  atomic_store_explicit(&cfg_out_head, head + 1U, memory_order_release);
 }
 
 static uint8_t mc_state(uint16_t state)
@@ -653,7 +664,7 @@ void drive_app_tick(void)
   const uint16_t state = (uint16_t)MC_GetSTMStateMotor1();
   command_tick(state); /* first: a DISABLE in it cancels service requests queued before it */
   const uint8_t speed_mode = speed_tick(state);
-  const uint32_t align_count = rx_align_count, cfg_count = rx_cfg_count;
+  const uint32_t align_count = rx_align_count;
   const uint32_t capture_count = rx_capture_count, record_count = rx_record_count;
   align_tick(state);
   capture_tick(state);
@@ -676,11 +687,13 @@ void drive_app_tick(void)
     seen_record = record_count;
     record_begin(rx_record_word);
   }
-  if (cfg_count != seen_cfg) {
-    seen_cfg = cfg_count;
+  for (unsigned tail = atomic_load_explicit(&cfg_in_tail, memory_order_relaxed);
+       tail != atomic_load_explicit(&cfg_in_head, memory_order_acquire); ++tail) {
     uint8_t frame[MOTOR_PROTOCOL_DLC];
-    for (uint32_t i = 0; i < MOTOR_PROTOCOL_DLC; ++i) frame[i] = rx_cfg_data[i];
-    config_frame(frame, rx_cfg_id, service_allowed(state));
+    memcpy(frame, cfg_in[tail % CFG_SLOTS].data, sizeof frame);
+    const uint32_t id = cfg_in[tail % CFG_SLOTS].id;
+    atomic_store_explicit(&cfg_in_tail, tail + 1U, memory_order_release);
+    config_frame(frame, id, service_allowed(state));
   }
   i2t_tick(state);
   record_sample(speed_mode);
@@ -737,7 +750,11 @@ void drive_app_poll(int (*send)(uint32_t id, const uint8_t data[8]))
     if (!send(reply_id, data)) break;
     motor_cmd_reply_pop(&drive_cmd);
   }
-  if (cfg_reply_pending && send(MOTOR_CAN_ID_CONFIG_REPLY | MOTOR_CAN_ID, cfg_reply)) cfg_reply_pending = 0U;
+  for (unsigned tail = atomic_load_explicit(&cfg_out_tail, memory_order_relaxed);
+       tail != atomic_load_explicit(&cfg_out_head, memory_order_acquire); ++tail) {
+    if (!send(MOTOR_CAN_ID_CONFIG_REPLY | MOTOR_CAN_ID, cfg_out[tail % CFG_SLOTS])) break; /* FIFO full: next poll */
+    atomic_store_explicit(&cfg_out_tail, tail + 1U, memory_order_release);
+  }
   if (status_pending) {
     const int16_t rpm = speed_out.w_hat_rpm;
     const int16_t iq = measured_iq();

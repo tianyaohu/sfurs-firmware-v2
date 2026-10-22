@@ -262,6 +262,10 @@ static void drain(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
   for (; tail != head; ++tail) {
     const struct motor_cmd_rx_entry e = m->inbox[tail % MOTOR_CMD_INBOX];
     atomic_store_explicit(&m->inbox_tail, tail + 1U, memory_order_release);
+    /* The watchdog is judged at each frame's receive time too: a frame that arrives once the last command is
+     * already 100 ms old finds the wheel disarmed, even when the tick drains it in the same millisecond. */
+    if (armed(m->lifecycle) && (int32_t)(e.rx_ms - m->watch_ms) >= (int32_t)MOTOR_WATCHDOG_MS)
+      disarm(m, out, MOTOR_CMD_STOP_TIMEOUT); /* signed: a frame older than the last command is not an expiry */
     if (e.reason != MOTOR_R_NONE) { reply(m, in, e.c.seq, MOTOR_OUT_REJECTED, e.reason); continue; }
     /* Motion freshness is judged by receive time, never by when the tick got to it. A late
      * DISABLE still stops (the safe direction) and a late ARM only starts the watchdog clock. */
@@ -379,8 +383,9 @@ void motor_cmd_tick(struct motor_cmd *m, const struct motor_cmd_inputs *in, stru
       reply(m, in, c->seq, MOTOR_OUT_INHIBITED, m->latched);
     else if (c->setpoint != 0 && (m->lifecycle == MOTOR_LC_READY || m->lifecycle == MOTOR_LC_STARTING))
       reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_STARTING);
-    else if (c->mode == MOTOR_MODE_CURRENT && (c->setpoint > in->limit_ma || c->setpoint < -in->limit_ma))
-      reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_LIMITED); /* applied, clamped to the limit */
+    else if ((c->mode == MOTOR_MODE_CURRENT && (c->setpoint > in->limit_ma || c->setpoint < -in->limit_ma)) ||
+             (c->mode == MOTOR_MODE_SPEED && (c->ff_ma > in->limit_ma || c->ff_ma < -in->limit_ma)))
+      reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_LIMITED); /* applied, limited to the effective limit */
     else
       reply(m, in, c->seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
   }

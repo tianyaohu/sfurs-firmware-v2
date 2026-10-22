@@ -89,7 +89,8 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
   `MOTOR_PROTOCOL_PERIOD_MS` (a protocol constant, not a field). That reconstructs the Nucleo's slewed trajectory;
   acceleration limiting happens only on the Nucleo.
 - Command watchdog: age = now - receive time of the last accepted fresh motion frame (ISR timestamp, 1 ms). Trip at
-  age >= 100 ms: 3 lost frames are tolerated, a 4th trips. DISABLE, ARM, duplicates, rejects, CONFIG and polls do not
+  age >= 100 ms: 3 lost frames are tolerated, a 4th trips. The age is also checked at each frame's receive time, so a
+  frame arriving exactly at the deadline finds the wheel disarmed even when the tick drains it in the same millisecond. DISABLE, ARM, duplicates, rejects, CONFIG and polls do not
   refresh it. Trip action: output off, lifecycle DISARMED, new session, reason TIMEOUT.
 
 ## CONTROL_REPLY (8 bytes, one per received CONTROL frame of DLC 8)

@@ -93,7 +93,8 @@ Refined during implementation (2026-10-21); same guarantees as the approved draf
 
 - Counters (rejects, dropped replies, overflow) are ESC state, readable over SWD only.
 - CURRENT mode: the setpoint is the q-current, clamped to the effective limit (reply INHIBITED(LIMITED) when
-  clamped); no HOLD and no stall monitor in this mode; Hall loss still faults.
+  clamped); no HOLD and no stall monitor in this mode; Hall loss still faults. In SPEED mode a feed-forward above the
+  effective limit is likewise answered INHIBITED(LIMITED).
 
 ## Retired behaviour
 

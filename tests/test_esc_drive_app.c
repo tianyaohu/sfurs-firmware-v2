@@ -304,6 +304,22 @@ static void test_config_only_when_idle(void)
   CHECK(r.status == MOTOR_R_BAD_MODE && r.seq == 0x41 && r.key == MOTOR_CFG_SPEED_KP && r.stored == 5000);
   drive_app_can_rx(MOTOR_CAN_ID_CONFIG | MOTOR_CAN_ID, bad_op, 4); tick(1);
   frames = 0; drive_app_poll(send); CHECK(frames == 0);
+  /* two CONFIG frames before one tick: both applied and answered intact, in order; a third is dropped */
+  uint32_t id; uint8_t d1[8], d2[8], d3[8];
+  const struct motor_config c1 = { MOTOR_CONFIG_SET, 0x51, MOTOR_CFG_IQ_LIMIT_MA, 2000 };
+  const struct motor_config c2 = { MOTOR_CONFIG_SET, 0x52, MOTOR_CFG_SPEED_KP, 4096 };
+  const struct motor_config c3 = { MOTOR_CONFIG_SET, 0x53, MOTOR_CFG_SPEED_KI, 100 };
+  CHECK(motor_config_encode(&c1, MOTOR_CAN_ID, &id, d1) == MOTOR_R_NONE);
+  CHECK(motor_config_encode(&c2, MOTOR_CAN_ID, &id, d2) == MOTOR_R_NONE);
+  CHECK(motor_config_encode(&c3, MOTOR_CAN_ID, &id, d3) == MOTOR_R_NONE);
+  drive_app_can_rx(id, d1, 8); drive_app_can_rx(id, d2, 8); drive_app_can_rx(id, d3, 8);
+  tick(1); frames = 0; drive_app_poll(send);
+  struct motor_config_reply a, b;
+  CHECK(frames == 2 && frame_id[0] == (MOTOR_CAN_ID_CONFIG_REPLY | MOTOR_CAN_ID));
+  CHECK(motor_config_reply_decode(frame[0], 8, &a) == MOTOR_R_NONE && motor_config_reply_decode(frame[1], 8, &b) == MOTOR_R_NONE);
+  CHECK(a.seq == 0x51 && a.status == 0 && a.key == MOTOR_CFG_IQ_LIMIT_MA && a.stored == 2000);
+  CHECK(b.seq == 0x52 && b.status == 0 && b.key == MOTOR_CFG_SPEED_KP && b.stored == 4096);
+  CHECK(drive_app.iq_max_ma == 2000 && drive_speed.cfg.kp == 4096 && drive_speed.cfg.ki != 100);
 }
 
 static void test_stop_aborts_alignment(void)

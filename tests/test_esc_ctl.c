@@ -473,9 +473,8 @@ static void test_reject_vectors(void)
     {0x11, 0, 0, 0, 0, 0, 11, 0x3c},
     {0x11, 0, 0, 0, 0, 0, 250, 0x3c},
     {0x11, 0, 0xa1, 0x0b, 0, 0, 250, 0x3c},
-    {0x12, 0, 0, 0, 0, 0, 251, 0x3c},
   };
-  static const unsigned reasons[] = {1, 2, 3, 4, 5, 8, 7, 6, 6, 9, 10, 11, 0, 19, 21};
+  static const unsigned reasons[] = {1, 2, 3, 4, 5, 8, 7, 6, 6, 9, 10, 11, 0, 19};
   size_t count;
   const esc_reject_case_t *cases = esc_ctl_reject_cases(&count);
   CHECK_EQ(count, sizeof bytes / sizeof *bytes);

@@ -261,6 +261,7 @@ void motor_speed_tick(struct motor_speed *s, const struct motor_speed_inputs *in
     const int32_t cap = (L - dir * (p + ff)) * Q14;
     int32_t along = dir * s->i_q14;
     if (along < cap) along = along + s->stall_step_q14 < cap ? along + s->stall_step_q14 : cap;
+    else if (along > 0) along = cap > 0 ? cap : 0; /* the limit dropped (I2T): no stored excess for the breakaway */
     s->i_q14 = dir * along;
     out->stall_ramp = 1U;
   } else if (gained != 0U && dir * s->i_q14 > 0 && bleed_overspeed(s, r_abs)) {

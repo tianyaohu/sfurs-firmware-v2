@@ -173,7 +173,7 @@ int esc_ctl_disable(esc_ctl_t *c, int w)
 
 /* Invalid structural frames start with codec bytes, then corrupt only the field under test. */
 enum reject_kind { BAD_VERSION, BAD_MODE, BAD_FLAGS, RESERVED, BAD_SELECT, BAD_SESSION, NOT_ARMED,
-                   RANGE_RPM, RANGE_FF, STALE, AMBIGUOUS, JUMP, DUPLICATE, CONFLICT, UNSUPPORTED };
+                   RANGE_RPM, RANGE_FF, STALE, AMBIGUOUS, JUMP, DUPLICATE, CONFLICT };
 static int reject_frame(enum reject_kind kind, int w, uint8_t seq, uint8_t session, uint32_t *id, uint8_t data[8])
 {
   if (w < 0 || w >= IK_WHEELS) return -1;
@@ -188,7 +188,6 @@ static int reject_frame(enum reject_kind kind, int w, uint8_t seq, uint8_t sessi
     case DUPLICATE: c.seq = seq; break;
     /* Range checks follow sequence checks: even broken conflict handling cannot start motion. */
     case CONFLICT: c.seq = seq; c.setpoint = ESC_MAX_APPLICATION_SPEED_RPM + 1; break;
-    case UNSUPPORTED: c.mode = MOTOR_MODE_CURRENT; break;
     default: break;
   }
   if (motor_control_encode(&c, IK_WHEEL_SELECT[w], id, data) != MOTOR_R_NONE) return -1;
@@ -219,7 +218,6 @@ BUILDER(ambiguous, AMBIGUOUS)
 BUILDER(jump, JUMP)
 BUILDER(duplicate, DUPLICATE)
 BUILDER(conflict, CONFLICT)
-BUILDER(unsupported, UNSUPPORTED)
 #undef BUILDER
 
 const esc_reject_case_t *esc_ctl_reject_cases(size_t *count)
@@ -239,7 +237,6 @@ const esc_reject_case_t *esc_ctl_reject_cases(size_t *count)
     {"SEQ_JUMP", jump, MOTOR_OUT_REJECTED, MOTOR_R_SEQ_JUMP, false},
     {"DUPLICATE", duplicate, MOTOR_OUT_DUPLICATE, MOTOR_R_NONE, false},
     {"CONFLICT", conflict, MOTOR_OUT_REJECTED, MOTOR_R_CONFLICT, false},
-    {"UNSUPPORTED", unsupported, MOTOR_OUT_REJECTED, MOTOR_R_UNSUPPORTED, false},
   };
   *count = sizeof cases / sizeof *cases;
   return cases;

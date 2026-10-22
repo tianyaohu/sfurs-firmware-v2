@@ -84,6 +84,7 @@ static void setup(void)
   memset(&in, 0, sizeof in);
   in.now_ms = 1000U;
   in.aligned = 1U;
+  in.limit_ma = 6000; /* IQMAX: the effective limit a cool, configured ESC reports */
   seq = 10U;
   clear_acts();
 }
@@ -399,6 +400,37 @@ static void test_holds_at_zero_and_resumes(void)
 
 /* CURRENT mode: starts like SPEED, LIMITED above the effective limit (still applied, the caller clamps),
  * no mode change while running, and no HOLD at zero current (that is a legitimate command). */
+/* The watchdog is also judged at a frame's receive time: 99 ms after the last accepted motion it is still
+ * armed, at exactly 100 ms the frame finds it disarmed (4 lost 50 Hz frames trip), even in the same tick. */
+static void test_watchdog_at_receive_time(void)
+{
+  run_at(100);
+  speed(100); tick(); drain_replies(); /* last accepted motion, received at t0 */
+  ticks(98);
+  speed(100); tick(); /* received at t0 + 99 */
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
+  ticks(99);
+  clear_acts();
+  speed(100); tick(); /* received exactly 100 ms after the previous one */
+  const struct motor_reply r = next_reply();
+  CHECK_EQ(r.outcome, MOTOR_OUT_REJECTED);
+  CHECK_EQ(r.reason, MOTOR_R_NOT_ARMED);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_DISARMED);
+  CHECK(acts.stop && acts.stop_cause == MOTOR_CMD_STOP_TIMEOUT);
+}
+
+/* SPEED feed-forward above the effective limit is applied but limited, and says so. */
+static void test_speed_ff_limited(void)
+{
+  in.limit_ma = 3000;
+  run_at(100);
+  send(MOTOR_MODE_SPEED, 0, 100, 3000, ++seq, m.session, select_bit); tick();
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
+  send(MOTOR_MODE_SPEED, 0, 100, -3001, ++seq, m.session, select_bit); tick();
+  expect(seq, MOTOR_OUT_INHIBITED, MOTOR_R_LIMITED, MOTOR_LC_RUNNING);
+  CHECK(act.set_target && act.ff_ma == -3001);
+}
+
 static void test_current_mode(void)
 {
   const struct motor_cmd_config cfg = { .select = select_bit, .max_rpm = 2976, .max_ma = 6000,
@@ -563,6 +595,8 @@ static const struct { const char *name; void (*fn)(void); } cases[] = {
   { "mcsdk_leaving_run_faults", test_mcsdk_leaving_run_faults },
   { "speed_loop_faults", test_speed_loop_faults },
   { "current_mode", test_current_mode },
+  { "watchdog_at_receive_time", test_watchdog_at_receive_time },
+  { "speed_ff_limited", test_speed_ff_limited },
   { "holds_at_zero_and_resumes", test_holds_at_zero_and_resumes },
   { "capabilities_and_limits", test_capabilities_and_limits },
   { "not_aligned_and_busy", test_not_aligned_and_busy },

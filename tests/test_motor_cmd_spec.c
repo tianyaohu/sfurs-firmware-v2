@@ -36,6 +36,7 @@ static void init(struct fixture *f, uint32_t entropy)
   memset(f, 0, sizeof(*f));
   motor_cmd_init(&f->m, &cfg, entropy);
   f->in.aligned = 1;
+  f->in.limit_ma = 6000; /* IQMAX: the effective limit a cool, configured ESC reports */
   f->pending_mc = -1;
   EQ(f->m.lifecycle, MOTOR_LC_DISARMED);
   EXPECT(f->m.session != 0);

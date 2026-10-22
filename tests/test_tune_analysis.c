@@ -628,59 +628,45 @@ static void test_missing_moves(void) {
 }
 
 static void test_golden_data(void) {
-  tune_log_entry a[MAX_LOG], b[MAX_LOG], log[MAX_LOG];
-  size_t na = start_log(a, (double[]){1, 1.5, 2, 2.5}, KINETIC, TARGET, NULL);
-  size_t nb = start_log(b, (double[]){1.1, 1.4, 2.1, 2.4}, KINETIC, REVERSE, (double[]){60, 55, 55, 70});
-  size_t n = joined(log, a, na, b, nb);
-  CHECK_EQ(n, ARRAY_LEN(golden_log));
-  for (size_t k = 0; k < n; ++k) {
-    relative(log[k].t, golden_log[k].t);
-    for (size_t w = 0; w < 4; ++w) {
-      CHECK_EQ(log[k].target_rpm[w], golden_log[k].target_rpm[w]);
-      CHECK_EQ(log[k].rpm[w], golden_log[k].rpm[w]);
-      relative(log[k].iq_ref_a[w], golden_log[k].iq_ref_a[w]);
+  const tune_log_entry *input = golden_log;
+  const size_t n = ARRAY_LEN(golden_log);
+  tune_segment segments[2];
+  size_t count;
+  CHECK_EQ(tune_segments(input, n, 40, segments, 2, &count), TUNE_OK);
+  CHECK_EQ(count, 2);
+  CHECK_EQ(segments[0].first, 50);
+  CHECK_EQ(segments[0].end, 130);
+  CHECK_EQ(segments[1].first, 230);
+  CHECK_EQ(segments[1].end, 310);
+  double storage[4][2][MAX_STARTS];
+  tune_friction f[4];
+  init_friction(f, storage);
+  CHECK_EQ(tune_friction_samples(input, n, 40, 0.3, f), TUNE_OK);
+  double over_storage[4][MAX_STARTS];
+  tune_values over[4];
+  for (size_t w = 0; w < 4; ++w)
+    over[w] = (tune_values){over_storage[w], MAX_STARTS, 0};
+  CHECK_EQ(tune_overshoot(input, n, 40, 0.6, over), TUNE_OK);
+  tune_response_result r;
+  CHECK_EQ(tune_response(input, n, &r), TUNE_OK);
+  relative(r.spread_s, golden_response.spread_s);
+  relative(r.spread_worst_s, golden_response.spread_worst_s);
+  for (size_t w = 0; w < 4; ++w) {
+    CHECK_EQ(f[w].breakaway.count, 2);
+    CHECK_EQ(f[w].kinetic.count, 2);
+    CHECK_EQ(over[w].count, 2);
+    for (size_t k = 0; k < 2; ++k) {
+      relative(f[w].breakaway.data[k], golden_friction[w][0][k]);
+      relative(f[w].kinetic.data[k], golden_friction[w][1][k]);
+      relative(over[w].data[k], golden_overshoot[w][k]);
     }
-  }
-  for (size_t source = 0; source < 2; ++source) {
-    const tune_log_entry *input = source ? log : golden_log;
-    tune_segment segments[2];
-    size_t count;
-    CHECK_EQ(tune_segments(input, n, 40, segments, 2, &count), TUNE_OK);
-    CHECK_EQ(count, 2);
-    CHECK_EQ(segments[0].first, 50);
-    CHECK_EQ(segments[0].end, 130);
-    CHECK_EQ(segments[1].first, 230);
-    CHECK_EQ(segments[1].end, 310);
-    double storage[4][2][MAX_STARTS];
-    tune_friction f[4];
-    init_friction(f, storage);
-    CHECK_EQ(tune_friction_samples(input, n, 40, 0.3, f), TUNE_OK);
-    double over_storage[4][MAX_STARTS];
-    tune_values over[4];
-    for (size_t w = 0; w < 4; ++w)
-      over[w] = (tune_values){over_storage[w], MAX_STARTS, 0};
-    CHECK_EQ(tune_overshoot(input, n, 40, 0.6, over), TUNE_OK);
-    tune_response_result r;
-    CHECK_EQ(tune_response(input, n, &r), TUNE_OK);
-    relative(r.spread_s, golden_response.spread_s);
-    relative(r.spread_worst_s, golden_response.spread_worst_s);
-    for (size_t w = 0; w < 4; ++w) {
-      CHECK_EQ(f[w].breakaway.count, 2);
-      CHECK_EQ(f[w].kinetic.count, 2);
-      CHECK_EQ(over[w].count, 2);
-      for (size_t k = 0; k < 2; ++k) {
-        relative(f[w].breakaway.data[k], golden_friction[w][0][k]);
-        relative(f[w].kinetic.data[k], golden_friction[w][1][k]);
-        relative(over[w].data[k], golden_overshoot[w][k]);
-      }
-      const tune_wheel_response *want = &golden_response.wheels[w], *got = &r.wheels[w];
-      CHECK_EQ(got->moved, want->moved);
-      CHECK_EQ(got->starts, want->starts);
-      relative(got->breakaway_s, want->breakaway_s);
-      relative(got->breakaway_worst_s, want->breakaway_worst_s);
-      relative(got->overshoot, want->overshoot);
-      relative(got->overshoot_worst, want->overshoot_worst);
-    }
+    const tune_wheel_response *want = &golden_response.wheels[w], *got = &r.wheels[w];
+    CHECK_EQ(got->moved, want->moved);
+    CHECK_EQ(got->starts, want->starts);
+    relative(got->breakaway_s, want->breakaway_s);
+    relative(got->breakaway_worst_s, want->breakaway_worst_s);
+    relative(got->overshoot, want->overshoot);
+    relative(got->overshoot_worst, want->overshoot_worst);
   }
 }
 

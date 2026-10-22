@@ -3,12 +3,7 @@
  * FDCAN_GlobalTypeDef and CubeG4 HAL SRAMCAN_RF0SA/RF0_SIZE.
  * No transmit path, motor timers, interrupts, or heap. */
 #include "can_boot.h"
-#ifdef ESC_BLINK_CAN_TEST
-extern volatile uint32_t *esc_can_test_reg(uint32_t address);
-#define REG(address) (*esc_can_test_reg(address))
-#else
 #define REG(address) (*(volatile uint32_t *)(uintptr_t)(address))
-#endif
 #define CAN 0x40006400U
 #define GPIOA 0x48000000U
 #define GPIOB 0x48000400U

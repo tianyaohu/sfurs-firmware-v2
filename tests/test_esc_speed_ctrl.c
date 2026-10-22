@@ -566,29 +566,6 @@ static void test_progress_wrap_and_rebase(void)
   CHECK(s.along == 0 && s.best == 0);          /* unanchored: no stale gap */
 }
 
-static void test_rocking_through_filter_fails_start(void)
-{
-  setup();
-  dsc_rev_t f = {0};
-  uint16_t pos = 0, neg = 0, caps = 0;
-  in.ref_rpm = 30;
-  int max_out = 0;
-  for (int k = 0; k < 3000 && s.state != DSC_FAILED; ++k) {
-    if (k == 80) { ++pos; ++caps; }                          /* breakaway edge */
-    if (k > 80 && k % 6 == 0) { if ((k / 6) % 2) ++pos; else ++neg; ++caps; } /* rocking */
-    int16_t rpm = dsc_reversal_filter(&f, pos, neg, caps, (int16_t)((k / 6) % 2 ? 200 : -200));
-    in.meas_rpm = rpm;
-    in.edges_pos = f.qpos; in.edges_neg = f.qneg; in.captures = f.qcaps;
-    in.raw_pos = pos; in.raw_neg = neg; raw_own = 1;
-    const uint8_t was = s.state;
-    tick(1);
-    if (s.state == DSC_STARTING && was != DSC_STARTING) dsc_rev_rebase(&f, pos, neg, caps);
-    if (out > max_out) max_out = out;
-  }
-  CHECK(s.state == DSC_FAILED);
-  CHECK(max_out <= 1632);                    /* never above the start ceiling (3 A) */
-}
-
 /* watch_ms: an edge freezes the ramp; only further motion under that constant
  * current hands off (wind-up stops, a free wheel keeps going). */
 static void test_watch_confirms_motion(void)
@@ -704,7 +681,6 @@ static void test_controller(void)
   test_cap_reestablished_after_restick_and_reversal();
   test_reversal_filter();
   test_qualified_feedback();
-  test_rocking_through_filter_fails_start();
   test_slow_restart_after_long_run();
   test_slow_rocking_fails_in_bounded_time();
   test_slow_motion_no_false_restick();

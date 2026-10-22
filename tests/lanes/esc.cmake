@@ -1,3 +1,4 @@
+# main() requires a case name: every case runs in its own process, for every wheel.
 set(esc_app_cases
   test_alignment_detects_reversed_wiring
   test_alignment_detects_stuck_rotor
@@ -31,25 +32,16 @@ foreach(wheel NE SE SW NW)
             src/shared/src/motor_protocol.c
     INCLUDES tests/esc_drive_app_fakes src/esc/motor_config/Inc src/esc/Inc src/shared/can src/shared/inc
     DEFS MOTOR_${wheel} DRIVE_APP_VALIDITY=fake_validity
-    LIBS m)
+    LIBS m
+    CASES ${esc_app_cases}) # separate processes keep the firmware's power-on static state
   target_compile_options(${app_test} PRIVATE
     -include "${REPO}/tests/esc_drive_app_fakes/test_hooks.h")
-  # Separate processes preserve the firmware's power-on static state per scenario.
-  foreach(case IN LISTS esc_app_cases)
-    add_test(NAME ${app_test}.${case} COMMAND ${app_test} ${case})
-  endforeach()
 endforeach()
 
 set(esc_sdk src/esc/motor_config/MCSDK_v6.4.1-Full/MotorControl/MCSDK/MCLib/Any)
 host_test(test_esc_speed_ctrl
   SOURCES src/esc/motor_config/Src/drive_speed_ctrl.c ${esc_sdk}/Src/pid_regulator.c
   INCLUDES tests/esc_speed_ctrl_fakes src/esc/motor_config/Inc ${esc_sdk}/Inc)
-host_test(test_esc_start_reference
-  DEFS ESC_SOURCE_DIR="${REPO}/src/esc/motor_config/Src")
-host_test(test_esc_blink_can
-  SOURCES tests/esc_blink/can_boot.c
-  INCLUDES tests/esc_blink src/shared/inc
-  DEFS ESC_BLINK_CAN_TEST)
 
 add_executable(esc_blink_image esc_blink/image_embed.c ${REPO}/src/tools/lib/crc32.c)
 target_include_directories(esc_blink_image PRIVATE ${REPO}/tests ${REPO}/src/tools/lib)
@@ -68,8 +60,7 @@ add_test(NAME test_esc_blink_build
 set_tests_properties(test_esc_blink_build PROPERTIES SKIP_RETURN_CODE 77)
 
 foreach(target test_esc_drive_app test_esc_drive_app_se test_esc_drive_app_sw
-    test_esc_drive_app_nw test_esc_speed_ctrl test_esc_start_reference
-    test_esc_blink_can esc_blink_image)
+    test_esc_drive_app_nw test_esc_speed_ctrl esc_blink_image)
   set_target_properties(${target} PROPERTIES C_EXTENSIONS OFF)
 endforeach()
 

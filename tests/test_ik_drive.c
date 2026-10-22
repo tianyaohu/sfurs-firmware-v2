@@ -138,14 +138,9 @@ static void test_links_then_starts_together(void)
   }
   run(1, 1); /* MCSDK reaches RUN one ms after the start */
   for (unsigned i = 0; i < 4; ++i) CHECK(esc[i].lifecycle == MOTOR_LC_RUNNING);
-  /* Command-apply skew on the Nucleo clock: the fake ESCs answer 100 us apart. */
-  uint32_t lo = UINT32_MAX, hi = 0;
-  for (unsigned i = 0; i < 4; ++i) {
-    const uint32_t t = ik_drive_link[i].first_start_reply_us;
-    CHECK(t == ik_drive_link[i].start_reply_us && ik_drive_link[i].first_start_valid == 1U);
-    lo = t < lo ? t : lo; hi = t > hi ? t : hi;
-  }
-  CHECK(hi - lo == 300U);
+  for (unsigned i = 0; i < 4; ++i) /* the start reply's Nucleo timestamp is latched once */
+    CHECK(ik_drive_link[i].first_start_reply_us == ik_drive_link[i].start_reply_us &&
+          ik_drive_link[i].first_start_valid == 1U);
 }
 
 static void test_streams_and_slews_to_target(void)

@@ -28,7 +28,21 @@
   ~480 ms, then FR overshot to 450 RPM (tool abort at 238): wound-up I term after breakaway. The protocol did its part
   (skew 1074 us, no misses, clean stop). This is the old speed loop, unchanged in Stage 2; the remaining mat runs were not
   done, since every start would end the same way. Fix belongs to Stage 4a/5 (new loop, friction ff).
-- Not done yet (H2): reject reasons, watchdog 3 vs 4 lost frames, LOST disables all, 5 min without false trip, reply
-  latency p99 and bus load (tools in progress), mat runs.
+- H2 protocol checks on the mat, no motion (tools 7151aaa, Nucleo d8c0609):
+  - `esc_tool reject W`, all four wheels: 17/17 checks each (16 cases + the second row of BAD_SELECT): BAD_VERSION,
+    BAD_MODE, BAD_FLAGS, RESERVED_NONZERO, BAD_SELECT, BAD_SESSION, NOT_ARMED, OUT_OF_RANGE (rpm, ff), STALE,
+    SEQ_AMBIGUOUS, SEQ_JUMP, DUPLICATE, CONFLICT, UNSUPPORTED, INHIBITED/FF_UNUSED, each seen at the Nucleo with the
+    expected outcome, reason and lifecycle. Not produced from outside in Stage 2: MODE_CHANGE, LIMITED, NOT_ALIGNED
+    (shifts baked), FAULT_HALL_LOST (Stage 4a), TIMEOUT as a reject, LIFECYCLE_OVERFLOW, BAD_LENGTH (no reply by
+    design), and STARTING/BUSY/FAULT_STALL/NOT_IDLE (need motion or a real fault).
+  - Watchdog, `esc_tool spin W --rpm 0 --gap-ms N`, gap measured between Nucleo reply stamps: no trip at 72 and
+    91-93 ms (all four wheels at ~92 ms), trip (REJECTED NOT_ARMED, DISARMED, new session) from 103 ms (all four at
+    171 ms). 3 lost frames (80 ms) never trip, 4 (100 ms) do; finer gaps than ~10 ms are not placeable from the PC.
+  - `esc_tool stream --seconds 300`: per wheel 15044 replies to 15044 frames, tx_fail 0, fault word 0, 1 reject per
+    wheel (the session-0 ARM probe). Reply latency (Nucleo tick to reply, 250 us bins, upper edges) p50/p99:
+    FR 1.50/2.00, BR 2.00/2.25, BL 2.25/2.75, FL 2.50/2.75 ms; exact max 1.94/2.77/2.68/2.79 ms. Rising in send order
+    (frames queue FR, BR, BL, FL), which is the ~1 ms apply skew. Bus load ~19.6 % of 500 kbit/s (130 bits per 8-byte
+    frame, 100 per 4-byte poll; 120357 frames received, 60167 sent + ~60060 polls in 300.3 s).
+- Not done yet (H2): LOST disables all four on hardware (host-tested only), remaining mat runs (skipped, see design log).
 - Data: /home/fh/sfurs_firmware/hw-data/2026-10-21-h2-raised/ (runs, log); spins in
   /home/fh/sfurs_firmware/hw-data/2026-10-21-stage0-baseline/new_spin_*.jsonl.

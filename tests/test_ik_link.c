@@ -147,6 +147,25 @@ static void test_mailbox_over_fake_openocd(void)
   /* A frame never completes: raw_done stays 7, expected 8. */
   CHECK(ik_send_raw(&l, CAPTURE, 1, 0.05) != 0);
   CHECK(strstr(l.err, "not sent"));
+  /* Read the real cumulative-counter decoder through fake SWD, without simulating ESC behaviour. */
+  uint32_t rx_addr;
+  CHECK_EQ(elfsym_lookup(FAKE_ELF, "can_rx_frame_count", &rx_addr, NULL), 0);
+  CHECK_EQ(ocd_write32(l.ocd, rx_addr, UINT32_MAX), 0);
+  CHECK_EQ(ik_write(&l, IK_TX_COUNT, 123), 0); CHECK_EQ(ik_write(&l, IK_TX_FAIL, 2), 0);
+  for (int w = 0; w < IK_WHEELS; w++) {
+    for (int b = 0; b < IK_LAT_BINS; b++)
+      CHECK_EQ(ocd_write32(l.ocd, l.addr[IK_REPLY_LAT_HIST] + (uint32_t)(w * IK_LAT_BINS + b) * 4U,
+                           (uint32_t)(w * 100 + b)), 0);
+    CHECK_EQ(ocd_write32(l.ocd, l.addr[IK_REPLY_LAT_MAX_US] + (uint32_t)w * 4U, (uint32_t)(w + 1) * 1000U), 0);
+  }
+  ik_counters_t counters;
+  CHECK_EQ(ik_counters(&l, rx_addr, &counters), 0);
+  CHECK_EQ(counters.tx_count, 123); CHECK_EQ(counters.tx_fail, 2); CHECK_EQ(counters.can_rx, UINT32_MAX);
+  CHECK_EQ(counters.fault, 0xa5);
+  for (int w = 0; w < IK_WHEELS; w++) {
+    CHECK(counters.rows[w].valid); CHECK_EQ(counters.max_us[w], (uint32_t)(w + 1) * 1000U);
+    for (int b = 0; b < IK_LAT_BINS; b++) CHECK_EQ(counters.hist[w][b], (uint32_t)(w * 100 + b));
+  }
   ik_link_close(&l);
 
   /* raw frames are refused unless the drive is STOPPED */

@@ -438,8 +438,125 @@ static void test_report_skew(void)
   CHECK_EQ(unlink(path), 0); CHECK_EQ(rmdir(dir), 0);
 }
 
+static void test_reject_vectors(void)
+{
+  /* Literal wire bytes: protocol.md CONTROL layout, structural validation and sequence golden vectors.
+   * Baseline is SPEED 0, seq 250, session 0x3c. */
+  static const uint8_t bytes[][8] = {
+    {0x21, 0, 0, 0, 0, 0, 251, 0x3c},
+    {0x13, 0, 0, 0, 0, 0, 251, 0x3c},
+    {0x11, 1, 0, 0, 0, 0, 251, 0x3c},
+    {0x11, 4, 0, 0, 0, 0, 251, 0x3c},
+    {0x11, 0, 0, 0, 0, 0, 251, 0x3c},
+    {0x10, 1, 0, 0, 0, 0, 251, 0},
+    {0x11, 0, 0, 0, 0, 0, 251, 0x3c},
+    {0x11, 0, 0xa1, 0x0b, 0, 0, 251, 0x3c},
+    {0x11, 0, 0, 0, 0x71, 0x17, 251, 0x3c},
+    {0x11, 0, 0, 0, 0, 0, 249, 0x3c},
+    {0x11, 0, 0, 0, 0, 0, 122, 0x3c},
+    {0x11, 0, 0, 0, 0, 0, 11, 0x3c},
+    {0x11, 0, 0, 0, 0, 0, 250, 0x3c},
+    {0x11, 0, 0xa1, 0x0b, 0, 0, 250, 0x3c},
+    {0x12, 0, 0, 0, 0, 0, 251, 0x3c},
+    {0x11, 0, 0, 0, 0xf4, 1, 251, 0x3c},
+  };
+  static const unsigned reasons[] = {1, 2, 3, 4, 5, 8, 7, 6, 6, 9, 10, 11, 0, 19, 21, 18};
+  size_t count;
+  const esc_reject_case_t *cases = esc_ctl_reject_cases(&count);
+  CHECK_EQ(count, sizeof bytes / sizeof *bytes);
+  for (int w = 0; w < 4; w++) for (size_t k = 0; k < count; k++) {
+    uint32_t id;
+    uint8_t data[8];
+    CHECK_EQ(cases[k].build(w, 250, 0x3c, &id, data), 0);
+    CHECK_EQ(memcmp(data, bytes[k], 8), 0);
+    CHECK_EQ(id, 0x10U | (1U << w) | (k == 4 ? 1U << ((w + 1) % 4) : 0));
+    CHECK_EQ(cases[k].reason, reasons[k]);
+    CHECK_EQ(cases[k].outcome, k == 12 ? 4 : k == 15 ? 1 : 3);
+    CHECK_EQ(cases[k].disarmed, k == 6);
+    struct motor_control c;
+    CHECK_EQ(motor_control_decode(id, data, 8, &c), k < 5 ? reasons[k] : 0);
+    CHECK_EQ(cases[k].build(w, 255, 1, &id, data), 0);
+    CHECK_EQ(data[6], k == 9 ? 254 : k == 10 ? 127 : k == 11 ? 16 : k == 12 || k == 13 ? 255 : 0);
+  }
+  uint32_t id;
+  uint8_t data[8];
+  CHECK(cases[0].build(-1, 0, 1, &id, data) != 0);
+  CHECK(cases[0].build(4, 0, 1, &id, data) != 0);
+}
+
+static void test_h2_arithmetic(void)
+{
+  uint64_t hist[IK_LAT_BINS] = {0};
+  esc_latency_t s = esc_ctl_latency(hist);
+  CHECK_EQ(s.count, 0); CHECK_EQ(s.p50_us, 0); CHECK_EQ(s.p99_us, 0); CHECK_EQ(s.max_us, 0);
+  for (int b = 0; b < IK_LAT_BINS; b++) {
+    memset(hist, 0, sizeof hist); hist[b] = 1;
+    s = esc_ctl_latency(hist);
+    uint32_t edge = b == 15 ? UINT32_MAX : (uint32_t)(b + 1) * 250;
+    CHECK_EQ(s.count, 1); CHECK_EQ(s.p50_us, edge); CHECK_EQ(s.p99_us, edge); CHECK_EQ(s.max_us, edge);
+  }
+  memset(hist, 0, sizeof hist); hist[0] = 50; hist[14] = 49; hist[15] = 1;
+  s = esc_ctl_latency(hist);
+  CHECK_EQ(s.count, 100); CHECK_EQ(s.p50_us, 250); CHECK_EQ(s.p99_us, 3750); CHECK_EQ(s.max_us, UINT32_MAX);
+  hist[0] = 49; hist[14] = 49; hist[15] = 2;
+  s = esc_ctl_latency(hist); CHECK_EQ(s.p50_us, 3750); CHECK_EQ(s.p99_us, UINT32_MAX);
+  memset(hist, 0, sizeof hist); hist[2] = (uint64_t)UINT32_MAX + 2;
+  s = esc_ctl_latency(hist); CHECK_EQ(s.count, (uint64_t)UINT32_MAX + 2); CHECK_EQ(s.p99_us, 750);
+  CHECK_NEAR(esc_ctl_bus_load(400, 200, 1), 14.4, 1e-9);
+  CHECK_NEAR(esc_ctl_bus_load(800, 400, 2), 14.4, 1e-9);
+  CHECK_NEAR(esc_ctl_bus_load(0, 200, 1), 4, 1e-9);
+  CHECK_NEAR(esc_ctl_bus_load(0, 0, 1), 0, 1e-9);
+  CHECK_EQ(esc_ctl_bus_load(1, 1, 0), 0); CHECK_EQ(esc_ctl_bus_load(1, 1, -1), 0);
+  uint32_t per_wheel;
+  CHECK_EQ(esc_ctl_stream_tx(403, &per_wheel), 0); CHECK_EQ(per_wheel, 103);
+  CHECK_EQ(esc_ctl_stream_tx(3, &per_wheel), 0); CHECK_EQ(per_wheel, 3);
+  CHECK(esc_ctl_stream_tx(0, &per_wheel) != 0); CHECK(esc_ctl_stream_tx(402, &per_wheel) != 0);
+}
+
+static void test_counter_snapshot(void)
+{
+  reset();
+  memory[IK_TX_COUNT][0] = UINT32_MAX - 2U;
+  memory[IK_TX_FAIL][0] = 7;
+  memory[IK_FAULT][0] = 0x21;
+  /* A separate fake SWD word stands in for the ELF-resolved RX counter address. */
+  memory[IK_BAD_INPUT][0] = UINT32_MAX;
+  for (int w = 0; w < IK_WHEELS; w++) {
+    memory[IK_LINK][w * IK_LINK_WORDS + 10] = (uint32_t)w + 100;
+    memory[IK_REPLY_LAT_MAX_US][w] = (uint32_t)w * 1000;
+    for (int b = 0; b < IK_LAT_BINS; b++) memory[IK_REPLY_LAT_HIST][w * IK_LAT_BINS + b] = (uint32_t)(w * 100 + b);
+    ik_link_row_t row;
+    CHECK_EQ(ik_link_row(&mailbox, w, &row), 0); CHECK(row.valid); CHECK_EQ(row.reply_count, (uint32_t)w + 100);
+  }
+  ik_counters_t before, after;
+  CHECK_EQ(ik_counters(&mailbox, mailbox.addr[IK_BAD_INPUT], &before), 0);
+  CHECK_EQ(before.tx_count, UINT32_MAX - 2U); CHECK_EQ(before.tx_fail, 7); CHECK_EQ(before.fault, 0x21);
+  CHECK_EQ(before.can_rx, UINT32_MAX);
+  for (int w = 0; w < IK_WHEELS; w++) {
+    CHECK_EQ(before.max_us[w], (uint32_t)w * 1000); CHECK_EQ(before.rows[w].reply_count, (uint32_t)w + 100);
+    for (int b = 0; b < IK_LAT_BINS; b++) CHECK_EQ(before.hist[w][b], (uint32_t)(w * 100 + b));
+  }
+  memory[IK_BAD_INPUT][0] = 1;
+  memory[IK_TX_COUNT][0] = 2;
+  memory[IK_REPLY_LAT_HIST][0] = UINT32_MAX;
+  CHECK_EQ(ik_counters(&mailbox, mailbox.addr[IK_BAD_INPUT], &after), 0);
+  CHECK_EQ((uint32_t)(after.tx_count - before.tx_count), 5);
+  CHECK_EQ((uint32_t)(after.can_rx - before.can_rx), 2);
+  CHECK_EQ(after.hist[0][0], UINT32_MAX);
+  ik_link_row_t row;
+  CHECK(ik_link_row(&mailbox, -1, &row) != 0); CHECK(ik_link_row(&mailbox, 4, &row) != 0);
+  for (int w = 0; w < IK_WHEELS; w++) {
+    tear_wheel = w; tear_reads = 3;
+    CHECK(ik_counters(&mailbox, mailbox.addr[IK_BAD_INPUT], &after) != 0);
+    CHECK(strstr(mailbox.err, IK_WHEEL_POS[w]));
+  }
+  fail_sym = IK_REPLY_LAT_HIST;
+  CHECK(ik_counters(&mailbox, mailbox.addr[IK_BAD_INPUT], &after) != 0);
+}
+
 int main(void)
 {
+  test_reject_vectors(); test_h2_arithmetic(); test_counter_snapshot();
   test_arm_speed_disable(); test_arm_failures(); test_spin_stops(); test_clear(); test_raw_mailbox();
   test_link_rows_faults(); test_wrapping_skew(); test_report_skew(); test_drive_fault_stops();
   puts("esc_ctl: all tests passed");

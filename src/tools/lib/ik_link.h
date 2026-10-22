@@ -22,6 +22,7 @@
 #define IK_CAPTURE_READ_MAX 32U
 #define IK_ROW_WORDS 19
 #define IK_LINK_WORDS 19
+#define IK_LAT_BINS 16
 #define IK_LINK_NONE 0xFFU
 #define IK_DEFAULT_SN "002200364142500620353451"
 #define IK_DEFAULT_ELF "build/drive/sfurs_firmware_v2_CM7.elf"
@@ -39,7 +40,7 @@ typedef enum {
   IK_TELEM, IK_CAPTURE, IK_RAW_DATA_HI, IK_RAW_LEN, IK_CLEAR_SEQ, IK_CLEAR_DONE,
   IK_FAULT, IK_ARMED, IK_LINK, IK_FF_ENABLE, IK_FF_COULOMB_XY_MN,
   IK_FF_VISCOUS_XY_MN_PER_MPS, IK_FF_COULOMB_W_MNM, IK_FF_VISCOUS_W_MNM_PER_RADPS,
-  IK_FF_A_PER_NM_MILLI, IK_FF_SCALE_PCT, IK_FF_MA, IK_SYM_COUNT
+  IK_FF_A_PER_NM_MILLI, IK_FF_SCALE_PCT, IK_FF_MA, IK_REPLY_LAT_HIST, IK_REPLY_LAT_MAX_US, IK_SYM_COUNT
 } ik_sym_t;
 
 typedef struct {
@@ -78,6 +79,16 @@ typedef struct {
   uint32_t state, tx_count, tx_fail, bad_input, raw_done, telem_now, fault, armed;
   int32_t target_rpm[IK_WHEELS], rpm[IK_WHEELS];
 } ik_status_t;
+
+typedef struct {
+  uint32_t tx_count, tx_fail, fault, can_rx;
+  uint32_t hist[IK_WHEELS][IK_LAT_BINS], max_us[IK_WHEELS];
+  ik_link_row_t rows[IK_WHEELS];
+} ik_counters_t;
+/** @brief Read cumulative counters and 250 us latency bins; take snapshots while stopped for stable CONTROL totals.
+ * @param can_rx_addr Address of can_rx_frame_count resolved from the same ELF.
+ */
+int ik_counters(ik_link_t *l, uint32_t can_rx_addr, ik_counters_t *out);
 
 /** Capture header words in Nucleo RAM (updated by every CAN reply). */
 typedef struct { uint32_t frames, source, status, vbus_centivolts, samples; } ik_capture_header_t;
@@ -122,6 +133,8 @@ void ik_decode_row(const uint32_t words[IK_ROW_WORDS], ik_row_t *row);
  * @return 0, or -1 with l->err on a transport error.
  */
 int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS]);
+/** @brief Read one seqlocked reply row (wheel 0..3); reply clocks are wrapping microseconds. */
+int ik_link_row(ik_link_t *l, int wheel, ik_link_row_t *row);
 /** @brief Decode IK_LINK_WORDS mailbox words, including stable protocol names.
  * @param words Stable mailbox words, in ABI 7 order; clocks are wrapping microseconds.
  * @param row Decoded row; rpm is mechanical RPM and iq_ma is q-current in mA.

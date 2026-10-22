@@ -6,7 +6,11 @@
  *   esc_tool set WHEEL KEY VALUE                 CONFIG_SET key (RAM), see ik_link.c for keys
  *   esc_tool capture WHEEL [--step-ma 3000] [--out f.json]
  *                                                current-loop step test: R, L, step response, PI gains
+ *   esc_tool reject WHEEL [--json F]              zero-motion protocol cases, DISABLE on exit
+ *   esc_tool stream --seconds T [--hold-fault-s 2] [--json F]
+ *                                                zero twist + heartbeat through the normal drive path
  *   esc_tool spin WHEEL --rpm 60 [--seconds 3] [--kp N --ki N] [--log f.jsonl]
+ *                 [--gap-ms N [--gap-at S]]        omit sending once (default S=1 second)
  *                                                one wheel at a speed setpoint (motion!)
  *   esc_tool pulse [--axis vy|vx] [--speed 0.2] [--accel RPMPS] [--seconds 1.5] [--reps 3]
  *                  [--kp N --ki N] [--ff-static MA] [--ff-kinetic MA] [--log f.jsonl]
@@ -23,6 +27,9 @@
  * each rep goes out along --axis for --seconds and back; gains and friction feed-forward are set in
  * RAM on all four wheels and the defaults restored afterwards. Ctrl-C or switching the battery off
  * stops it: the Nucleo brakes 0.3 s after the heartbeat stops.
+ * reject waits for watchdog disarm and re-arms for each case; only rejected range/conflict frames
+ * have nonzero speed setpoints. stream preserves enable=1 for the fault hold so the fault latch
+ * and all four replies can be inspected, then acknowledges it with enable=0. Both emit JSON on request.
  */
 #include <math.h>
 #include <signal.h>
@@ -38,6 +45,7 @@
 #include "esc_defaults.h"
 #include "esc_ops.h"
 #include "esc_ctl.h"
+#include "elfsym.h"
 #include "motor_protocol.h"
 #include "ik_link.h"
 #include "pulse_run.h"
@@ -212,7 +220,7 @@ static int cmd_capture(ik_link_t *l, const wheel_t *w, int n, int step_ma, const
 
 typedef struct { double t; int cmd; int32_t rpm; double iq_a, iq_ref_a; const char *mc_state, *stop_reason; char faults[96]; } spin_row_t;
 
-typedef struct { int rpm; double seconds; int kp, ki; bool has_kp, has_ki; const char *log; } spin_args_t;
+typedef struct { int rpm; double seconds, gap_ms, gap_at; int kp, ki; bool has_kp, has_ki; const char *log; } spin_args_t;
 
 static volatile sig_atomic_t spin_interrupted;
 static void spin_interrupt(int signal_number) { spin_interrupted = signal_number; }
@@ -221,6 +229,9 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
 {
   if (a->rpm < -600 || a->rpm > 600 || !(a->seconds > 0 && a->seconds <= 10))
     return die("spin: |rpm| <= 600 and 0 < seconds <= 10");
+  if (!isfinite(a->gap_ms) || a->gap_ms < 0 || (a->gap_ms > 0 &&
+      !(a->gap_at >= 0 && a->gap_at + a->gap_ms / 1000.0 + 0.05 < a->seconds)))
+    return die("spin: gap must leave at least 50 ms of stream after --gap-at + --gap-ms/1000");
   struct sigaction action = {.sa_handler = spin_interrupt}, old_int, old_term, old_hup;
   sigemptyset(&action.sa_mask);
   spin_interrupted = 0;
@@ -243,22 +254,66 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
   uint32_t last_count = 0;
   bool have_count = false;
   bool disabled = false;
+  bool gap_started = false, gap_sent = false, gap_reported = false;
+  double gap_start = 0;
+  uint32_t gap_before_us = 0;
+  uint8_t gap_seq = 0;
   while (!err && !spin_interrupted && (now = now_s() - t0) < a->seconds + 0.6) {
     if (now < a->seconds && now - last_cmd >= 0.02) {
-      if (last_cmd >= 0 && now - last_cmd > 0.04) {
+      if (gap_sent && !gap_reported) {
+        if (now - last_cmd > 0.04) {
+          snprintf(l->err, sizeof l->err, "spin: first reply after gap timed out"); err = 1; break;
+        }
+        goto read_spin_reply;
+      }
+      if (a->gap_ms > 0 && !gap_started && last_cmd >= 0 && now >= a->gap_at) {
+        if (now - last_cmd > 0.04) {
+          snprintf(l->err, sizeof l->err, "spin: SPEED stream missed 40 ms deadline before gap"); err = 1; break;
+        }
+        ik_link_row_t r;
+        if (ik_link_row(l, w->index, &r)) { err = 1; break; }
+        if (!r.valid || r.request_seq != ctl.wheel[w->index].seq) {
+          if (now - last_cmd > 0.04) { snprintf(l->err, sizeof l->err, "spin: no reply before gap"); err = 1; break; }
+          sleep_s(0.002); continue;
+        }
+        gap_before_us = r.reply_us;
+        gap_start = now;
+        gap_started = true;
+      }
+      if (gap_started && !gap_sent && now - gap_start < a->gap_ms / 1000.0) {
+        sleep_s(0.002); continue;
+      }
+      bool resume = gap_started && !gap_sent;
+      if (!resume && last_cmd >= 0 && now - last_cmd > 0.04) {
         snprintf(l->err, sizeof l->err, "spin: SPEED stream missed 40 ms deadline"); err = 1; break;
       }
       if (esc_ctl_speed(&ctl, w->index, a->rpm)) { err = 1; break; }
+      if (resume) { gap_sent = true; gap_seq = ctl.wheel[w->index].seq; }
       last_cmd = now;
     }
+read_spin_reply:
     if (!disabled && now >= a->seconds) {
       if (esc_ctl_disable_all(&ctl)) { err = 1; break; }
       disabled = true;
     }
     if (!disabled) {
-      ik_link_row_t links[IK_WHEELS];
-      if (ik_link_rows(l, links)) { err = 1; break; }
-      const ik_link_row_t *link = &links[w->index];
+      ik_link_row_t reply;
+      if (ik_link_row(l, w->index, &reply)) { err = 1; break; }
+      const ik_link_row_t *link = &reply;
+      if (gap_sent && !gap_reported && link->valid && link->request_seq == gap_seq) {
+        gap_reported = true;
+        bool trip = link->session != ctl.wheel[w->index].session ||
+                    (link->outcome == MOTOR_OUT_REJECTED && link->reason == MOTOR_R_NOT_ARMED);
+        bool no_trip = link->outcome == MOTOR_OUT_APPLIED && link->session == ctl.wheel[w->index].session;
+        printf("%s: gap reply_us delta %u us (requested %.3f ms): %s; first reply %s/%s/%s session %u (before %u)\n",
+               w->name, (uint32_t)(link->reply_us - gap_before_us), a->gap_ms,
+               trip ? "trip" : no_trip ? "no trip" : "inconclusive", link->outcome_name,
+               link->reason_name, link->lifecycle_name, link->session, ctl.wheel[w->index].session);
+        if (trip) break;
+        if (!no_trip) {
+          snprintf(l->err, sizeof l->err, "spin: gap verdict inconclusive"); err = 1; break;
+        }
+      }
       if (link->valid && (link->lifecycle == MOTOR_LC_FAULTED || link->lifecycle == MOTOR_LC_DISARMED ||
                           link->outcome == MOTOR_OUT_REJECTED || link->session != ctl.wheel[w->index].session)) {
         snprintf(l->err, sizeof l->err, "%s spin stopped: %s/%s/%s", w->name,
@@ -277,6 +332,9 @@ static int cmd_spin(ik_link_t *l, const wheel_t *w, const spin_args_t *a)
       snprintf(rows[n - 1].faults, sizeof rows[n - 1].faults, "%s", x->fault_names);
     }
     sleep_s(0.005);
+  }
+  if (a->gap_ms > 0 && !gap_reported) {
+    fprintf(stderr, "spin: gap first reply not measured\n"); err = 1;
   }
   if (err) fprintf(stderr, "%s\n", l->err);
   if (esc_ctl_disable_all(&ctl)) { fprintf(stderr, "%s\n", l->err); err = 1; }
@@ -407,10 +465,258 @@ static int cmd_pulse(ik_link_t *l, const pulse_args_t *a)
   return err;
 }
 
+static int cmd_reject(ik_link_t *l, const wheel_t *wheel, const char *json)
+{
+  size_t count;
+  const esc_reject_case_t *cases = esc_ctl_reject_cases(&count);
+  FILE *f = json ? fopen(json, "w") : NULL;
+  if (json && !f) return die("cannot write %s", json);
+  if (f) fprintf(f, "{\"wheel\":\"%s\",\"cases\":[", wheel->name);
+  esc_ctl_t c;
+  esc_ctl_init(&c, l, 0.03);
+  struct sigaction action = {.sa_handler = spin_interrupt}, old_int, old_term, old_hup;
+  sigemptyset(&action.sa_mask); spin_interrupted = 0;
+  sigaction(SIGINT, &action, &old_int); sigaction(SIGTERM, &action, &old_term); sigaction(SIGHUP, &action, &old_hup);
+  int failed = 0;
+  for (size_t k = 0; k < count && !spin_interrupted; k++) {
+    const esc_reject_case_t *test = &cases[k];
+    ik_link_row_t replies[IK_WHEELS] = {{0}};
+    uint32_t id = MOTOR_CAN_ID_CONTROL | wheel->sel;
+    uint8_t data[8];
+    int rc = esc_ctl_disable(&c, wheel->index);
+    /* DISABLE keeps READY armed. Expire the old watchdog before each new ARM. */
+    if (!rc) sleep_s(0.12);
+    if (!rc && !test->disarmed) {
+      rc = esc_ctl_arm(&c, wheel->index);
+      if (!rc) {
+        struct motor_control zero = {.mode = MOTOR_MODE_SPEED, .seq = ++c.wheel[wheel->index].seq,
+                                     .session = c.wheel[wheel->index].session};
+        rc = motor_control_encode(&zero, wheel->sel, &id, data) != MOTOR_R_NONE ||
+             esc_ctl_exchange(&c, id, data, replies);
+        const ik_link_row_t *r = &replies[wheel->index];
+        if (!rc && (r->outcome != MOTOR_OUT_APPLIED || r->reason != MOTOR_R_NONE ||
+                    r->lifecycle != MOTOR_LC_READY || r->session != zero.session)) {
+          snprintf(l->err, sizeof l->err, "zero baseline not APPLIED/NONE/READY in the armed session"); rc = -1;
+        }
+      }
+    }
+    memset(replies, 0, sizeof replies);
+    if (!rc) rc = test->build(wheel->index, c.wheel[wheel->index].seq, c.wheel[wheel->index].session, &id, data);
+    if (!rc) rc = esc_ctl_exchange(&c, id, data, replies);
+    bool pass = !rc;
+    for (int w = 0; w < IK_WHEELS; w++) if (id & IK_WHEEL_SELECT[w]) {
+      const ik_link_row_t *r = &replies[w];
+      bool ok = !rc && r->valid && r->outcome == (uint32_t)test->outcome && r->reason == (uint32_t)test->reason;
+      if (w == wheel->index && !test->disarmed)
+        ok = ok && r->lifecycle == MOTOR_LC_READY && r->session == c.wheel[w].session;
+      if (w == wheel->index && test->disarmed) ok = ok && r->lifecycle == MOTOR_LC_DISARMED;
+      pass = pass && ok;
+      printf("%s %s %s: %s/%s lifecycle %s session %u%s%s\n", ok ? "PASS" : "FAIL", test->name,
+             IK_WHEEL_POS[w], r->valid ? r->outcome_name : "no reply", r->valid ? r->reason_name : "UNKNOWN",
+             r->valid ? r->lifecycle_name : "UNKNOWN", r->session, rc ? ": " : "", rc ? l->err : "");
+    }
+    failed |= !pass;
+    if (f) {
+      fprintf(f, "%s{\"name\":\"%s\",\"pass\":%s,\"expected_outcome\":%u,\"expected_reason\":%u,\"replies\":[",
+              k ? "," : "", test->name, pass ? "true" : "false", test->outcome, test->reason);
+      bool comma = false;
+      for (int w = 0; w < IK_WHEELS; w++) if (id & IK_WHEEL_SELECT[w]) {
+        const ik_link_row_t *r = &replies[w];
+        fprintf(f, "%s{\"wheel\":\"%s\",\"valid\":%s,\"outcome\":%u,\"reason\":%u,\"lifecycle\":%u,\"session\":%u}",
+                comma ? "," : "", IK_WHEEL_POS[w], r->valid ? "true" : "false", r->outcome, r->reason, r->lifecycle, r->session);
+        comma = true;
+      }
+      fputs("]}", f);
+    }
+  }
+  if (spin_interrupted) failed = 1;
+  if (esc_ctl_disable(&c, wheel->index)) { fprintf(stderr, "%s\n", l->err); failed = 1; }
+  const char *uncovered = "MODE_CHANGE, LIMITED, NOT_ALIGNED, FAULT_HALL_LOST, TIMEOUT-as-reject, "
+                          "LIFECYCLE_OVERFLOW, BAD_LENGTH, STARTING/BUSY/FAULT_STALL/NOT_IDLE, FAULT_MCSDK";
+  printf("%s: not produced by this command\n", uncovered);
+  if (f) {
+    fprintf(f, "],\"pass\":%s,\"not_produced\":\"%s\"}\n", failed ? "false" : "true", uncovered);
+    if (fclose(f)) failed = 1;
+  }
+  sigaction(SIGINT, &old_int, NULL); sigaction(SIGTERM, &old_term, NULL); sigaction(SIGHUP, &old_hup, NULL);
+  return failed;
+}
+
+static void print_links(const ik_link_row_t rows[IK_WHEELS])
+{
+  for (int w = 0; w < IK_WHEELS; w++) {
+    const ik_link_row_t *r = &rows[w];
+    printf("%s: %s/%s/%s session %u reply_count %u fault_reason %s\n", IK_WHEEL_POS[w],
+           r->valid ? r->lifecycle_name : "unreadable", r->valid ? r->outcome_name : "?",
+           r->valid ? r->reason_name : "?", r->session, r->reply_count, r->valid ? r->fault_reason_name : "?");
+  }
+}
+
+static const char *latency_text(uint32_t edge, char text[32])
+{
+  if (edge == UINT32_MAX) return "> 3.75 ms";
+  if (!edge) return "n/a";
+  snprintf(text, 32, "%.2f ms", edge / 1000.0);
+  return text;
+}
+
+static void report_latency(const char *name, esc_latency_t s)
+{
+  char p50[32], p99[32], max[32];
+  printf("%s latency: count %llu p50 %s p99 %s max %s (bin upper edges)\n", name,
+         (unsigned long long)s.count, latency_text(s.p50_us, p50), latency_text(s.p99_us, p99), latency_text(s.max_us, max));
+}
+
+static void json_latency(FILE *f, esc_latency_t s)
+{
+  /* null distinguishes an overflow edge from a finite microsecond bound. */
+  fprintf(f, "{\"count\":%llu", (unsigned long long)s.count);
+  const uint32_t edges[] = {s.p50_us, s.p99_us, s.max_us};
+  const char *names[] = {"p50", "p99", "max"};
+  for (int i = 0; i < 3; i++) {
+    fprintf(f, ",\"%s_us\":", names[i]);
+    if (!s.count || edges[i] == UINT32_MAX) fputs("null", f); else fprintf(f, "%u", edges[i]);
+    fprintf(f, ",\"%s_overflow\":%s", names[i], edges[i] == UINT32_MAX ? "true" : "false");
+  }
+  fputc('}', f);
+}
+
+typedef struct { double seconds, hold_fault_s; const char *json; } stream_args_t;
+
+static int cmd_stream(ik_link_t *l, uint32_t rx_addr, const stream_args_t *a)
+{
+  if (!(a->seconds > 0) || !isfinite(a->seconds) || a->hold_fault_s < 0 || !isfinite(a->hold_fault_s))
+    return die("stream: finite --seconds > 0 and --hold-fault-s >= 0 required");
+  uint32_t state;
+  if (ik_read(l, IK_STATE, &state)) return die("%s", l->err);
+  if (state != 0) return die("stream: drive must be stopped");
+  FILE *f = a->json ? fopen(a->json, "w") : NULL;
+  if (a->json && !f) return die("cannot write %s", a->json);
+  ik_counters_t before, after;
+  if (ik_counters(l, rx_addr, &before)) { if (f) fclose(f); return die("%s", l->err); }
+  struct sigaction action = {.sa_handler = spin_interrupt}, old_int, old_term, old_hup;
+  sigemptyset(&action.sa_mask); spin_interrupted = 0;
+  sigaction(SIGINT, &action, &old_int); sigaction(SIGTERM, &action, &old_term); sigaction(SIGHUP, &action, &old_hup);
+  double start = now_s(), fault_at = -1;
+  uint32_t fault = before.fault;
+  uint32_t fault_state = 0;
+  ik_link_row_t fault_rows[IK_WHEELS] = {{0}};
+  bool printed_links = false;
+  int failed = fault != 0;
+  bool io_error = false;
+  while (!spin_interrupted) {
+    double elapsed = now_s() - start;
+    if (ik_read(l, IK_FAULT, &fault) || ik_read(l, IK_STATE, &state)) { io_error = true; break; }
+    if (fault) {
+      failed = 1;
+      if (fault_at < 0) {
+        fault_at = elapsed;
+        fault_state = state;
+        printf("stream: fault 0x%08x ik_drive_state %u (enable remains 1 for %.3f s)\n", fault, state, a->hold_fault_s);
+        for (unsigned bit = 0; bit < 32; bit++) if (fault & (1U << bit))
+          printf("  bit %u: %s %s\n", bit, bit < 8 ? IK_WHEEL_POS[bit % 4] : "unknown", bit < 4 ? "FAULTED" : bit < 8 ? "LOST" : "unknown");
+      }
+      /* Let all three broadcast DISABLEs arrive before printing the four rows once. */
+      if (!printed_links && (elapsed - fault_at >= 0.08 || elapsed - fault_at >= a->hold_fault_s)) {
+        if (ik_link_rows(l, fault_rows)) { io_error = true; break; }
+        print_links(fault_rows); printed_links = true;
+      }
+      if (elapsed - fault_at >= a->hold_fault_s) break;
+    } else if (elapsed >= a->seconds) break;
+    if (ik_drive(l, 0, 0, 0, true)) { io_error = true; break; }
+    sleep_s(0.01);
+  }
+  if (io_error) { fprintf(stderr, "%s\n", l->err); failed = 1; }
+  if (spin_interrupted) failed = 1;
+  uint32_t observed_fault = fault;
+  if (ik_drive(l, 0, 0, 0, false)) { fprintf(stderr, "%s\n", l->err); failed = 1; }
+  bool stopped = false;
+  double deadline = now_s() + 1.0;
+  do {
+    if (ik_read(l, IK_STATE, &state) || ik_read(l, IK_FAULT, &fault)) { failed = 1; break; }
+    observed_fault |= fault;
+    if (state == 0 && fault == 0) { stopped = true; break; }
+    sleep_s(0.01);
+  } while (now_s() < deadline);
+  /* The last broadcast may be queued when state becomes STOPPED. */
+  if (stopped) sleep_s(0.02);
+  bool sampled = ik_counters(l, rx_addr, &after) == 0;
+  double duration = now_s() - start;
+  if (!stopped || !sampled) { fprintf(stderr, "stream: could not confirm stopped counters/fault clear: %s\n", l->err); failed = 1; }
+  if (!sampled && f) fputs("{\"pass\":false,\"error\":\"counter snapshot failed\"}\n", f);
+  if (sampled) {
+    observed_fault |= after.fault;
+    failed |= observed_fault != 0 || after.fault != 0;
+    printf("stream: enable 0, fault word 0x%08x %s\n", after.fault, after.fault == 0 ? "cleared" : "NOT CLEARED");
+    uint32_t tx = after.tx_count - before.tx_count, tx_fail = after.tx_fail - before.tx_fail;
+    uint32_t rx = after.can_rx - before.can_rx, per_wheel = 0;
+    bool tx_known = esc_ctl_stream_tx(tx, &per_wheel) == 0;
+    failed |= tx_fail != 0 || !tx_known;
+    uint64_t total_hist[IK_LAT_BINS] = {0}, replies = 0;
+    if (f) fprintf(f, "{\"hist_bin_us\":250,\"hist_overflow_lower_us\":3750,\"requested_seconds\":%.9g,\"counter_seconds\":%.9g,\"tx_count\":%u,\"tx_fail\":%u,\"can_rx\":%u,"
+                     "\"observed_fault\":%u,\"fault_state\":%u,\"final_fault\":%u,\"wheels\":[",
+                   a->seconds, duration, tx, tx_fail, rx, observed_fault, fault_state, after.fault);
+    for (int w = 0; w < IK_WHEELS; w++) {
+      uint32_t reply = after.rows[w].reply_count - before.rows[w].reply_count;
+      uint32_t rejects = after.rows[w].rejects - before.rows[w].rejects;
+      bool ok = tx_known && reply == per_wheel && rejects <= 1;
+      failed |= !ok;
+      replies += reply;
+      uint64_t hist[IK_LAT_BINS];
+      for (int b = 0; b < IK_LAT_BINS; b++) {
+        hist[b] = (uint32_t)(after.hist[w][b] - before.hist[w][b]);
+        total_hist[b] += hist[b];
+      }
+      esc_latency_t latency = esc_ctl_latency(hist);
+      printf("%s: %s reply_count delta %u tx_count delta %u (inferred) rejects delta %u fault word 0x%08x\n",
+             IK_WHEEL_POS[w], ok ? "PASS" : "FAIL", reply, per_wheel, rejects, observed_fault);
+      report_latency(IK_WHEEL_POS[w], latency);
+      printf("  cumulative latency max_us %u -> %u (since boot)\n", before.max_us[w], after.max_us[w]);
+      if (f) {
+        const ik_link_row_t *r = printed_links ? &fault_rows[w] : &after.rows[w];
+        fprintf(f, "%s{\"wheel\":\"%s\",\"reply_count\":%u,\"tx_count_inferred\":%u,\"rejects\":%u,"
+                   "\"lifecycle\":%u,\"outcome\":%u,\"reason\":%u,\"session\":%u,\"fault_reason\":%u,\"latency\":",
+                w ? "," : "", IK_WHEEL_POS[w], reply, per_wheel, rejects,
+                r->lifecycle, r->outcome, r->reason, r->session, r->fault_reason);
+        json_latency(f, latency);
+        fprintf(f, ",\"hist_delta\":[");
+        for (int b = 0; b < IK_LAT_BINS; b++) fprintf(f, "%s%llu", b ? "," : "", (unsigned long long)hist[b]);
+        fputs("]}", f);
+      }
+    }
+    esc_latency_t total = esc_ctl_latency(total_hist);
+    report_latency("overall", total);
+    /* All receive traffic is 8 bytes. Poll requests are not in tx_count; replies are in can_rx. */
+    double polls = duration / 0.005;
+    uint64_t frames4 = (uint64_t)llround(polls);
+    double load = esc_ctl_bus_load((uint64_t)tx + rx, frames4, duration);
+    printf("stream: %.3f s requested, %.3f s counter window; tx_count delta %u tx_fail delta %u can_rx_frame_count delta %u\n",
+           a->seconds, duration, tx, tx_fail, rx);
+    printf("bus load estimate %.2f%%: 500 kbit/s, 130 bits/8-byte frame, 100 bits/4-byte poll; "
+           "one STATUS/DIAG/IDENT poll every 5 ms (~%llu requests); all replies counted in RX, "
+           "including ~%llu poll replies. Counter window includes stop/fault hold.\n", load,
+           (unsigned long long)frames4, (unsigned long long)(rx >= replies ? rx - replies : 0));
+    printf("TX per wheel inferred from four-wheel cycles plus three broadcast DISABLEs; tx_fail is global. "
+           "Expected ARM-probe rejects: at most one per wheel in this drive session.\n");
+    printf("stream: %s\n", failed ? "FAIL" : "PASS");
+    if (f) {
+      fputs("],\"overall_latency\":", f); json_latency(f, total);
+      fprintf(f, ",\"poll_requests_estimated\":%llu,\"bus_load_pct\":%.9g,\"pass\":%s,"
+                 "\"assumption\":\"500 kbit/s; 130 bits/8-byte TX and RX; 100 bits/4-byte poll every 5 ms; "
+                 "counter window includes stop and fault hold; per-wheel TX inferred with three broadcasts\"}\n",
+              (unsigned long long)frames4, load, failed ? "false" : "true");
+    }
+  }
+  if (f && fclose(f)) failed = 1;
+  sigaction(SIGINT, &old_int, NULL); sigaction(SIGTERM, &old_term, NULL); sigaction(SIGHUP, &old_hup, NULL);
+  return failed;
+}
+
 static int usage(void)
 {
   return die("usage: esc_tool [--elf F] [--sn SERIAL] status|stop|clear|align W|set W KEY VALUE|capture W [--step-ma N] [--out F]|"
-             "spin W --rpm N [...]|pulse [...]  (see the header of src/tools/esc_tool.c)");
+             "spin W --rpm N [--seconds T] [--gap-ms N [--gap-at S]] [...]|reject W [--json F]|"
+             "stream --seconds T [--hold-fault-s 2] [--json F]|pulse [...]  (see the header of src/tools/esc_tool.c)");
 }
 
 int main(int argc, char **argv)
@@ -426,15 +732,16 @@ int main(int argc, char **argv)
   const char *cmd = argv[i++];
   wheel_t w[IK_WHEELS];
   int nw = 0;
-  if (strcmp(cmd, "status") && strcmp(cmd, "stop") && strcmp(cmd, "clear") && strcmp(cmd, "pulse")) {
+  if (strcmp(cmd, "status") && strcmp(cmd, "stop") && strcmp(cmd, "clear") && strcmp(cmd, "pulse") && strcmp(cmd, "stream")) {
     if (i >= argc) return usage();
     if (!(nw = pick_wheels(argv[i], w))) return die("unknown wheel %s; use FR BR BL FL (or NE SE SW NW) or all", argv[i]);
     i++;
   }
-  spin_args_t sa = {.rpm = 0, .seconds = 3.0};
+  spin_args_t sa = {.rpm = 0, .seconds = 3.0, .gap_at = 1.0};
+  stream_args_t stream = {.hold_fault_s = 2.0};
   pulse_args_t pa = {.axis = "vy", .speed = 0.2, .seconds = 1.5, .reps = 3};
   int step_ma = 3000, set_value = 0;
-  const char *out = NULL, *key = NULL;
+  const char *out = NULL, *key = NULL, *json = NULL;
   bool have_rpm = false;
   if (!strcmp(cmd, "set")) {
     if (i + 1 >= argc) return usage();
@@ -449,7 +756,11 @@ int main(int argc, char **argv)
     if (!strcmp(o, "--step-ma")) step_ma = atoi(v);
     else if (!strcmp(o, "--out")) out = v;
     else if (!strcmp(o, "--rpm")) sa.rpm = atoi(v), have_rpm = true;
-    else if (!strcmp(o, "--seconds")) sa.seconds = pa.seconds = atof(v);
+    else if (!strcmp(o, "--seconds")) sa.seconds = pa.seconds = stream.seconds = atof(v);
+    else if (!strcmp(o, "--gap-ms")) sa.gap_ms = atof(v);
+    else if (!strcmp(o, "--gap-at")) sa.gap_at = atof(v);
+    else if (!strcmp(o, "--hold-fault-s")) stream.hold_fault_s = atof(v);
+    else if (!strcmp(o, "--json")) json = stream.json = v;
     else if (!strcmp(o, "--kp")) sa.kp = pa.kp = atoi(v), sa.has_kp = pa.has_kp = true;
     else if (!strcmp(o, "--ki")) sa.ki = pa.ki = atoi(v), sa.has_ki = pa.has_ki = true;
     else if (!strcmp(o, "--log")) sa.log = pa.log = v;
@@ -463,6 +774,11 @@ int main(int argc, char **argv)
     i++;
   }
   if (strcmp(pa.axis, "vx") && strcmp(pa.axis, "vy")) return die("--axis must be vx or vy");
+
+  uint32_t rx_addr = 0;
+  if (!strcmp(cmd, "stream") && elfsym_lookup(elf, "can_rx_frame_count", &rx_addr, NULL))
+    return die("missing can_rx_frame_count in %s", elf);
+  if (!strcmp(cmd, "reject") && nw != 1) return die("reject: one wheel at a time");
 
   ik_link_t link;
   if (ik_link_open(&link, sn, elf)) return die("%s", link.err);
@@ -483,6 +799,10 @@ int main(int argc, char **argv)
     if (nw != 1) rc = die("spin: one wheel at a time");
     else if (!have_rpm) rc = die("spin: --rpm is required");
     else rc = cmd_spin(&link, &w[0], &sa);
+  } else if (!strcmp(cmd, "reject")) {
+    rc = cmd_reject(&link, &w[0], json);
+  } else if (!strcmp(cmd, "stream")) {
+    rc = cmd_stream(&link, rx_addr, &stream);
   } else if (!strcmp(cmd, "pulse")) {
     rc = cmd_pulse(&link, &pa);
   } else if (!strcmp(cmd, "set")) {

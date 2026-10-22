@@ -49,11 +49,9 @@ static int wait_reply(esc_ctl_t *c, int w, uint32_t before, uint8_t seq, ik_link
 {
   double deadline = now_s() + c->timeout_s;
   for (;;) {
-    ik_link_row_t rows[IK_WHEELS];
-    if (ik_link_rows(c->link, rows)) return -1;
-    *reply = rows[w];
+    if (ik_link_row(c->link, w, reply)) return -1;
     if (reply->valid && reply->reply_count != before && reply->request_seq == seq) return 0;
-    if (now_s() >= deadline) return wheel_error(c, w, "ARM reply timed out", reply);
+    if (now_s() >= deadline) return wheel_error(c, w, "CONTROL reply timed out", reply);
     pause_poll();
   }
 }
@@ -66,12 +64,12 @@ int esc_ctl_arm(esc_ctl_t *c, int w)
   }
   esc_ctl_wheel_t *s = &c->wheel[w];
   s->armed = false;
-  ik_link_row_t rows[IK_WHEELS], reply;
-  if (ik_link_rows(c->link, rows)) return -1;
-  if (!rows[w].valid) return wheel_error(c, w, "ARM", &rows[w]);
+  ik_link_row_t before_row, reply;
+  if (ik_link_row(c->link, w, &before_row)) return -1;
+  if (!before_row.valid) return wheel_error(c, w, "ARM", &before_row);
   struct motor_control control = {.mode = MOTOR_MODE_DISABLE, .flags = MOTOR_FLAG_ARM, .seq = ++s->seq};
   if (send_control(c, IK_WHEEL_SELECT[w], &control) ||
-      wait_reply(c, w, rows[w].reply_count, control.seq, &reply)) return -1;
+      wait_reply(c, w, before_row.reply_count, control.seq, &reply)) return -1;
   if (reply.outcome != MOTOR_OUT_REJECTED || reply.reason != MOTOR_R_BAD_SESSION || !reply.session)
     return wheel_error(c, w, "ARM probe rejected", &reply);
   s->session = (uint8_t)reply.session;
@@ -143,4 +141,139 @@ int esc_ctl_clear_faults(esc_ctl_t *c)
     }
     pause_poll();
   }
+}
+
+int esc_ctl_exchange(esc_ctl_t *c, uint32_t id, const uint8_t data[8], ik_link_row_t replies[IK_WHEELS])
+{
+  ik_link_row_t before[IK_WHEELS];
+  for (int w = 0; w < IK_WHEELS; w++) if (id & IK_WHEEL_SELECT[w]) {
+    if (ik_link_row(c->link, w, &before[w])) return -1;
+    if (!before[w].valid) return wheel_error(c, w, "reply baseline", &before[w]);
+  }
+  if (ik_send_raw8(c->link, id, data, c->timeout_s)) return -1;
+  for (int w = 0; w < IK_WHEELS; w++)
+    if ((id & IK_WHEEL_SELECT[w]) && wait_reply(c, w, before[w].reply_count, data[6], &replies[w])) return -1;
+  return 0;
+}
+
+int esc_ctl_disable(esc_ctl_t *c, int w)
+{
+  uint32_t id;
+  uint8_t data[8];
+  ik_link_row_t replies[IK_WHEELS];
+  if (w < 0 || w >= IK_WHEELS) return -1;
+  struct motor_control control = {.mode = MOTOR_MODE_DISABLE, .seq = ++c->wheel[w].seq};
+  if (motor_control_encode(&control, IK_WHEEL_SELECT[w], &id, data) != MOTOR_R_NONE) return -1;
+  c->wheel[w].armed = false;
+  return esc_ctl_exchange(c, id, data, replies);
+}
+
+/* Invalid structural frames start with codec bytes, then corrupt only the field under test. */
+enum reject_kind { BAD_VERSION, BAD_MODE, BAD_FLAGS, RESERVED, BAD_SELECT, BAD_SESSION, NOT_ARMED,
+                   RANGE_RPM, RANGE_FF, STALE, AMBIGUOUS, JUMP, DUPLICATE, CONFLICT, UNSUPPORTED, FF_UNUSED };
+static int reject_frame(enum reject_kind kind, int w, uint8_t seq, uint8_t session, uint32_t *id, uint8_t data[8])
+{
+  if (w < 0 || w >= IK_WHEELS) return -1;
+  struct motor_control c = {.mode = MOTOR_MODE_SPEED, .seq = (uint8_t)(seq + 1U), .session = session};
+  switch (kind) {
+    case BAD_SESSION: c.mode = MOTOR_MODE_DISABLE; c.flags = MOTOR_FLAG_ARM; c.session = 0; break;
+    case RANGE_RPM: c.setpoint = 2977; break;
+    case RANGE_FF: c.ff_ma = 6001; break;
+    case STALE: c.seq = (uint8_t)(seq - 1U); break;
+    case AMBIGUOUS: c.seq = (uint8_t)(seq - 128U); break;
+    case JUMP: c.seq = (uint8_t)(seq + 17U); break;
+    case DUPLICATE: c.seq = seq; break;
+    /* Range checks follow sequence checks: even broken conflict handling cannot start motion. */
+    case CONFLICT: c.seq = seq; c.setpoint = 2977; break;
+    case UNSUPPORTED: c.mode = MOTOR_MODE_CURRENT; break;
+    case FF_UNUSED: c.ff_ma = 500; break;
+    default: break;
+  }
+  if (motor_control_encode(&c, IK_WHEEL_SELECT[w], id, data) != MOTOR_R_NONE) return -1;
+  switch (kind) {
+    case BAD_VERSION: data[0] = 0x21; break;
+    case BAD_MODE: data[0] = 0x13; break;
+    case BAD_FLAGS: data[1] = MOTOR_FLAG_ARM; break;
+    case RESERVED: data[1] = 4; break;
+    case BAD_SELECT: *id |= IK_WHEEL_SELECT[(w + 1) % IK_WHEELS]; break;
+    default: break;
+  }
+  return 0;
+}
+#define BUILDER(name, kind) \
+  static int name(int w, uint8_t seq, uint8_t session, uint32_t *id, uint8_t data[8]) \
+  { return reject_frame(kind, w, seq, session, id, data); }
+BUILDER(bad_version, BAD_VERSION)
+BUILDER(bad_mode, BAD_MODE)
+BUILDER(bad_flags, BAD_FLAGS)
+BUILDER(reserved, RESERVED)
+BUILDER(bad_select, BAD_SELECT)
+BUILDER(bad_session, BAD_SESSION)
+BUILDER(not_armed, NOT_ARMED)
+BUILDER(range_rpm, RANGE_RPM)
+BUILDER(range_ff, RANGE_FF)
+BUILDER(stale, STALE)
+BUILDER(ambiguous, AMBIGUOUS)
+BUILDER(jump, JUMP)
+BUILDER(duplicate, DUPLICATE)
+BUILDER(conflict, CONFLICT)
+BUILDER(unsupported, UNSUPPORTED)
+BUILDER(ff_unused, FF_UNUSED)
+#undef BUILDER
+
+const esc_reject_case_t *esc_ctl_reject_cases(size_t *count)
+{
+  static const esc_reject_case_t cases[] = {
+    {"BAD_VERSION", bad_version, MOTOR_OUT_REJECTED, MOTOR_R_BAD_VERSION, false},
+    {"BAD_MODE", bad_mode, MOTOR_OUT_REJECTED, MOTOR_R_BAD_MODE, false},
+    {"BAD_FLAGS", bad_flags, MOTOR_OUT_REJECTED, MOTOR_R_BAD_FLAGS, false},
+    {"RESERVED_NONZERO", reserved, MOTOR_OUT_REJECTED, MOTOR_R_RESERVED_NONZERO, false},
+    {"BAD_SELECT", bad_select, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SELECT, false},
+    {"BAD_SESSION", bad_session, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SESSION, false},
+    {"NOT_ARMED", not_armed, MOTOR_OUT_REJECTED, MOTOR_R_NOT_ARMED, true},
+    {"OUT_OF_RANGE_RPM", range_rpm, MOTOR_OUT_REJECTED, MOTOR_R_OUT_OF_RANGE, false},
+    {"OUT_OF_RANGE_FF", range_ff, MOTOR_OUT_REJECTED, MOTOR_R_OUT_OF_RANGE, false},
+    {"STALE", stale, MOTOR_OUT_REJECTED, MOTOR_R_STALE, false},
+    {"SEQ_AMBIGUOUS", ambiguous, MOTOR_OUT_REJECTED, MOTOR_R_SEQ_AMBIGUOUS, false},
+    {"SEQ_JUMP", jump, MOTOR_OUT_REJECTED, MOTOR_R_SEQ_JUMP, false},
+    {"DUPLICATE", duplicate, MOTOR_OUT_DUPLICATE, MOTOR_R_NONE, false},
+    {"CONFLICT", conflict, MOTOR_OUT_REJECTED, MOTOR_R_CONFLICT, false},
+    {"UNSUPPORTED", unsupported, MOTOR_OUT_REJECTED, MOTOR_R_UNSUPPORTED, false},
+    {"FF_UNUSED", ff_unused, MOTOR_OUT_INHIBITED, MOTOR_R_FF_UNUSED, false},
+  };
+  *count = sizeof cases / sizeof *cases;
+  return cases;
+}
+
+static uint32_t latency_edge(unsigned bin) { return bin == IK_LAT_BINS - 1 ? UINT32_MAX : (bin + 1U) * 250U; }
+
+esc_latency_t esc_ctl_latency(const uint64_t bins[IK_LAT_BINS])
+{
+  esc_latency_t s = {0};
+  for (unsigned b = 0; b < IK_LAT_BINS; b++) {
+    s.count += bins[b];
+    if (bins[b]) s.max_us = latency_edge(b);
+  }
+  if (!s.count) return s;
+  uint64_t cumulative = 0;
+  const uint64_t p50 = s.count / 2 + s.count % 2;
+  const uint64_t p99 = s.count - s.count / 100;
+  for (unsigned b = 0; b < IK_LAT_BINS; b++) {
+    cumulative += bins[b];
+    if (!s.p50_us && cumulative >= p50) s.p50_us = latency_edge(b);
+    if (!s.p99_us && cumulative >= p99) s.p99_us = latency_edge(b);
+  }
+  return s;
+}
+
+double esc_ctl_bus_load(uint64_t frames8, uint64_t frames4, double seconds)
+{
+  return seconds > 0 ? (130.0 * (double)frames8 + 100.0 * (double)frames4) / (seconds * 5000.0) : 0;
+}
+
+int esc_ctl_stream_tx(uint32_t tx, uint32_t *per_wheel)
+{
+  if (tx < 3 || (tx - 3U) % IK_WHEELS) return -1;
+  *per_wheel = (tx - 3U) / IK_WHEELS + 3U;
+  return 0;
 }

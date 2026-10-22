@@ -19,7 +19,8 @@ static const char *const SYM_NAMES[IK_SYM_COUNT] = {
     "raw_data", "raw_seq", "state", "raw_done", "tx_count", "tx_fail", "bad_input", "telem_now",
     "target_rpm", "rpm", "telem", "capture", "raw_data_hi", "raw_len", "clear_seq", "clear_done",
     "fault", "armed", "link", "ff_enable", "ff_coulomb_xy_mn", "ff_viscous_xy_mn_per_mps",
-    "ff_coulomb_w_mnm", "ff_viscous_w_mnm_per_radps", "ff_a_per_nm_milli", "ff_scale_pct", "ff_ma"};
+    "ff_coulomb_w_mnm", "ff_viscous_w_mnm_per_radps", "ff_a_per_nm_milli", "ff_scale_pct", "ff_ma",
+    "reply_lat_hist", "reply_lat_max_us"};
 
 static const struct { const char *name; int number; } CONFIG_KEYS[] = {
     {"kp", ESC_CFG_SPEED_KP}, {"ki", ESC_CFG_SPEED_KI}, {"shift", ESC_CFG_HALL_SHIFT_DEG},
@@ -150,6 +151,20 @@ int ik_status(ik_link_t *l, ik_status_t *s)
   return 0;
 }
 
+int ik_counters(ik_link_t *l, uint32_t rx_addr, ik_counters_t *out)
+{
+  if (ik_read(l, IK_TX_COUNT, &out->tx_count) || ik_read(l, IK_TX_FAIL, &out->tx_fail) ||
+      ik_read(l, IK_FAULT, &out->fault) || ik_link_rows(l, out->rows)) return -1;
+  for (int w = 0; w < IK_WHEELS; w++) {
+    if (!out->rows[w].valid) return fail(l, "%s: unreadable link counters", IK_WHEEL_POS[w]);
+    if (ocd_read(l->ocd, l->addr[IK_REPLY_LAT_HIST] + (uint32_t)w * IK_LAT_BINS * 4U,
+                 32, IK_LAT_BINS, out->hist[w])) return fail(l, "%s", ocd_error(l->ocd));
+  }
+  if (ocd_read(l->ocd, l->addr[IK_REPLY_LAT_MAX_US], 32, IK_WHEELS, out->max_us) ||
+      ocd_read32(l->ocd, rx_addr, &out->can_rx)) return fail(l, "%s", ocd_error(l->ocd));
+  return 0;
+}
+
 void ik_decode_row(const uint32_t w[IK_ROW_WORDS], ik_row_t *r)
 {
   memset(r, 0, sizeof *r);
@@ -242,23 +257,29 @@ void ik_decode_link_row(const uint32_t w[IK_LINK_WORDS], ik_link_row_t *r)
   r->fault_reason_name = ik_reason_name(r->fault_reason);
 }
 
+int ik_link_row(ik_link_t *l, int w, ik_link_row_t *row)
+{
+  memset(row, 0, sizeof *row);
+  if (w < 0 || w >= IK_WHEELS) return fail(l, "wheel must be 0..3");
+  uint32_t base = l->addr[IK_LINK] + (uint32_t)w * 4 * IK_LINK_WORDS;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    uint32_t before, words[IK_LINK_WORDS], after;
+    if (ocd_read32(l->ocd, base, &before)) return fail(l, "%s", ocd_error(l->ocd));
+    if (before & 1) continue;
+    if (ocd_read(l->ocd, base, 32, IK_LINK_WORDS, words) || ocd_read32(l->ocd, base, &after))
+      return fail(l, "%s", ocd_error(l->ocd));
+    if (before == words[0] && before == after && !(after & 1)) {
+      ik_decode_link_row(words, row);
+      break;
+    }
+  }
+  return 0;
+}
+
 int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS])
 {
   memset(rows, 0, IK_WHEELS * sizeof *rows);
-  for (int i = 0; i < IK_WHEELS; i++) {
-    uint32_t base = l->addr[IK_LINK] + (uint32_t)i * 4 * IK_LINK_WORDS;
-    for (int attempt = 0; attempt < 3; attempt++) {
-      uint32_t before, words[IK_LINK_WORDS], after;
-      if (ocd_read32(l->ocd, base, &before)) return fail(l, "%s", ocd_error(l->ocd));
-      if (before & 1) continue;
-      if (ocd_read(l->ocd, base, 32, IK_LINK_WORDS, words) || ocd_read32(l->ocd, base, &after))
-        return fail(l, "%s", ocd_error(l->ocd));
-      if (before == words[0] && before == after && !(after & 1)) {
-        ik_decode_link_row(words, &rows[i]);
-        break;
-      }
-    }
-  }
+  for (int w = 0; w < IK_WHEELS; w++) if (ik_link_row(l, w, &rows[w])) return -1;
   return 0;
 }
 

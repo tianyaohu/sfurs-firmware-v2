@@ -59,3 +59,4 @@ what someone does next; this is not a log.
   wheel for ~0.5 s, the I term climbed to the 3-5 A breakaway, and the wheel then overshot to 3.8x. Ramp the
   current at a fixed rate while stuck and cap the reference lead, so nothing is owed when the wheel lets go.
 - Mat vx breaks free at 4-6 A per wheel (all four together, current mode) and a lone freed wheel slips near 4.5-5 A: hold the breakaway boost until the wheels move (1 s, not 300 ms) and keep its level below the slip current.
+- MCSDK's Hall angle runs up to 60 deg ahead of a stuck rotor for 150 ms after each edge (half the torque per amp): a wheel that creeps then sticks needs our sector-centre angle (hall_angle.c); with it the mat body breakaway dropped from 4-6 A to 2.3-3.5 A.

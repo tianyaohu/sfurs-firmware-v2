@@ -7,6 +7,7 @@ _Static_assert((SKYNET_LINK_RING & (SKYNET_LINK_RING - 1U)) == 0U, "ring size is
 _Static_assert(SKYNET_LINK_TIMEOUT_MS == IK_DRIVE_HEARTBEAT_MS, "link and drive give up together");
 _Static_assert(SKYNET_LINK_GAP_MS * SKYNET_LINK_BAUD / 10000U > SKYNET_LINK_MAX_ROBOTS * SKYNET_LINK_RECORD,
                "a full batch fits well inside the gap");
+_Static_assert(SKYNET_LINK_MAX_AGE_MS > SKYNET_LINK_GAP_MS, "a silence-framed command is still fresh");
 
 volatile const uint32_t skynet_link_abi = SKYNET_LINK_ABI;
 volatile uint32_t skynet_link_robot_id, skynet_link_ack_seq;
@@ -20,14 +21,24 @@ static volatile uint32_t ring_head, ring_tail; /* head: ISR only; tail: main loo
 
 /* Parser state; main loop only. */
 static uint8_t window[SKYNET_LINK_RECORD];
-static uint32_t window_len, last_byte_t;
+static uint32_t window_len, last_byte_t, seen_overruns;
 static int have_byte;
-static int in_batch;                 /* a valid run that started at ID 0 is open */
-static uint32_t next_id;             /* ID the run expects next */
-static int have_cmd;                 /* this robot's record is in the open run */
+static int in_batch;          /* a valid run that started at ID 0 is open */
+static uint32_t next_id;      /* ID the run expects next (= its length so far) */
+static uint32_t prev_len;     /* length of the previous closed batch; 0 = none yet */
+static int have_cmd;          /* this robot's record is in the open run */
 static int32_t cmd_vx, cmd_vy, cmd_w;
-static uint32_t last_ack_seq;
-static int last_ack_input;
+static uint32_t cmd_t;        /* arrival of the last byte of this robot's record */
+
+/* Ownership: what the link last wrote, to notice anyone else writing the mailbox. */
+enum { OWN_NONE, OWN_DRIVING, OWN_STOPPING };
+static int own;
+static int32_t own_vx, own_vy, own_w;
+static uint32_t own_enable, own_heartbeat;
+
+/* Acknowledge input: B1 debounced, plus the SWD sequence. */
+static uint32_t last_ack_seq, button_since;
+static int button_level, button_armed;
 
 uint16_t skynet_link_crc16(const uint8_t *data, uint32_t len)
 {
@@ -68,11 +79,20 @@ static int32_t scaled_milli(int8_t v)
 
 static int32_t clamp(int32_t v, int32_t limit) { return v > limit ? limit : v < -limit ? -limit : v; }
 
-static void zero_twist(void)
+static void write_mailbox(int32_t vx, int32_t vy, int32_t w, uint32_t enable, int beat)
 {
-  ik_drive_vx_mmps = 0;
-  ik_drive_vy_mmps = 0;
-  ik_drive_omega_mradps = 0;
+  ik_drive_vx_mmps = own_vx = vx;
+  ik_drive_vy_mmps = own_vy = vy;
+  ik_drive_omega_mradps = own_w = w;
+  ik_drive_enable = own_enable = enable;
+  if (beat) ++ik_drive_heartbeat;
+  own_heartbeat = ik_drive_heartbeat;
+}
+
+static int mailbox_is_ours(void)
+{
+  return ik_drive_vx_mmps == own_vx && ik_drive_vy_mmps == own_vy && ik_drive_omega_mradps == own_w &&
+         ik_drive_enable == own_enable && ik_drive_heartbeat == own_heartbeat;
 }
 
 static void end_batch(int broken)
@@ -82,36 +102,52 @@ static void end_batch(int broken)
   have_cmd = 0;
 }
 
+/* Bytes were lost or framing is in doubt: the next batch's length cannot be trusted either. */
 static void reset_parser(int broken)
 {
   window_len = 0U;
   end_batch(broken);
+  prev_len = 0U;
 }
 
 static void apply(uint32_t now)
 {
+  if (since(cmd_t, now) > SKYNET_LINK_MAX_AGE_MS) { ++skynet_link_stale; return; }
   if (skynet_link_fault != 0U) return; /* stopped until the operator acknowledges */
-  /* Take over only an idle speed-mode drive: never a current-mode diagnostic or another host's session. */
-  if (ik_drive_mode != IK_MODE_SPEED || (!skynet_link_active && ik_drive_state != IK_STOPPED)) {
+  if (own == OWN_NONE) {
+    /* Take over only an idle, released speed-mode drive: never a current-mode diagnostic or a session
+     * another host has started or is about to start. */
+    if (ik_drive_mode != IK_MODE_SPEED || ik_drive_state != IK_STOPPED || ik_drive_enable != 0U) {
+      ++skynet_link_refused;
+      return;
+    }
+  } else if (ik_drive_mode != IK_MODE_SPEED) {
     ++skynet_link_refused;
     return;
   }
-  ik_drive_vx_mmps = cmd_vx;
-  ik_drive_vy_mmps = cmd_vy;
-  ik_drive_omega_mradps = cmd_w;
-  ik_drive_enable = 1U;
-  ++ik_drive_heartbeat;
+  write_mailbox(cmd_vx, cmd_vy, cmd_w, 1U, 1);
+  own = OWN_DRIVING;
   ++skynet_link_commands;
   skynet_link_active = 1U;
-  skynet_link_last_ms = now;
+  skynet_link_last_ms = cmd_t;
 }
 
 static void close_batch(uint32_t now)
 {
   if (!in_batch) return;
-  ++skynet_link_batches;
-  if (have_cmd) apply(now);
-  end_batch(0);
+  const uint32_t len = next_id;
+  /* skynet's team size is fixed for a run: a batch of a different length than the last one is a damaged
+   * fragment (a lost byte can leave a CRC-valid ID 0 tail) or a team change, and is not applied. */
+  const uint32_t expected = prev_len;
+  prev_len = len;
+  if (len == expected) {
+    ++skynet_link_batches;
+    if (have_cmd) apply(now);
+  } else if (expected != 0U) { /* the first batch after a reset only tells the team size */
+    ++skynet_link_broken;
+  }
+  in_batch = 0;
+  have_cmd = 0;
 }
 
 static int valid_record(const uint8_t r[SKYNET_LINK_RECORD])
@@ -120,16 +156,16 @@ static int valid_record(const uint8_t r[SKYNET_LINK_RECORD])
   return skynet_link_crc16(&r[2], 5U) == (uint16_t)(r[0] | (r[1] << 8));
 }
 
-static void record(const uint8_t r[SKYNET_LINK_RECORD], uint32_t now)
+static void record(const uint8_t r[SKYNET_LINK_RECORD], uint32_t t, uint32_t now)
 {
   ++skynet_link_records;
   const uint32_t id = r[2] & 0x0FU;
   if (id == 0U) {
     close_batch(now); /* the next batch's first record frames the previous one */
     in_batch = 1;
-    next_id = 0U;
   } else if (!in_batch || id != next_id) {
     end_batch(1);
+    prev_len = 0U;
     return;
   }
   next_id = id + 1U;
@@ -137,6 +173,7 @@ static void record(const uint8_t r[SKYNET_LINK_RECORD], uint32_t now)
     cmd_vx = clamp(-scaled_milli((int8_t)r[5]), IK_DRIVE_MAX_LINEAR_MMPS);
     cmd_vy = clamp(scaled_milli((int8_t)r[4]), IK_DRIVE_MAX_LINEAR_MMPS);
     cmd_w = clamp(scaled_milli((int8_t)r[6]), IK_DRIVE_MAX_OMEGA_MRADPS);
+    cmd_t = t;
     have_cmd = 1;
   }
 }
@@ -144,7 +181,7 @@ static void record(const uint8_t r[SKYNET_LINK_RECORD], uint32_t now)
 static void byte_in(uint8_t b, uint32_t t, uint32_t now)
 {
   ++skynet_link_bytes;
-  if (since(t, now) >= SKYNET_LINK_TIMEOUT_MS) { /* queued too long: a command this old must not move us */
+  if (since(t, now) > SKYNET_LINK_MAX_AGE_MS) { /* queued too long: a command this old must not move us */
     ++skynet_link_stale;
     reset_parser(1);
     have_byte = 0;
@@ -159,50 +196,94 @@ static void byte_in(uint8_t b, uint32_t t, uint32_t now)
   window[window_len++] = b;
   if (window_len < SKYNET_LINK_RECORD) return;
   if (valid_record(window)) {
-    record(window, now);
+    record(window, t, now);
     window_len = 0U;
   } else {
     memmove(window, window + 1, SKYNET_LINK_RECORD - 1U);
     window_len = SKYNET_LINK_RECORD - 1U;
     ++skynet_link_skipped;
     end_batch(1);
+    prev_len = 0U;
   }
 }
 
-static void supervise(uint32_t now, int ack)
+/* One accepted press needs SKYNET_LINK_DEBOUNCE_MS stable released, then the same stable pressed. */
+static int button_press(int level, uint32_t now)
+{
+  if (level != button_level) {
+    button_level = level;
+    button_since = now;
+    return 0;
+  }
+  if (since(button_since, now) < SKYNET_LINK_DEBOUNCE_MS) return 0;
+  if (!level) { button_armed = 1; return 0; }
+  if (!button_armed) return 0;
+  button_armed = 0;
+  return 1;
+}
+
+/* Another host wrote the mailbox: it owns the drive now, and the link stays out until acknowledged.
+ * Checked before decoding, so a new batch cannot overwrite the evidence. Returns 1 when it happened. */
+static int lose_to_other_writer(void)
+{
+  if (own == OWN_NONE || mailbox_is_ours()) return 0;
+  skynet_link_fault |= SKYNET_LINK_FAULT_EXTERNAL;
+  own = OWN_NONE;
+  skynet_link_active = 0U;
+  return 1;
+}
+
+static void supervise(uint32_t now, int button, int lost)
 {
   const uint32_t ack_seq = skynet_link_ack_seq;
-  const int ack_edge = (ack && !last_ack_input) || ack_seq != last_ack_seq;
-  last_ack_input = ack;
+  int ack = button_press(button, now) || ack_seq != last_ack_seq;
   last_ack_seq = ack_seq;
-  if (skynet_link_active && ik_drive_fault != 0U) {
-    /* Leave enable at 1 so ik_drive keeps the fault latched and visible; only an acknowledge clears it. */
-    skynet_link_fault = ik_drive_fault;
+  if (lost) ack = 0;
+  if (own != OWN_NONE && ik_drive_fault != 0U) {
+    /* Keep enable at 1 so ik_drive keeps the fault latched and visible; an acknowledge before this
+     * moment does not count for it. */
+    skynet_link_fault |= ik_drive_fault;
+    write_mailbox(0, 0, 0, 1U, 0);
+    own = OWN_NONE;
     skynet_link_active = 0U;
-    zero_twist();
+    ack = 0;
   }
-  if (ack_edge && skynet_link_fault != 0U) {
+  if (ack && skynet_link_fault != 0U) {
+    const int drive_fault = (skynet_link_fault & ~SKYNET_LINK_FAULT_EXTERNAL) != 0U;
     skynet_link_fault = 0U;
-    zero_twist();
-    ik_drive_enable = 0U;  /* acknowledges ik_drive_fault */
-    ++ik_drive_clear_seq;  /* and the ESCs' latches, once the drive is stopped */
+    if (drive_fault) { /* the link left enable at 1 for this fault: release and clear it */
+      ik_drive_vx_mmps = 0;
+      ik_drive_vy_mmps = 0;
+      ik_drive_omega_mradps = 0;
+      ik_drive_enable = 0U;  /* acknowledges ik_drive_fault */
+      ++ik_drive_clear_seq;  /* and the ESCs' latches, once the drive is stopped */
+    }
   }
-  if (skynet_link_active && since(skynet_link_last_ms, now) >= SKYNET_LINK_TIMEOUT_MS) {
-    zero_twist();
-    ik_drive_enable = 0U;
+  if (own == OWN_DRIVING && since(skynet_link_last_ms, now) >= SKYNET_LINK_TIMEOUT_MS) {
+    write_mailbox(0, 0, 0, 0U, 0); /* stop, but keep ownership so skynet can resume the same session */
+    own = OWN_STOPPING;
     skynet_link_active = 0U;
   }
+  if (own == OWN_STOPPING && ik_drive_state == IK_STOPPED) own = OWN_NONE;
 }
 
-void skynet_link_poll(uint32_t now, int ack)
+void skynet_link_poll(uint32_t now, int button)
 {
+  const int lost = lose_to_other_writer();
+  const uint32_t overruns = skynet_link_overruns;
+  if (overruns != seen_overruns) { /* bytes were lost before the ones still queued */
+    seen_overruns = overruns;
+    reset_parser(1);
+  }
   const uint32_t head = ring_head;
   atomic_thread_fence(memory_order_acquire);
   for (uint32_t tail = ring_tail; tail != head; ++tail)
     byte_in(ring_b[tail & (SKYNET_LINK_RING - 1U)], ring_t[tail & (SKYNET_LINK_RING - 1U)], now);
   atomic_thread_fence(memory_order_release);
   ring_tail = head;
-  if (have_byte && window_len == 0U && since(last_byte_t, now) >= SKYNET_LINK_GAP_MS) close_batch(now);
-  if (have_byte && window_len != 0U && since(last_byte_t, now) >= SKYNET_LINK_GAP_MS) reset_parser(1);
-  supervise(now, ack);
+  if (have_byte && since(last_byte_t, now) >= SKYNET_LINK_GAP_MS) {
+    if (window_len == 0U) close_batch(now);
+    else reset_parser(1);
+  }
+  supervise(now, button, lost);
 }

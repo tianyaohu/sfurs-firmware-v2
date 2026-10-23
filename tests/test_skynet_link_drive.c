@@ -58,7 +58,8 @@ static void fault_waits_for_operator(unsigned target)
   CHECK(ik_drive_fault & (1U << (4U + target)));
   CHECK(skynet_link_fault & (1U << (4U + target)));
   CHECK_EQ(ik_drive_state, IK_STOPPED);
-  tick_link(1); /* operator presses B1 */
+  for (unsigned i = 0; i < 25U; ++i) tick_link(0); /* operator presses B1: stable released, then held */
+  for (unsigned i = 0; i < 25U; ++i) tick_link(1);
   CHECK_EQ(skynet_link_fault, 0);
   stream(1000, 21);
   CHECK_EQ(ik_drive_fault, 0);

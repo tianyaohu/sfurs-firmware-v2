@@ -58,3 +58,4 @@ what someone does next; this is not a log.
 - **Static friction far above kinetic winds up an error integrator.** On the mat the reference ran away from a stuck
   wheel for ~0.5 s, the I term climbed to the 3-5 A breakaway, and the wheel then overshot to 3.8x. Ramp the
   current at a fixed rate while stuck and cap the reference lead, so nothing is owed when the wheel lets go.
+- Mat vx breaks free at 4-6 A per wheel (all four together, current mode) and a lone freed wheel slips near 4.5-5 A: hold the breakaway boost until the wheels move (1 s, not 300 ms) and keep its level below the slip current.

@@ -122,3 +122,17 @@ Append only; format in design/README.md.
   the 13-53 ms MCSDK start, which differs per wheel and breaks the 2 ms start-sync bar; parking only long stops keeps
   fast synchronized restarts within play and silence at rest. Lower current gains in HOLD were not tried.
 - Touches: src/esc (motor_cmd, drive_app), src/shared/can (ESC_STOP_PARKED), src/tools (ik_link stop names).
+
+## 2026-10-22  Friction ff: Coulomb per axis and a body-level breakaway boost  (who: claude, decided with Frank H)
+- Decision: friction_ff.c takes separate Coulomb forces for x and y (force (Cx*ux, Cy*uy) along the commanded
+  direction u) and breakaway levels for x, y and yaw. ik_drive.c decides breakaway for the whole robot: while the twist
+  is nonzero and fewer than 2 wheels report >= 30 RPM along their targets, all four get the breakaway levels; at most
+  ik_drive_ff_breakaway_ms per stuck episode; re-armed when the robot sticks again. Mailbox ABI 9;
+  --ff-coulomb-xy-n is replaced by --ff-coulomb-x-n/-y-n plus --ff-breakaway-*.
+- Why: on the mat the IK table is consistent (null-space residual as small as raised) but each ESC's stall ramp frees
+  its wheel at a different moment and the body pivots about the wheels still stuck. A constant ff of ~1 A helped vy
+  (breakaway ~2x sooner, spread ~3x tighter) while vx needed ~3 A to unstick and then overshot up to 2.2x: one level
+  cannot be both, and strafing turns only 54 % of wheel force into vx (84 % for vy). Deciding breakaway from two
+  wheels' reply speeds keeps the four wheels pushing together; ending on two (not all four) stops a wheel that has
+  broken free from being overdriven while one is still stuck. The ESC's 50 A/s ff slew smooths the step back.
+- Touches: src/shared (friction_ff), src/nucleo (ik_drive), src/tools (drive_ops, ik_link).

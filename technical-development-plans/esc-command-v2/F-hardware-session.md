@@ -52,9 +52,11 @@ Mat:
    and the same for vy and wz. Pass: every wheel has >= 4 accepted segments per direction and fit residual RMS < 20 % of Ic.
 2. `friction_map --out ... --breakaway --wheel all --rate-ma-s 2000 --cap-ma 4000 --reps 3`. Compare the breakaway
    currents with 2026-10-21 (3.3-4.7 A on the mat).
-3. Turn the fit into the Nucleo friction model: `move_test` / `keyboard_drive` take `--ff-coulomb-xy-n`,
-   `--ff-viscous-xy-n-per-mps`, `--ff-coulomb-w-nm`, `--ff-viscous-w-nm-per-radps`, `--ff-a-per-nm` (1/Kt) and
-   `--ff-scale FR,BR,BL,FL`. The fit is per wheel in mA; the model is in body-frame N and N*m, so converting needs the
+3. Turn the fit into the Nucleo friction model: `move_test` / `keyboard_drive` take `--ff-coulomb-x-n`,
+   `--ff-coulomb-y-n`, `--ff-viscous-xy-n-per-mps`, `--ff-coulomb-w-nm`, `--ff-viscous-w-nm-per-radps`,
+   `--ff-breakaway-x-n`, `--ff-breakaway-y-n`, `--ff-breakaway-w-nm`, `--ff-breakaway-ms`, `--ff-a-per-nm` (1/Kt) and
+   `--ff-scale FR,BR,BL,FL`. Mat 2026-10-22 starting point (1/Kt placeholder 10): coulomb y 10.5 N (~1 A per wheel),
+   x ~13 N (~2 A), breakaway x ~21 N (~3.2 A), y ~21 N (~2 A); tune from there. The fit is per wheel in mA; the model is in body-frame N and N*m, so converting needs the
    wheel radius and Kt (`--ff-a-per-nm` = 1/Kt): take Kt from the motor datasheet and record its source (Ke is not
    measured). Per-wheel differences go into `--ff-scale`. Check one keyboard_drive run with the values before H6.
 

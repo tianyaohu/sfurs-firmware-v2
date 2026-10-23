@@ -33,14 +33,16 @@ static int solve3(const float m[3][3], const float b[3], float y[3])
 
 int friction_ff_wheel_amps(const struct rover_wheel_geometry geometry[ROVER_WHEEL_COUNT],
                            const struct friction_ff_params *params,
-                           float vx, float vy, float omega,
+                           float vx, float vy, float omega, int breakaway,
                            float amps[ROVER_WHEEL_COUNT])
 {
   if (amps == NULL) return 0;
   for (unsigned i = 0; i < ROVER_WHEEL_COUNT; ++i) amps[i] = 0.0f;
   if (geometry == NULL || params == NULL || !isfinite(vx) || !isfinite(vy) || !isfinite(omega) ||
-      !isfinite(params->coulomb_xy_n) || !isfinite(params->viscous_xy_n_per_mps) ||
-      !isfinite(params->coulomb_w_nm) || !isfinite(params->viscous_w_nm_per_radps) ||
+      !isfinite(params->coulomb_x_n) || !isfinite(params->coulomb_y_n) ||
+      !isfinite(params->viscous_xy_n_per_mps) || !isfinite(params->coulomb_w_nm) ||
+      !isfinite(params->viscous_w_nm_per_radps) || !isfinite(params->breakaway_x_n) ||
+      !isfinite(params->breakaway_y_n) || !isfinite(params->breakaway_w_nm) ||
       !isfinite(params->motor_a_per_nm) || params->motor_a_per_nm <= 0.0f)
     return 0;
 
@@ -54,16 +56,18 @@ int friction_ff_wheel_amps(const struct rover_wheel_geometry geometry[ROVER_WHEE
     g[2][i] = w->x_m * w->dy - w->y_m * w->dx;
   }
 
-  /* The wrench that cancels friction points along the commanded motion. */
+  /* The wrench that cancels friction: Coulomb per axis along the commanded direction, viscous along v. */
+  const float cx = breakaway ? fmaxf(params->coulomb_x_n, params->breakaway_x_n) : params->coulomb_x_n;
+  const float cy = breakaway ? fmaxf(params->coulomb_y_n, params->breakaway_y_n) : params->coulomb_y_n;
+  const float cw = breakaway ? fmaxf(params->coulomb_w_nm, params->breakaway_w_nm) : params->coulomb_w_nm;
   float wrench[3] = {0.0f, 0.0f, 0.0f};
   const float speed = hypotf(vx, vy);
   if (speed >= FRICTION_FF_MIN_SPEED_MPS) {
-    const float force = params->coulomb_xy_n + params->viscous_xy_n_per_mps * speed;
-    wrench[0] = force * vx / speed;
-    wrench[1] = force * vy / speed;
+    wrench[0] = (cx + params->viscous_xy_n_per_mps * speed) * vx / speed;
+    wrench[1] = (cy + params->viscous_xy_n_per_mps * speed) * vy / speed;
   }
   if (fabsf(omega) >= FRICTION_FF_MIN_OMEGA_RADPS)
-    wrench[2] = copysignf(params->coulomb_w_nm + params->viscous_w_nm_per_radps * fabsf(omega), omega);
+    wrench[2] = copysignf(cw + params->viscous_w_nm_per_radps * fabsf(omega), omega);
 
   float ggt[3][3];
   for (unsigned r = 0; r < 3U; ++r)

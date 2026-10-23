@@ -10,16 +10,35 @@ struct result {
 
 static struct friction_ff_params params(void) {
   return (struct friction_ff_params){
-    .coulomb_xy_n = 2.0f, .coulomb_w_nm = 0.3f, .motor_a_per_nm = 30.0f,
+    .coulomb_x_n = 2.0f, .coulomb_y_n = 2.0f, .coulomb_w_nm = 0.3f, .motor_a_per_nm = 30.0f,
     .wheel_scale = {1, 1, 1, 1}
   };
 }
 
+static struct result run_ff_breakaway(const struct rover_wheel_geometry *geometry,
+                                      const struct friction_ff_params *p, const float twist[3], int breakaway) {
+  struct result result = {.amps = {9, 9, 9, 9}};
+  result.ok = friction_ff_wheel_amps(geometry, p, twist[0], twist[1], twist[2], breakaway, result.amps);
+  return result;
+}
+
 static struct result run_ff(const struct rover_wheel_geometry *geometry,
                             const struct friction_ff_params *p, const float twist[3]) {
-  struct result result = {.amps = {9, 9, 9, 9}};
-  result.ok = friction_ff_wheel_amps(geometry, p, twist[0], twist[1], twist[2], result.amps);
-  return result;
+  return run_ff_breakaway(geometry, p, twist, 0);
+}
+
+/* Body wrench the wheel currents produce, reversed independently in double precision, so this oracle does not
+ * repeat the model's matrix solver. */
+static void wrench_of(const struct friction_ff_params *p, const float amps[ROVER_WHEEL_COUNT], double wrench[3]) {
+  wrench[0] = wrench[1] = wrench[2] = 0;
+  for (unsigned i = 0; i < ROVER_WHEEL_COUNT; ++i) {
+    const struct rover_wheel_geometry *w = &rover_ik_provisional[i];
+    double torque = (double)amps[i] * w->motor_sign / ((double)p->motor_a_per_nm * p->wheel_scale[i]);
+    double force = torque * w->gear_ratio / w->radius_m;
+    wrench[0] += force * w->dx;
+    wrench[1] += force * w->dy;
+    wrench[2] += force * ((double)w->x_m * w->dy - (double)w->y_m * w->dx);
+  }
 }
 
 static void check_zero(struct result result, int ok) {
@@ -29,14 +48,16 @@ static void check_zero(struct result result, int ok) {
 
 static void test_defaults_are_off(void) {
   struct friction_ff_params p = params();
-  p.coulomb_xy_n = 0;
+  p.coulomb_x_n = 0;
+  p.coulomb_y_n = 0;
   p.coulomb_w_nm = 0;
   check_zero(run_ff(rover_ik_provisional, &p, (float[3]){0.3f, 0.2f, 1}), 1);
 }
 
 static void test_wheels_rebuild_the_cancelling_wrench(void) {
   struct friction_ff_params p = params();
-  p.coulomb_xy_n = 2.5f;
+  p.coulomb_x_n = 3.5f;
+  p.coulomb_y_n = 2.5f;
   p.viscous_xy_n_per_mps = 1.5f;
   p.coulomb_w_nm = 0.4f;
   p.viscous_w_nm_per_radps = 0.2f;
@@ -49,23 +70,12 @@ static void test_wheels_rebuild_the_cancelling_wrench(void) {
     const float *v = twists[t];
     struct result result = run_ff(rover_ik_provisional, &p, v);
     CHECK_EQ(result.ok, 1);
-    /* Reverse the physical current-to-wrench mapping independently in double
-     * precision, so this oracle does not repeat the model's matrix solver. */
-    double wrench[3] = {0};
-    for (unsigned i = 0; i < ROVER_WHEEL_COUNT; ++i) {
-      const struct rover_wheel_geometry *w = &rover_ik_provisional[i];
-      double torque = (double)result.amps[i] * w->motor_sign /
-                      ((double)p.motor_a_per_nm * p.wheel_scale[i]);
-      double force = torque * w->gear_ratio / w->radius_m;
-      wrench[0] += force * w->dx;
-      wrench[1] += force * w->dy;
-      wrench[2] += force * ((double)w->x_m * w->dy - (double)w->y_m * w->dx);
-    }
+    double wrench[3];
+    wrench_of(&p, result.amps, wrench);
     double speed = hypot(v[0], v[1]);
-    double force = speed ? p.coulomb_xy_n + p.viscous_xy_n_per_mps * speed : 0;
     double expected[3] = {
-      speed ? force * v[0] / speed : 0,
-      speed ? force * v[1] / speed : 0,
+      speed ? (p.coulomb_x_n + p.viscous_xy_n_per_mps * speed) * v[0] / speed : 0,
+      speed ? (p.coulomb_y_n + p.viscous_xy_n_per_mps * speed) * v[1] / speed : 0,
       v[2] ? copysign(p.coulomb_w_nm + p.viscous_w_nm_per_radps * fabs(v[2]), v[2]) : 0
     };
     for (unsigned axis = 0; axis < 3; ++axis)
@@ -117,7 +127,8 @@ static void test_per_wheel_scale_touches_only_that_wheel(void) {
 
 static void test_coulomb_viscous_and_standstill(void) {
   struct friction_ff_params p = params();
-  p.coulomb_xy_n = 3;
+  p.coulomb_x_n = 3;
+  p.coulomb_y_n = 3;
   struct result slow = run_ff(rover_ik_provisional, &p, (float[3]){0, 0.05f, 0});
   struct result fast = run_ff(rover_ik_provisional, &p, (float[3]){0, 0.50f, 0});
   CHECK_EQ(slow.ok, 1);
@@ -189,7 +200,73 @@ static void test_invalid_input_returns_zero_currents(void) {
   check_zero(run_ff(parallel, &p, twist), 0);
   check_zero(run_ff(NULL, &p, twist), 0);
   check_zero(run_ff(rover_ik_provisional, NULL, twist), 0);
-  CHECK_EQ(friction_ff_wheel_amps(rover_ik_provisional, &p, 0.1f, 0, 0, NULL), 0);
+  CHECK_EQ(friction_ff_wheel_amps(rover_ik_provisional, &p, 0.1f, 0, 0, 0, NULL), 0);
+  for (unsigned field = 0; field < 3; ++field) { /* non-finite breakaway levels are refused too */
+    struct friction_ff_params broken = p;
+    float *f = field == 0 ? &broken.breakaway_x_n : field == 1 ? &broken.breakaway_y_n : &broken.breakaway_w_nm;
+    *f = NAN;
+    check_zero(run_ff(rover_ik_provisional, &broken, twist), 0);
+  }
+}
+
+/* Pure x uses only Cx, pure y only Cy, a diagonal gets (Cx*ux, Cy*uy); every wheel still pushes along its motion. */
+static void test_coulomb_differs_by_axis(void) {
+  struct friction_ff_params p = params();
+  p.coulomb_x_n = 6;
+  p.coulomb_y_n = 2;
+  const float twists[][3] = {{0.5f, 0, 0}, {-0.5f, 0, 0}, {0, 0.5f, 0}, {0, -0.5f, 0}, {0.3f, 0.4f, 0}};
+  for (unsigned t = 0; t < sizeof(twists) / sizeof(twists[0]); ++t) {
+    const float *v = twists[t];
+    struct result result = run_ff(rover_ik_provisional, &p, v);
+    CHECK_EQ(result.ok, 1);
+    double wrench[3];
+    wrench_of(&p, result.amps, wrench);
+    double speed = hypot(v[0], v[1]);
+    CHECK_NEAR(wrench[0], 6.0 * v[0] / speed, 1e-3);
+    CHECK_NEAR(wrench[1], 2.0 * v[1] / speed, 1e-3);
+    CHECK_NEAR(wrench[2], 0, 1e-4);
+  }
+  struct friction_ff_params px = p, py = p; /* changing one axis level leaves pure motion along the other alone */
+  px.coulomb_x_n = 9;
+  py.coulomb_y_n = 9;
+  struct result x0 = run_ff(rover_ik_provisional, &p, (float[3]){0.5f, 0, 0});
+  struct result x1 = run_ff(rover_ik_provisional, &py, (float[3]){0.5f, 0, 0});
+  struct result y0 = run_ff(rover_ik_provisional, &p, (float[3]){0, 0.5f, 0});
+  struct result y1 = run_ff(rover_ik_provisional, &px, (float[3]){0, 0.5f, 0});
+  for (unsigned i = 0; i < ROVER_WHEEL_COUNT; ++i) {
+    CHECK_NEAR(x1.amps[i], x0.amps[i], 1e-5);
+    CHECK_NEAR(y1.amps[i], y0.amps[i], 1e-5);
+  }
+}
+
+/* Breakaway raises each Coulomb level to its breakaway level only while asked, and only where it is higher. */
+static void test_breakaway_levels(void) {
+  struct friction_ff_params p = params();
+  p.coulomb_x_n = 3;
+  p.coulomb_y_n = 2;
+  p.coulomb_w_nm = 0.3f;
+  p.viscous_xy_n_per_mps = 1;
+  p.breakaway_x_n = 9;
+  p.breakaway_y_n = 1; /* below coulomb_y: no effect */
+  p.breakaway_w_nm = 0.9f;
+  const float twist[3] = {0.3f, 0.4f, 1.0f};
+  struct result rolling = run_ff_breakaway(rover_ik_provisional, &p, twist, 0);
+  struct result stuck = run_ff_breakaway(rover_ik_provisional, &p, twist, 1);
+  CHECK_EQ(rolling.ok, 1);
+  CHECK_EQ(stuck.ok, 1);
+  double wr[3], ws[3];
+  wrench_of(&p, rolling.amps, wr);
+  wrench_of(&p, stuck.amps, ws);
+  CHECK_NEAR(wr[0], (3 + 0.5) * 0.6, 1e-3);
+  CHECK_NEAR(ws[0], (9 + 0.5) * 0.6, 1e-3);
+  CHECK_NEAR(ws[1], wr[1], 1e-3);
+  CHECK_NEAR(wr[1], (2 + 0.5) * 0.8, 1e-3);
+  CHECK_NEAR(wr[2], 0.3, 1e-4);
+  CHECK_NEAR(ws[2], 0.9, 1e-4);
+  p.breakaway_x_n = p.breakaway_y_n = p.breakaway_w_nm = 0; /* all zero: breakaway changes nothing */
+  struct result off = run_ff_breakaway(rover_ik_provisional, &p, twist, 1);
+  for (unsigned i = 0; i < ROVER_WHEEL_COUNT; ++i) CHECK_NEAR(off.amps[i], rolling.amps[i], 1e-5);
+  check_zero(run_ff_breakaway(rover_ik_provisional, &p, (float[3]){0, 0, 0}, 1), 1); /* no motion, no current */
 }
 
 int main(void) {
@@ -200,5 +277,7 @@ int main(void) {
   test_per_wheel_scale_touches_only_that_wheel();
   test_coulomb_viscous_and_standstill();
   test_invalid_input_returns_zero_currents();
+  test_coulomb_differs_by_axis();
+  test_breakaway_levels();
   return 0;
 }

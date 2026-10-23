@@ -18,7 +18,7 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
    (`ik_drive_reply_lat_hist`, 250 µs bins). For measurements the session can instead run in
    current mode (`ik_drive_mode`, latched at the session start): each wheel gets its own
    q-current setpoint (`ik_drive_current_ma`) in CURRENT frames, with the same heartbeat,
-   LOST and stop handling. Mailbox ABI 8.
+   LOST and stop handling. Mailbox ABI 9.
 3. Each ESC runs MCSDK FOC with Hall sensors (16 kHz current loop) in torque mode.
    `motor_cmd.c` owns the command lifecycle (arming, session and sequence checks, watchdog,
    faults, HOLD; [command-lifecycle.md](command-lifecycle.md)); `motor_speed.c` is the 1 kHz
@@ -125,14 +125,22 @@ Raised, 1024/553 holds ±60 and 120 RPM with Iq ≈ 0.1 A (4096/4424 limit-cycle
 reflashing: `build/tools/esc_tool set all kp 2048` (IDLE only, RAM only), then copy good
 values into `drive_parameters.h`.
 
-On the ground each wheel needs 3.3–4.7 A before it turns (mat 2026-10-21; free air
-0.1 A): that is the stall ramp's job. The Nucleo can instead send it as feed-forward from
-its body-frame friction model (`friction_ff.c`, mailbox words `ik_drive_ff_*`); the model is
-off by default. `move_test` and `keyboard_drive` set it with `--ff-coulomb-xy-n` (N),
-`--ff-viscous-xy-n-per-mps` (N per m/s), `--ff-coulomb-w-nm` (N·m), `--ff-viscous-w-nm-per-radps`
-(N·m per rad/s), `--ff-a-per-nm` (motor A per N·m, required) and `--ff-scale FR,BR,BL,FL` (%, 1–200);
-they write it only while the drive is stopped and switch it off again on exit, and `move_test`
-records it under `settings.ff` in result.json. `friction_map` measures the floor friction it needs.
+On the ground each wheel needs 3.5–6 A before it turns (mat 2026-10-22; free air
+0.1 A) and 0.3–2.2 A to keep rolling. Left to each ESC's stall ramp the wheels break free one at a
+time and the body pivots about the ones still stuck, so the Nucleo sends friction as feed-forward
+from its body-frame model (`friction_ff.c`, mailbox words `ik_drive_ff_*`); the model is off by
+default. Coulomb friction has its own level per axis (strafing in x needs more than driving in y).
+Breakaway boost: while the twist is nonzero and fewer than 2 wheels report >= 30 RPM along their
+targets, all four wheels get the breakaway levels instead, for at most `--ff-breakaway-ms` per
+stuck episode; a robot that sticks again is boosted again. `move_test` and `keyboard_drive` set it
+with `--ff-coulomb-x-n`, `--ff-coulomb-y-n` (N), `--ff-viscous-xy-n-per-mps` (N per m/s),
+`--ff-coulomb-w-nm` (N·m), `--ff-viscous-w-nm-per-radps` (N·m per rad/s), `--ff-breakaway-x-n`,
+`--ff-breakaway-y-n` (N), `--ff-breakaway-w-nm` (N·m), `--ff-breakaway-ms` (1–2000, default 300 when a
+breakaway level is given), `--ff-a-per-nm` (motor A per N·m, required) and `--ff-scale FR,BR,BL,FL`
+(%, 1–200); they write it only while the drive is stopped and switch it off again on exit, and
+`move_test` records it under `settings.ff` in result.json. `ik_drive_ff_boost` is 1 while the frames
+carry the boost. With the provisional geometry 1 N gives about 0.095 A per wheel in y and 0.15 A in
+x per 10 A/N·m of `--ff-a-per-nm`. `friction_map` measures the floor friction it needs.
 
 Motor constants in `pmsm_motor_parameters.h` are the Workbench placeholder
 (Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM). Measured by capture on all four motors:

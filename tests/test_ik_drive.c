@@ -333,7 +333,7 @@ static void test_resyncs_a_moved_baseline(void)
 
 static void test_feed_forward_rides_in_speed_frames(void)
 {
-  ik_drive_ff_enable = 1; ik_drive_ff_coulomb_xy_mn = 3000; ik_drive_ff_a_per_nm_milli = 40000;
+  ik_drive_ff_enable = 1; ik_drive_ff_coulomb_y_mn = 3000; ik_drive_ff_a_per_nm_milli = 40000;
   drive_forward();
   for (unsigned i = 0; i < 4; ++i) {
     struct motor_control c = {0};
@@ -406,17 +406,100 @@ static void test_config_reply_stored(void)
   for (unsigned w = 0; w < 4U; ++w) CHECK(ik_drive_link[w].cfg_count == 1U);
 }
 
+/* Fake ESC speed estimates, which every reply carries back to the Nucleo. */
+static void set_rpm(const int rpm[4])
+{
+  for (unsigned w = 0; w < 4U; ++w) esc_in[w].rpm = (int16_t)rpm[w];
+}
+
+static int along(unsigned w, int rpm) { return fwd1[w] > 0 ? rpm : -rpm; }
+
+static void check_ff(const int32_t want[4], int divisor)
+{
+  for (unsigned w = 0; w < 4U; ++w) CHECK(labs((long)ik_drive_ff_ma[w] * divisor - want[w]) <= 2L * divisor);
+}
+
+/* Breakaway boost: all four wheels get the breakaway level together until two of them turn along their targets
+ * (>= IK_DRIVE_BREAKAWAY_RPM in the ESC replies); every pair ends it, one wheel or a wheel turning the wrong way
+ * does not; a robot that sticks again is boosted again. */
+static void test_breakaway_boost_until_two_wheels_turn(void)
+{
+  ik_drive_ff_enable = 1; ik_drive_ff_coulomb_y_mn = 3000; ik_drive_ff_breakaway_y_mn = 9000;
+  ik_drive_ff_breakaway_ms = 400; ik_drive_ff_a_per_nm_milli = 40000;
+  ik_drive_vy_mmps = 1000; ik_drive_enable = 1;
+  run(60, 1); /* probe t=0, ARM t=20, first motion frame t=40 */
+  CHECK(ik_drive_ff_boost == 1U);
+  int32_t boosted[4];
+  for (unsigned w = 0; w < 4U; ++w) {
+    boosted[w] = ik_drive_ff_ma[w];
+    CHECK(boosted[w] != 0 && (boosted[w] > 0) == (fwd1[w] > 0)); /* along the motion */
+  }
+  int rpm[4];
+  for (unsigned w = 0; w < 4U; ++w) rpm[w] = along(w, IK_DRIVE_BREAKAWAY_RPM - 1); /* all just below the bar */
+  set_rpm(rpm); run(40, 1);
+  CHECK(ik_drive_ff_boost == 1U);
+  check_ff(boosted, 1);
+  for (unsigned w = 0; w < 4U; ++w) {
+    const unsigned v = (w + 1U) % 4U;
+    memset(rpm, 0, sizeof rpm);
+    rpm[w] = along(w, IK_DRIVE_BREAKAWAY_RPM);
+    set_rpm(rpm); run(40, 1);
+    CHECK(ik_drive_ff_boost == 1U); /* one wheel free */
+    rpm[v] = along(v, -100);
+    set_rpm(rpm); run(40, 1);
+    CHECK(ik_drive_ff_boost == 1U); /* the second turns against its target */
+    rpm[v] = along(v, 100);
+    set_rpm(rpm); run(40, 1);
+    CHECK(ik_drive_ff_boost == 0U);
+    check_ff(boosted, 3); /* back to Coulomb: 3 N instead of 9 N on every wheel */
+    memset(rpm, 0, sizeof rpm);
+    set_rpm(rpm); run(40, 1);
+    CHECK(ik_drive_ff_boost == 1U); /* stuck again */
+    check_ff(boosted, 1);
+  }
+}
+
+/* One stuck episode is boosted for at most ik_drive_ff_breakaway_ms; it stays at Coulomb until the robot has moved
+ * (two wheels free) and stuck again. A time of 0 never boosts. */
+static void test_breakaway_boost_time_limit(void)
+{
+  ik_drive_ff_enable = 1; ik_drive_ff_coulomb_y_mn = 3000; ik_drive_ff_breakaway_y_mn = 9000;
+  ik_drive_ff_breakaway_ms = 200; ik_drive_ff_a_per_nm_milli = 40000;
+  ik_drive_vy_mmps = 1000; ik_drive_enable = 1;
+  run(41, 1); /* the first motion frame: boost period 1 */
+  CHECK(ik_drive_ff_boost == 1U);
+  int32_t boosted[4];
+  for (unsigned w = 0; w < 4U; ++w) boosted[w] = ik_drive_ff_ma[w];
+  run(9U * IK_DRIVE_PERIOD_MS, 1); /* periods 2-10: 200 ms */
+  CHECK(ik_drive_ff_boost == 1U);
+  run(IK_DRIVE_PERIOD_MS, 1);
+  CHECK(ik_drive_ff_boost == 0U);
+  check_ff(boosted, 3);
+  run(500, 1);
+  CHECK(ik_drive_ff_boost == 0U); /* still stuck: no second boost */
+  int rpm[4] = {0};
+  rpm[0] = along(0, 100); rpm[2] = along(2, 100);
+  set_rpm(rpm); run(40, 1);
+  memset(rpm, 0, sizeof rpm);
+  set_rpm(rpm); run(40, 1);
+  CHECK(ik_drive_ff_boost == 1U); /* moved, then stuck: a new episode */
+  ik_drive_ff_breakaway_ms = 0;
+  run(40, 1);
+  CHECK(ik_drive_ff_boost == 0U);
+  check_ff(boosted, 3);
+}
+
 /* A twist rejected as out of range gets no feed-forward either (it would fight the slew to zero). */
 static void test_rejected_twist_has_no_ff(void)
 {
   setup();
-  ik_drive_ff_enable = 1; ik_drive_ff_coulomb_xy_mn = 3000; ik_drive_ff_a_per_nm_milli = 40000;
+  ik_drive_ff_enable = 1; ik_drive_ff_coulomb_y_mn = 3000; ik_drive_ff_a_per_nm_milli = 40000;
   drive_forward();
   for (unsigned w = 0; w < 4U; ++w) CHECK(ik_drive_ff_ma[w] != 0);
   ik_drive_vy_mmps = IK_DRIVE_MAX_LINEAR_MMPS + 1; run(40, 1);
   for (unsigned w = 0; w < 4U; ++w) CHECK(ik_drive_ff_ma[w] == 0);
   CHECK(ik_drive_bad_input > 0U);
-  ik_drive_ff_enable = 0; ik_drive_ff_coulomb_xy_mn = 0; ik_drive_ff_a_per_nm_milli = 0;
+  ik_drive_ff_enable = 0; ik_drive_ff_coulomb_y_mn = 0; ik_drive_ff_a_per_nm_milli = 0;
 }
 
 /* A fault stop runs to STOPPED even if the host re-enables at once; then a fresh probe/ARM session starts. */
@@ -483,6 +566,8 @@ int main(int argc, char **argv)
     { "reply_latency_histogram", test_reply_latency_histogram },
     { "config_reply_stored", test_config_reply_stored },
     { "rejected_twist_has_no_ff", test_rejected_twist_has_no_ff },
+    { "breakaway_boost_until_two_wheels_turn", test_breakaway_boost_until_two_wheels_turn },
+    { "breakaway_boost_time_limit", test_breakaway_boost_time_limit },
     { "fault_stop_starts_a_new_session", test_fault_stop_starts_a_new_session },
     { "current_mode_frames", test_current_mode_frames },
   };

@@ -421,12 +421,14 @@ static int milli_word(double value, int32_t *word)
 
 int drive_ff_from_options(const drive_option *options, size_t count, drive_ff_t *ff, char *err, size_t errlen)
 {
-  static const char *const names[] = {"ff-coulomb-xy-n", "ff-viscous-xy-n-per-mps", "ff-coulomb-w-nm",
-                                      "ff-viscous-w-nm-per-radps", "ff-a-per-nm"};
+  static const char *const names[] = {"ff-a-per-nm", "ff-coulomb-x-n", "ff-coulomb-y-n", "ff-viscous-xy-n-per-mps",
+                                      "ff-coulomb-w-nm", "ff-viscous-w-nm-per-radps", "ff-breakaway-x-n",
+                                      "ff-breakaway-y-n", "ff-breakaway-w-nm"};
   drive_ff_off(ff);
-  int32_t *words[] = {&ff->coulomb_xy_mn, &ff->viscous_xy_mn_per_mps, &ff->coulomb_w_mnm,
-                      &ff->viscous_w_mnm_per_radps, &ff->a_per_nm_milli};
-  bool a_given = false;
+  int32_t *words[] = {&ff->a_per_nm_milli, &ff->coulomb_x_mn, &ff->coulomb_y_mn, &ff->viscous_xy_mn_per_mps,
+                      &ff->coulomb_w_mnm, &ff->viscous_w_mnm_per_radps, &ff->breakaway_x_mn, &ff->breakaway_y_mn,
+                      &ff->breakaway_w_mnm};
+  bool a_given = false, ms_given = false;
   for (size_t k = 0; k < count; k++) {
     const drive_option *o = &options[k];
     if (!o->seen || strncmp(o->name, "ff-", 3)) continue;
@@ -446,14 +448,27 @@ int drive_ff_from_options(const drive_option *options, size_t count, drive_ff_t 
       }
       continue;
     }
+    if (!strcmp(o->name, "ff-breakaway-ms")) {
+      const int ms = *(const int *)o->value;
+      if (ms < 1 || ms > DRIVE_FF_BREAKAWAY_MS_MAX) {
+        snprintf(err, errlen, "--ff-breakaway-ms must be 1..%d", DRIVE_FF_BREAKAWAY_MS_MAX);
+        return -1;
+      }
+      ff->breakaway_ms = ms;
+      ms_given = true;
+      continue;
+    }
     for (size_t n = 0; n < sizeof names / sizeof *names; n++) if (!strcmp(o->name, names[n])) {
       if (milli_word(*(const double *)o->value, words[n])) {
         snprintf(err, errlen, "--%s must be finite, >= 0 and <= %.0f", names[n], INT32_MAX / 1000.0);
         return -1;
       }
-      if (n == 4) a_given = true;
+      if (n == 0) a_given = true;
     }
   }
+  /* A breakaway level without a time gets the default; a time alone boosts nothing (levels 0). */
+  if (!ms_given && (ff->breakaway_x_mn || ff->breakaway_y_mn || ff->breakaway_w_mnm))
+    ff->breakaway_ms = DRIVE_FF_BREAKAWAY_MS_DEFAULT;
   /* The firmware model outputs nothing without a positive 1/Kt; refuse instead of a silent no-op. */
   if (ff->enable && (!a_given || ff->a_per_nm_milli <= 0)) {
     snprintf(err, errlen, "feed-forward needs --ff-a-per-nm > 0 (motor A per N*m, 1/Kt)");
@@ -465,10 +480,15 @@ int drive_ff_from_options(const drive_option *options, size_t count, drive_ff_t 
 static int ff_write_words(ik_link_t *l, const drive_ff_t *ff)
 {
   if (ik_write(l, IK_FF_ENABLE, 0) ||
-      ik_write(l, IK_FF_COULOMB_XY_MN, (uint32_t)ff->coulomb_xy_mn) ||
+      ik_write(l, IK_FF_COULOMB_X_MN, (uint32_t)ff->coulomb_x_mn) ||
+      ik_write(l, IK_FF_COULOMB_Y_MN, (uint32_t)ff->coulomb_y_mn) ||
       ik_write(l, IK_FF_VISCOUS_XY_MN_PER_MPS, (uint32_t)ff->viscous_xy_mn_per_mps) ||
       ik_write(l, IK_FF_COULOMB_W_MNM, (uint32_t)ff->coulomb_w_mnm) ||
       ik_write(l, IK_FF_VISCOUS_W_MNM_PER_RADPS, (uint32_t)ff->viscous_w_mnm_per_radps) ||
+      ik_write(l, IK_FF_BREAKAWAY_X_MN, (uint32_t)ff->breakaway_x_mn) ||
+      ik_write(l, IK_FF_BREAKAWAY_Y_MN, (uint32_t)ff->breakaway_y_mn) ||
+      ik_write(l, IK_FF_BREAKAWAY_W_MNM, (uint32_t)ff->breakaway_w_mnm) ||
+      ik_write(l, IK_FF_BREAKAWAY_MS, (uint32_t)ff->breakaway_ms) ||
       ik_write(l, IK_FF_A_PER_NM_MILLI, (uint32_t)ff->a_per_nm_milli)) return -1;
   for (int w = 0; w < IK_WHEELS; w++)
     if (ocd_write32(l->ocd, l->addr[IK_FF_SCALE_PCT] + (uint32_t)w * 4U, (uint32_t)ff->scale_pct[w])) {
@@ -498,9 +518,12 @@ int drive_ff_clear(ik_link_t *l)
 
 void drive_ff_json(FILE *f, const drive_ff_t *ff)
 {
-  fprintf(f, "{\"enable\":%s,\"coulomb_xy_n\":%.3f,\"viscous_xy_n_per_mps\":%.3f,\"coulomb_w_nm\":%.3f,"
-             "\"viscous_w_nm_per_radps\":%.3f,\"a_per_nm\":%.3f,\"scale_pct\":[%d,%d,%d,%d]}",
-          ff->enable ? "true" : "false", ff->coulomb_xy_mn / 1000.0, ff->viscous_xy_mn_per_mps / 1000.0,
-          ff->coulomb_w_mnm / 1000.0, ff->viscous_w_mnm_per_radps / 1000.0, ff->a_per_nm_milli / 1000.0,
+  fprintf(f, "{\"enable\":%s,\"coulomb_x_n\":%.3f,\"coulomb_y_n\":%.3f,\"viscous_xy_n_per_mps\":%.3f,"
+             "\"coulomb_w_nm\":%.3f,\"viscous_w_nm_per_radps\":%.3f,\"breakaway_x_n\":%.3f,\"breakaway_y_n\":%.3f,"
+             "\"breakaway_w_nm\":%.3f,\"breakaway_ms\":%d,\"a_per_nm\":%.3f,\"scale_pct\":[%d,%d,%d,%d]}",
+          ff->enable ? "true" : "false", ff->coulomb_x_mn / 1000.0, ff->coulomb_y_mn / 1000.0,
+          ff->viscous_xy_mn_per_mps / 1000.0, ff->coulomb_w_mnm / 1000.0, ff->viscous_w_mnm_per_radps / 1000.0,
+          ff->breakaway_x_mn / 1000.0, ff->breakaway_y_mn / 1000.0, ff->breakaway_w_mnm / 1000.0,
+          (int)ff->breakaway_ms, ff->a_per_nm_milli / 1000.0,
           (int)ff->scale_pct[0], (int)ff->scale_pct[1], (int)ff->scale_pct[2], (int)ff->scale_pct[3]);
 }

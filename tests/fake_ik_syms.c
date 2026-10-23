@@ -8,9 +8,10 @@ SYM(raw_data_hi); SYM(raw_len); SYM(clear_seq); SYM(clear_done); SYM(fault); SYM
 SYM(reply_lat_hist)[4][16]; SYM(reply_lat_max_us)[4];
 uint32_t can_rx_frame_count;
 SYM(mode); SYM(current_ma)[4];
-SYM(link)[4 * 25]; SYM(ff_enable); SYM(ff_coulomb_xy_mn); SYM(ff_viscous_xy_mn_per_mps);
-SYM(ff_coulomb_w_mnm); SYM(ff_viscous_w_mnm_per_radps); SYM(ff_a_per_nm_milli);
-SYM(ff_scale_pct)[4]; SYM(ff_ma)[4];
+SYM(link)[4 * 25]; SYM(ff_enable); SYM(ff_coulomb_x_mn); SYM(ff_coulomb_y_mn); SYM(ff_viscous_xy_mn_per_mps);
+SYM(ff_coulomb_w_mnm); SYM(ff_viscous_w_mnm_per_radps); SYM(ff_breakaway_x_mn); SYM(ff_breakaway_y_mn);
+SYM(ff_breakaway_w_mnm); SYM(ff_breakaway_ms); SYM(ff_a_per_nm_milli);
+SYM(ff_scale_pct)[4]; SYM(ff_ma)[4]; SYM(ff_boost);
 SYM(raw_id); SYM(raw_data); SYM(raw_seq); SYM(state); SYM(raw_done); SYM(tx_count); SYM(tx_fail);
 SYM(bad_input); SYM(telem_now); SYM(target_rpm)[4]; SYM(rpm)[4]; SYM(telem)[4 * 19]; SYM(capture)[5 + 3 * 512];
 

@@ -16,13 +16,16 @@ typedef struct {
   int samples, trigger, peak_rpm;
 } drive_record_summary_t;
 /** @brief Nucleo friction feed-forward mailbox words (ik_drive_ff_*, units of friction_ff.c
- *  scaled to integers): forces mN, torques mN*m, 1/Kt mA per N*m, per-wheel trim %. */
+ *  scaled to integers): forces mN, torques mN*m, boost time ms, 1/Kt mA per N*m, per-wheel trim %. */
 typedef struct {
   bool enable;
-  int32_t coulomb_xy_mn, viscous_xy_mn_per_mps, coulomb_w_mnm, viscous_w_mnm_per_radps, a_per_nm_milli;
+  int32_t coulomb_x_mn, coulomb_y_mn, viscous_xy_mn_per_mps, coulomb_w_mnm, viscous_w_mnm_per_radps;
+  int32_t breakaway_x_mn, breakaway_y_mn, breakaway_w_mnm, breakaway_ms, a_per_nm_milli;
   int32_t scale_pct[IK_WHEELS];
 } drive_ff_t;
 #define DRIVE_FF_SCALE_NOMINAL_PCT 100 /**< ik_drive_ff_scale_pct boot value (ik_drive.c) */
+#define DRIVE_FF_BREAKAWAY_MS_DEFAULT 300 /**< boost time when a breakaway level is given without --ff-breakaway-ms */
+#define DRIVE_FF_BREAKAWAY_MS_MAX 2000    /**< longest boost accepted, ms (the ESC stall fault comes after ~1 s anyway) */
 /** @brief Per-wheel values of DRIVE_SETTING_KEYS, in each key's CONFIG unit, plus the
  *  Nucleo feed-forward model the stage runs with (off unless a tool sets it). */
 typedef struct { int value[IK_WHEELS][DRIVE_KEYS]; drive_ff_t ff; } drive_settings_t;
@@ -179,25 +182,37 @@ void drive_args_json(FILE *f, const drive_option *options, size_t count);
 
 /** @brief Feed-forward CLI arguments in SI units, before conversion to mailbox words. */
 typedef struct {
-  double coulomb_xy_n;           /**< translation Coulomb force, N */
+  double coulomb_x_n;            /**< x (strafe) Coulomb force, N */
+  double coulomb_y_n;            /**< y (forward) Coulomb force, N */
   double viscous_xy_n_per_mps;   /**< translation viscous force, N per m/s */
   double coulomb_w_nm;           /**< yaw Coulomb torque, N*m */
   double viscous_w_nm_per_radps; /**< yaw viscous torque, N*m per rad/s */
+  double breakaway_x_n;          /**< x force until the robot breaks free, N */
+  double breakaway_y_n;          /**< y force until the robot breaks free, N */
+  double breakaway_w_nm;         /**< yaw torque until the robot breaks free, N*m */
+  int breakaway_ms;              /**< longest boost per stuck episode, ms */
   double a_per_nm;               /**< motor current per motor torque (1/Kt), A per N*m */
   const char *scale_pct;         /**< "FR,BR,BL,FL" per-wheel trim, integer % */
 } drive_ff_args_t;
-/** @brief The six feed-forward options, for a tool's drive_option table. */
+/** @brief The feed-forward options, for a tool's drive_option table. */
 #define DRIVE_FF_OPTIONS(a)                                                               \
-  DRIVE_OPT("ff-coulomb-xy-n", DOUBLE, &(a)->coulomb_xy_n),                               \
+  DRIVE_OPT("ff-coulomb-x-n", DOUBLE, &(a)->coulomb_x_n),                                 \
+  DRIVE_OPT("ff-coulomb-y-n", DOUBLE, &(a)->coulomb_y_n),                                 \
   DRIVE_OPT("ff-viscous-xy-n-per-mps", DOUBLE, &(a)->viscous_xy_n_per_mps),               \
   DRIVE_OPT("ff-coulomb-w-nm", DOUBLE, &(a)->coulomb_w_nm),                               \
   DRIVE_OPT("ff-viscous-w-nm-per-radps", DOUBLE, &(a)->viscous_w_nm_per_radps),           \
+  DRIVE_OPT("ff-breakaway-x-n", DOUBLE, &(a)->breakaway_x_n),                             \
+  DRIVE_OPT("ff-breakaway-y-n", DOUBLE, &(a)->breakaway_y_n),                             \
+  DRIVE_OPT("ff-breakaway-w-nm", DOUBLE, &(a)->breakaway_w_nm),                           \
+  DRIVE_OPT("ff-breakaway-ms", INT, &(a)->breakaway_ms),                                  \
   DRIVE_OPT("ff-a-per-nm", DOUBLE, &(a)->a_per_nm), DRIVE_OPT("ff-scale", STRING, &(a)->scale_pct)
 /** @brief Usage text for DRIVE_FF_OPTIONS. */
 #define DRIVE_FF_USAGE                                                                      \
-  "  [--ff-coulomb-xy-n N --ff-viscous-xy-n-per-mps N --ff-coulomb-w-nm NM --ff-viscous-w-nm-per-radps NM\n" \
-  "   --ff-a-per-nm A_PER_NM --ff-scale FR,BR,BL,FL]  Nucleo friction feed-forward (SI units, scale %;\n" \
-  "   any of them turns it on and needs --ff-a-per-nm; it is switched off again on exit)"
+  "  [--ff-coulomb-x-n N --ff-coulomb-y-n N --ff-viscous-xy-n-per-mps N --ff-coulomb-w-nm NM\n" \
+  "   --ff-viscous-w-nm-per-radps NM --ff-breakaway-x-n N --ff-breakaway-y-n N --ff-breakaway-w-nm NM\n" \
+  "   --ff-breakaway-ms 300 --ff-a-per-nm A_PER_NM --ff-scale FR,BR,BL,FL]  Nucleo friction feed-forward\n" \
+  "   (SI units, scale %; breakaway levels apply until two wheels turn, at most --ff-breakaway-ms; any\n" \
+  "   option turns it on and needs --ff-a-per-nm; it is switched off again on exit)"
 
 /** @brief Feed-forward off: every term zero, trims at their boot value.
  *  @param ff out: mailbox words */

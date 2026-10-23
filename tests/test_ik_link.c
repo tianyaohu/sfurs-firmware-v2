@@ -70,7 +70,7 @@ static void test_config_keys(void)
 
 static void test_link_decode(void)
 {
-  CHECK_EQ(IK_ABI, 0x494B0008U); CHECK_EQ(IK_LINK_WORDS, 25);
+  CHECK_EQ(IK_ABI, 0x494B0009U); CHECK_EQ(IK_LINK_WORDS, 25);
   for (int wheel = 0; wheel < 4; wheel++) {
     uint32_t words[IK_LINK_WORDS] = {0};
     words[8] = (uint32_t)-123; words[9] = (uint32_t)-450;

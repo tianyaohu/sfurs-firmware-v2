@@ -26,6 +26,8 @@ foreach(case
     config_reply_stored
     current_mode_frames
     rejected_twist_has_no_ff
+    breakaway_boost_until_two_wheels_turn
+    breakaway_boost_time_limit
     fault_stop_starts_a_new_session)
   add_test(NAME test_ik_drive.${case} COMMAND test_ik_drive ${case})
 endforeach()

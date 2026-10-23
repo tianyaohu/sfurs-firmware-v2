@@ -17,9 +17,12 @@ volatile int32_t ik_drive_accel_rpmps;
 volatile uint32_t ik_drive_raw_id, ik_drive_raw_data, ik_drive_raw_data_hi, ik_drive_raw_len, ik_drive_raw_seq;
 volatile uint32_t ik_drive_clear_seq, ik_drive_clear_done;
 volatile uint32_t ik_drive_ff_enable;
-volatile int32_t ik_drive_ff_coulomb_xy_mn, ik_drive_ff_viscous_xy_mn_per_mps;
+volatile int32_t ik_drive_ff_coulomb_x_mn, ik_drive_ff_coulomb_y_mn, ik_drive_ff_viscous_xy_mn_per_mps;
 volatile int32_t ik_drive_ff_coulomb_w_mnm, ik_drive_ff_viscous_w_mnm_per_radps;
+volatile int32_t ik_drive_ff_breakaway_x_mn, ik_drive_ff_breakaway_y_mn, ik_drive_ff_breakaway_w_mnm;
+volatile int32_t ik_drive_ff_breakaway_ms;
 volatile int32_t ik_drive_ff_a_per_nm_milli;
+volatile uint32_t ik_drive_ff_boost;
 volatile int32_t ik_drive_ff_scale_pct[4] = {100, 100, 100, 100};
 volatile uint32_t ik_drive_mode;
 volatile int32_t ik_drive_current_ma[4];
@@ -180,25 +183,55 @@ static int targets(int drive, float target[4])
   return 1;
 }
 
+/* Breakaway boost, decided for the whole robot: each ESC's own stall ramp frees its wheel at a different moment
+ * and the body pivots about the wheels still stuck (mat, 2026-10-22), so all four get the breakaway level together
+ * until IK_DRIVE_BREAKAWAY_WHEELS of them turn along their targets (the ESC's reply speed). A wheel that sticks
+ * again re-arms it; ik_drive_ff_breakaway_ms bounds one stuck episode so a wedged robot falls back to Coulomb. */
+static uint32_t boost_ms;
+
+static int breakaway(int on, const float target[4])
+{
+  const int32_t limit_ms = ik_drive_ff_breakaway_ms;
+  unsigned commanded = 0U, free_wheels = 0U;
+  for (unsigned w = 0; w < 4U; ++w) {
+    if (target[w] == 0.0f) continue;
+    ++commanded;
+    const int32_t rpm = ik_drive_link[w].rpm;
+    if (target[w] > 0.0f ? rpm >= IK_DRIVE_BREAKAWAY_RPM : rpm <= -IK_DRIVE_BREAKAWAY_RPM) ++free_wheels;
+  }
+  if (!on || limit_ms <= 0 || commanded == 0U || free_wheels >= IK_DRIVE_BREAKAWAY_WHEELS) {
+    boost_ms = 0U;
+    return 0;
+  }
+  if (boost_ms >= (uint32_t)limit_ms) return 0; /* this episode used its time: Coulomb until the robot moves */
+  boost_ms += IK_DRIVE_PERIOD_MS;
+  return 1;
+}
+
 /* Friction feed-forward for the requested twist, mA per wheel. The model runs on the target
  * twist, not the slewed wheel speed, so the current is there from the first frame; the ESC
  * slews it and applies it only along its speed reference. */
-static void feed_forward(int on, int32_t ma[4])
+static void feed_forward(int on, int boost, int32_t ma[4])
 {
   for (unsigned i = 0; i < 4U; ++i) ma[i] = 0;
   if (!on) return;
   const struct friction_ff_params p = {
-    .coulomb_xy_n = (float)ik_drive_ff_coulomb_xy_mn / 1000.0f,
+    .coulomb_x_n = (float)ik_drive_ff_coulomb_x_mn / 1000.0f,
+    .coulomb_y_n = (float)ik_drive_ff_coulomb_y_mn / 1000.0f,
     .viscous_xy_n_per_mps = (float)ik_drive_ff_viscous_xy_mn_per_mps / 1000.0f,
     .coulomb_w_nm = (float)ik_drive_ff_coulomb_w_mnm / 1000.0f,
     .viscous_w_nm_per_radps = (float)ik_drive_ff_viscous_w_mnm_per_radps / 1000.0f,
+    .breakaway_x_n = (float)ik_drive_ff_breakaway_x_mn / 1000.0f,
+    .breakaway_y_n = (float)ik_drive_ff_breakaway_y_mn / 1000.0f,
+    .breakaway_w_nm = (float)ik_drive_ff_breakaway_w_mnm / 1000.0f,
     .motor_a_per_nm = (float)ik_drive_ff_a_per_nm_milli / 1000.0f,
     .wheel_scale = {(float)ik_drive_ff_scale_pct[0] / 100.0f, (float)ik_drive_ff_scale_pct[1] / 100.0f,
                     (float)ik_drive_ff_scale_pct[2] / 100.0f, (float)ik_drive_ff_scale_pct[3] / 100.0f},
   };
   float amps[4];
   if (!friction_ff_wheel_amps(rover_ik_provisional, &p, (float)ik_drive_vx_mmps / 1000.0f,
-                              (float)ik_drive_vy_mmps / 1000.0f, (float)ik_drive_omega_mradps / 1000.0f, amps))
+                              (float)ik_drive_vy_mmps / 1000.0f, (float)ik_drive_omega_mradps / 1000.0f, boost,
+                              amps))
     return; /* invalid parameters: no feed-forward */
   for (unsigned i = 0; i < 4U; ++i) {
     int32_t v = (int32_t)lroundf(amps[i] * 1000.0f);
@@ -265,6 +298,8 @@ static void begin_session(uint32_t now)
     command[w] = 0.0f;
   }
   ik_drive_armed = 0U;
+  boost_ms = 0U;
+  ik_drive_ff_boost = 0U;
   hold_tick = now;
   /* The ESC latches its mode at the start and refuses another until DISABLE, so the session does too. */
   if (ik_drive_mode > IK_MODE_CURRENT) ++ik_drive_bad_input;
@@ -389,7 +424,10 @@ void ik_drive_tick(uint32_t now, uint32_t now_us, ik_send_fn send)
   const int accepted = targets(go && !current, target);
   slew(target);
   int32_t ff_ma[4];
-  feed_forward(accepted && ik_drive_ff_enable != 0U, ff_ma);
+  const int ff_on = accepted && ik_drive_ff_enable != 0U;
+  const int boost = breakaway(ff_on, target);
+  ik_drive_ff_boost = (uint32_t)boost;
+  feed_forward(ff_on, boost, ff_ma);
   int moving = drive;
   for (unsigned w = 0; w < 4U; ++w) {
     ik_drive_ff_ma[w] = ff_ma[w];

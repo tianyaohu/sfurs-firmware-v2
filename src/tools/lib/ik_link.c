@@ -20,8 +20,9 @@ static const char *const SYM_NAMES[IK_SYM_COUNT] = {
     "abi", "vx_mmps", "vy_mmps", "omega_mradps", "enable", "heartbeat", "accel_rpmps", "raw_id",
     "raw_data", "raw_seq", "state", "raw_done", "tx_count", "tx_fail", "bad_input", "telem_now",
     "target_rpm", "rpm", "telem", "capture", "raw_data_hi", "raw_len", "clear_seq", "clear_done",
-    "fault", "armed", "link", "ff_enable", "ff_coulomb_xy_mn", "ff_viscous_xy_mn_per_mps",
-    "ff_coulomb_w_mnm", "ff_viscous_w_mnm_per_radps", "ff_a_per_nm_milli", "ff_scale_pct", "ff_ma",
+    "fault", "armed", "link", "ff_enable", "ff_coulomb_x_mn", "ff_coulomb_y_mn", "ff_viscous_xy_mn_per_mps",
+    "ff_coulomb_w_mnm", "ff_viscous_w_mnm_per_radps", "ff_breakaway_x_mn", "ff_breakaway_y_mn",
+    "ff_breakaway_w_mnm", "ff_breakaway_ms", "ff_a_per_nm_milli", "ff_scale_pct", "ff_ma", "ff_boost",
     "reply_lat_hist", "reply_lat_max_us", "mode", "current_ma"};
 
 static const struct { const char *name; int number; } CONFIG_KEYS[] = {

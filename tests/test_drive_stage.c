@@ -140,9 +140,10 @@ static void test_stage_json_plan_windows_and_nulls(void)
   f = tmpfile(); CHECK(f); drive_stage_json(f, "drive", &s, &settings, plan, 2);
   rewind(f); memset(text, 0, sizeof text); CHECK(fread(text, 1, sizeof text - 1, f) > 0); fclose(f);
   CHECK(strstr(text, "\"settings\":{\"kp\":1024,\"ki\":553,\"stall_ramp_ma_per_s\":10000,\"stall_ms\":500,"
-                    "\"ff\":{\"enable\":false,\"coulomb_xy_n\":0.000,\"viscous_xy_n_per_mps\":0.000,"
-                    "\"coulomb_w_nm\":0.000,\"viscous_w_nm_per_radps\":0.000,\"a_per_nm\":0.000,"
-                    "\"scale_pct\":[100,100,100,100]}}"));
+                    "\"ff\":{\"enable\":false,\"coulomb_x_n\":0.000,\"coulomb_y_n\":0.000,"
+                    "\"viscous_xy_n_per_mps\":0.000,\"coulomb_w_nm\":0.000,\"viscous_w_nm_per_radps\":0.000,"
+                    "\"breakaway_x_n\":0.000,\"breakaway_y_n\":0.000,\"breakaway_w_nm\":0.000,\"breakaway_ms\":0,"
+                    "\"a_per_nm\":0.000,\"scale_pct\":[100,100,100,100]}}"));
   CHECK(strstr(text, "\"vbus_min\":null"));
   CHECK(strstr(text, "\"breakaway_s\":null")); CHECK(!strstr(text, "nan"));
   drive_stage_free(&s);
@@ -206,34 +207,50 @@ static void test_ff_options_convert_si_to_mailbox_words(void)
   drive_ff_t ff; char err[160];
   char *none[] = {"tool", "--out", "x"};
   CHECK_EQ(ff_parse(none, 3, &ff, err), 0);
-  CHECK(!ff.enable); CHECK_EQ(ff.coulomb_xy_mn, 0); CHECK_EQ(ff.a_per_nm_milli, 0);
+  CHECK(!ff.enable); CHECK_EQ(ff.coulomb_x_mn, 0); CHECK_EQ(ff.coulomb_y_mn, 0); CHECK_EQ(ff.a_per_nm_milli, 0);
+  CHECK_EQ(ff.breakaway_ms, 0);
   for (int w = 0; w < 4; w++) CHECK_EQ(ff.scale_pct[w], DRIVE_FF_SCALE_NOMINAL_PCT);
-  char *all[] = {"tool", "--ff-coulomb-xy-n", "4.25", "--ff-viscous-xy-n-per-mps=1.5", "--ff-coulomb-w-nm", "0.3",
-                 "--ff-viscous-w-nm-per-radps", "0.0126", "--ff-a-per-nm", "34.8", "--ff-scale", "90,110,100,200"};
+  char *all[] = {"tool", "--ff-coulomb-x-n", "6.5", "--ff-coulomb-y-n", "4.25", "--ff-viscous-xy-n-per-mps=1.5",
+                 "--ff-coulomb-w-nm", "0.3", "--ff-viscous-w-nm-per-radps", "0.0126", "--ff-breakaway-x-n", "20",
+                 "--ff-breakaway-y-n", "12.5", "--ff-breakaway-w-nm", "0.9", "--ff-breakaway-ms", "250",
+                 "--ff-a-per-nm", "34.8", "--ff-scale", "90,110,100,200"};
   CHECK_EQ(ff_parse(all, (int)(sizeof all / sizeof *all), &ff, err), 0);
   CHECK(ff.enable);
-  CHECK_EQ(ff.coulomb_xy_mn, 4250); CHECK_EQ(ff.viscous_xy_mn_per_mps, 1500);
+  CHECK_EQ(ff.coulomb_x_mn, 6500); CHECK_EQ(ff.coulomb_y_mn, 4250); CHECK_EQ(ff.viscous_xy_mn_per_mps, 1500);
+  CHECK_EQ(ff.breakaway_x_mn, 20000); CHECK_EQ(ff.breakaway_y_mn, 12500); CHECK_EQ(ff.breakaway_w_mnm, 900);
+  CHECK_EQ(ff.breakaway_ms, 250);
   CHECK_EQ(ff.coulomb_w_mnm, 300); CHECK_EQ(ff.viscous_w_mnm_per_radps, 13); /* nearest mN*m per rad/s */
   CHECK_EQ(ff.a_per_nm_milli, 34800);
   const int32_t scale[] = {90, 110, 100, 200};
   for (int w = 0; w < 4; w++) CHECK_EQ(ff.scale_pct[w], scale[w]);
   /* One term enables the model; trims stay nominal. */
-  char *one[] = {"tool", "--ff-coulomb-xy-n", "3", "--ff-a-per-nm", "35"};
+  char *one[] = {"tool", "--ff-coulomb-y-n", "3", "--ff-a-per-nm", "35"};
   CHECK_EQ(ff_parse(one, 5, &ff, err), 0);
-  CHECK(ff.enable); CHECK_EQ(ff.coulomb_xy_mn, 3000); CHECK_EQ(ff.viscous_xy_mn_per_mps, 0);
+  CHECK(ff.enable); CHECK_EQ(ff.coulomb_y_mn, 3000); CHECK_EQ(ff.coulomb_x_mn, 0); CHECK_EQ(ff.viscous_xy_mn_per_mps, 0);
+  CHECK_EQ(ff.breakaway_ms, 0); /* no breakaway level: no boost time */
   for (int w = 0; w < 4; w++) CHECK_EQ(ff.scale_pct[w], 100);
   FILE *f = tmpfile(); CHECK(f); drive_ff_json(f, &ff); rewind(f);
   char text[512] = ""; CHECK(fread(text, 1, sizeof text - 1, f) > 0); fclose(f);
-  CHECK(strstr(text, "\"enable\":true,\"coulomb_xy_n\":3.000")); CHECK(strstr(text, "\"a_per_nm\":35.000"));
+  CHECK(strstr(text, "\"enable\":true,\"coulomb_x_n\":0.000,\"coulomb_y_n\":3.000"));
+  CHECK(strstr(text, "\"a_per_nm\":35.000"));
+  char *level[] = {"tool", "--ff-breakaway-x-n", "20", "--ff-a-per-nm", "35"}; /* a level alone: default time */
+  CHECK_EQ(ff_parse(level, 5, &ff, err), 0);
+  CHECK_EQ(ff.breakaway_x_mn, 20000); CHECK_EQ(ff.breakaway_ms, DRIVE_FF_BREAKAWAY_MS_DEFAULT);
   const char *bad[][4] = {
-    {"--ff-coulomb-xy-n", "3", NULL, NULL},                      /* no 1/Kt */
+    {"--ff-coulomb-x-n", "3", NULL, NULL},                       /* no 1/Kt */
     {"--ff-a-per-nm", "0", NULL, NULL},
     {"--ff-a-per-nm", "0.0004", NULL, NULL},                      /* rounds to 0 mA per N*m */
-    {"--ff-coulomb-xy-n", "-1", "--ff-a-per-nm", "35"},
+    {"--ff-coulomb-x-n", "-1", "--ff-a-per-nm", "35"},
+    {"--ff-coulomb-y-n", "-1", "--ff-a-per-nm", "35"},
+    {"--ff-breakaway-x-n", "-1", "--ff-a-per-nm", "35"},
+    {"--ff-breakaway-y-n", "-1", "--ff-a-per-nm", "35"},
+    {"--ff-breakaway-w-nm", "-1", "--ff-a-per-nm", "35"},
+    {"--ff-breakaway-ms", "0", "--ff-a-per-nm", "35"},
+    {"--ff-breakaway-ms", "2001", "--ff-a-per-nm", "35"},
     {"--ff-viscous-xy-n-per-mps", "-0.1", "--ff-a-per-nm", "35"},
     {"--ff-coulomb-w-nm", "-0.2", "--ff-a-per-nm", "35"},
     {"--ff-viscous-w-nm-per-radps", "-1", "--ff-a-per-nm", "35"},
-    {"--ff-coulomb-xy-n", "3e6", "--ff-a-per-nm", "35"},          /* int32 mN overflow */
+    {"--ff-coulomb-y-n", "3e6", "--ff-a-per-nm", "35"},           /* int32 mN overflow */
     {"--ff-scale", "100,100,100", "--ff-a-per-nm", "35"},
     {"--ff-scale", "100,100,100,100,100", "--ff-a-per-nm", "35"},
     {"--ff-scale", "0,100,100,100", "--ff-a-per-nm", "35"},       /* 0 switches the whole model off */
@@ -246,7 +263,7 @@ static void test_ff_options_convert_si_to_mailbox_words(void)
     CHECK_EQ(ff_parse(argv, bad[k][2] ? 5 : 3, &ff, err), -1);
     CHECK(err[0]);
   }
-  char *nonfinite[] = {"tool", "--ff-coulomb-xy-n", "nan", "--ff-a-per-nm", "35"};
+  char *nonfinite[] = {"tool", "--ff-coulomb-x-n", "nan", "--ff-a-per-nm", "35"};
   CHECK_EQ(ff_parse(nonfinite, 5, &ff, err), -2); /* drive_parse rejects non-finite numbers */
 }
 
@@ -287,12 +304,13 @@ static void test_stage_refuses_static_replies_without_writes(void)
 }
 
 /* Mailbox words after drive_ff_write/drive_ff_clear, read back through the fake OpenOCD. */
-static void ff_words(ik_link_t *l, uint32_t w[10])
+static void ff_words(ik_link_t *l, uint32_t w[15])
 {
-  const ik_sym_t syms[] = {IK_FF_ENABLE, IK_FF_COULOMB_XY_MN, IK_FF_VISCOUS_XY_MN_PER_MPS, IK_FF_COULOMB_W_MNM,
-                           IK_FF_VISCOUS_W_MNM_PER_RADPS, IK_FF_A_PER_NM_MILLI};
-  for (int k = 0; k < 6; k++) CHECK_EQ(ik_read(l, syms[k], &w[k]), 0);
-  for (int k = 0; k < 4; k++) CHECK_EQ(ocd_read32(l->ocd, l->addr[IK_FF_SCALE_PCT] + k * 4, &w[6 + k]), 0);
+  const ik_sym_t syms[] = {IK_FF_ENABLE, IK_FF_COULOMB_X_MN, IK_FF_COULOMB_Y_MN, IK_FF_VISCOUS_XY_MN_PER_MPS,
+                           IK_FF_COULOMB_W_MNM, IK_FF_VISCOUS_W_MNM_PER_RADPS, IK_FF_BREAKAWAY_X_MN,
+                           IK_FF_BREAKAWAY_Y_MN, IK_FF_BREAKAWAY_W_MNM, IK_FF_BREAKAWAY_MS, IK_FF_A_PER_NM_MILLI};
+  for (int k = 0; k < 11; k++) CHECK_EQ(ik_read(l, syms[k], &w[k]), 0);
+  for (int k = 0; k < 4; k++) CHECK_EQ(ocd_read32(l->ocd, l->addr[IK_FF_SCALE_PCT] + k * 4, &w[11 + k]), 0);
 }
 
 static void test_ff_write_only_stopped_and_clear(void)
@@ -302,29 +320,31 @@ static void test_ff_write_only_stopped_and_clear(void)
   CHECK_EQ(ik_resolve(FAKE_ELF, addresses, err, sizeof err), 0);
   char mem[256];
   snprintf(mem, sizeof mem, "%x=%x,%x=1,%x=7", addresses[IK_ABI_SYM], IK_ABI, addresses[IK_STATE],
-           addresses[IK_FF_COULOMB_XY_MN]);
+           addresses[IK_FF_COULOMB_X_MN]);
   setenv("FAKE_OCD_MEM", mem, 1);
   ik_link_t link; CHECK_EQ(ik_link_open(&link, "SN", FAKE_ELF), 0);
-  drive_ff_t ff = {.enable = true, .coulomb_xy_mn = 4250, .viscous_xy_mn_per_mps = 1500, .coulomb_w_mnm = 300,
-                   .viscous_w_mnm_per_radps = 13, .a_per_nm_milli = 34800, .scale_pct = {90, 110, 100, 200}};
-  uint32_t w[10];
+  drive_ff_t ff = {.enable = true, .coulomb_x_mn = 6500, .coulomb_y_mn = 4250, .viscous_xy_mn_per_mps = 1500,
+                   .coulomb_w_mnm = 300, .viscous_w_mnm_per_radps = 13, .breakaway_x_mn = 20000,
+                   .breakaway_y_mn = 12500, .breakaway_w_mnm = 900, .breakaway_ms = 250, .a_per_nm_milli = 34800,
+                   .scale_pct = {90, 110, 100, 200}};
+  uint32_t w[15];
   /* Running: refused, and nothing is touched. */
   CHECK(drive_ff_write(&link, &ff) != 0); CHECK(strstr(link.err, "not stopped"));
-  CHECK_EQ(ik_read(&link, IK_FF_COULOMB_XY_MN, &w[0]), 0); CHECK_EQ(w[0], 7);
+  CHECK_EQ(ik_read(&link, IK_FF_COULOMB_X_MN, &w[0]), 0); CHECK_EQ(w[0], 7);
   CHECK_EQ(ik_write(&link, IK_STATE, 0), 0);
   CHECK_EQ(drive_ff_write(&link, &ff), 0);
   ff_words(&link, w);
-  const uint32_t on[10] = {1, 4250, 1500, 300, 13, 34800, 90, 110, 100, 200};
-  for (int k = 0; k < 10; k++) CHECK_EQ(w[k], on[k]);
+  const uint32_t on[15] = {1, 6500, 4250, 1500, 300, 13, 20000, 12500, 900, 250, 34800, 90, 110, 100, 200};
+  for (int k = 0; k < 15; k++) CHECK_EQ(w[k], on[k]);
   /* Clear works in any state: enable and every term zero, trims back to nominal. */
   CHECK_EQ(ik_write(&link, IK_STATE, 1), 0);
   CHECK_EQ(drive_ff_clear(&link), 0);
   ff_words(&link, w);
-  const uint32_t off[10] = {0, 0, 0, 0, 0, 0, 100, 100, 100, 100};
-  for (int k = 0; k < 10; k++) CHECK_EQ(w[k], off[k]);
+  const uint32_t off[15] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 100, 100, 100};
+  for (int k = 0; k < 15; k++) CHECK_EQ(w[k], off[k]);
   /* A disabled model writes its words but leaves enable at 0. */
   CHECK_EQ(ik_write(&link, IK_STATE, 0), 0);
-  drive_ff_off(&ff); ff.coulomb_xy_mn = 5;
+  drive_ff_off(&ff); ff.coulomb_x_mn = 5;
   CHECK_EQ(drive_ff_write(&link, &ff), 0);
   ff_words(&link, w); CHECK_EQ(w[0], 0); CHECK_EQ(w[1], 5);
   ik_link_close(&link);

@@ -23,7 +23,7 @@
  * ::MOTOR_WATCHDOG_MS after the stream stops. All words are 32 bit for SWD access.
  */
 
-#define IK_DRIVE_ABI 0x494B0008U         /**< ABI tag the host checks before talking */
+#define IK_DRIVE_ABI 0x494B0009U         /**< ABI tag the host checks before talking */
 #define IK_DRIVE_PERIOD_MS 20U           /**< drive loop period, ms (= MOTOR_PROTOCOL_PERIOD_MS) */
 #define IK_DRIVE_HEARTBEAT_MS 300U       /**< heartbeat age that counts as lost, ms */
 #define IK_DRIVE_HOLD_MS 200U            /**< time at zero before DISABLE is sent, ms */
@@ -34,6 +34,8 @@
 #define IK_DRIVE_MAX_OMEGA_MRADPS 6000   /**< accepted |omega|, mrad/s */
 #define IK_DRIVE_FF_MAX_MA 6000          /**< |feed-forward| sent, mA (the ESC's hard limit) */
 #define IK_DRIVE_MAX_CURRENT_MA 6000     /**< |current setpoint| sent in current mode, mA (the ESC's hard limit) */
+#define IK_DRIVE_BREAKAWAY_RPM 30        /**< a wheel this fast along its target has broken free, RPM */
+#define IK_DRIVE_BREAKAWAY_WHEELS 2U     /**< wheels broken free that end the breakaway boost */
 #define IK_LINK_NONE 0xFFU               /**< ik_drive_link.lifecycle before the first reply */
 #define IK_DRIVE_LAT_BINS 16U            /**< reply latency histogram bins per wheel */
 #define IK_DRIVE_LAT_BIN_US 250U         /**< histogram bin width, us; the last bin holds everything above */
@@ -93,12 +95,19 @@ extern volatile uint32_t ik_drive_raw_data_hi; /**< raw payload bytes 4-7 as one
 extern volatile uint32_t ik_drive_raw_len;     /**< raw payload length: 4 or 8 bytes (anything else: 4) */
 extern volatile uint32_t ik_drive_raw_seq;     /**< bump to send; sent only while ::IK_STOPPED, echoed by raw_done */
 extern volatile uint32_t ik_drive_clear_seq;   /**< bump to send CLEAR_FAULT to every wheel; only while ::IK_STOPPED */
-/* Body-frame friction model (friction_ff.h); every term 0 = off. */
+/* Body-frame friction model (friction_ff.h); every term 0 = off. Breakaway boost: while the twist is nonzero
+ * and fewer than IK_DRIVE_BREAKAWAY_WHEELS wheels turn along their targets, the breakaway levels replace the
+ * Coulomb levels for the whole robot, for at most ik_drive_ff_breakaway_ms per stuck episode. */
 extern volatile uint32_t ik_drive_ff_enable;                  /**< nonzero: send the model's current as ff */
-extern volatile int32_t ik_drive_ff_coulomb_xy_mn;            /**< translation Coulomb force, mN */
+extern volatile int32_t ik_drive_ff_coulomb_x_mn;             /**< x (strafe) Coulomb force, mN */
+extern volatile int32_t ik_drive_ff_coulomb_y_mn;             /**< y (forward) Coulomb force, mN */
 extern volatile int32_t ik_drive_ff_viscous_xy_mn_per_mps;    /**< translation viscous force, mN per m/s */
 extern volatile int32_t ik_drive_ff_coulomb_w_mnm;            /**< yaw Coulomb torque, mN*m */
 extern volatile int32_t ik_drive_ff_viscous_w_mnm_per_radps;  /**< yaw viscous torque, mN*m per rad/s */
+extern volatile int32_t ik_drive_ff_breakaway_x_mn;           /**< x force while breaking away, mN */
+extern volatile int32_t ik_drive_ff_breakaway_y_mn;           /**< y force while breaking away, mN */
+extern volatile int32_t ik_drive_ff_breakaway_w_mnm;          /**< yaw torque while breaking away, mN*m */
+extern volatile int32_t ik_drive_ff_breakaway_ms;             /**< longest boost per stuck episode, ms; <= 0: no boost */
 extern volatile int32_t ik_drive_ff_a_per_nm_milli;           /**< motor current per N*m (1/Kt), mA per N*m */
 extern volatile int32_t ik_drive_ff_scale_pct[4];             /**< per-wheel trim, % (100 = nominal) */
 /* Current mode (friction and motor-constant measurement): each wheel gets its own q-current setpoint instead
@@ -117,6 +126,7 @@ extern volatile uint32_t ik_drive_armed;       /**< bit w: wheel w reported an a
 extern volatile int32_t ik_drive_target_rpm[4]; /**< FR/BR/BL/FL raw motor RPM requested */
 extern volatile int32_t ik_drive_rpm[4];       /**< slewed RPM, last sent */
 extern volatile int32_t ik_drive_ff_ma[4];     /**< feed-forward last sent, mA */
+extern volatile uint32_t ik_drive_ff_boost;    /**< 1 while the last frames carried the breakaway boost */
 extern volatile struct ik_drive_link ik_drive_link[4]; /**< per-wheel protocol link, FR/BR/BL/FL */
 extern volatile uint32_t ik_drive_tx_count;    /**< CAN frames queued */
 extern volatile uint32_t ik_drive_tx_fail;     /**< CAN frames that failed to queue */

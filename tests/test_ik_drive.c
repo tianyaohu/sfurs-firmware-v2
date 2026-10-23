@@ -64,10 +64,10 @@ static void run(unsigned ms, int beat)
 static void setup(void)
 {
   for (unsigned w = 0; w < 4U; ++w) {
-    const struct motor_cmd_config cfg = { .select = 1U << w, .max_rpm = 2976, .max_ma = 6000,
+    const struct motor_cmd_config cfg = { .select = 1U << w, .max_rpm = 2976, .max_ma = IK_DRIVE_MAX_CURRENT_MA,
                                           .current_supported = 1U };
     motor_cmd_init(&esc[w], &cfg, 100U + w);
-    esc_in[w] = (struct motor_cmd_inputs){ .mc = MOTOR_CMD_MC_IDLE, .aligned = 1U, .limit_ma = 6000 };
+    esc_in[w] = (struct motor_cmd_inputs){ .mc = MOTOR_CMD_MC_IDLE, .aligned = 1U, .limit_ma = IK_DRIVE_MAX_CURRENT_MA };
   }
 }
 
@@ -362,7 +362,8 @@ static void test_current_mode_frames(void)
 {
   setup();
   ik_drive_mode = IK_MODE_CURRENT;
-  const int32_t want[4] = {1000, -1000, 7000, 0}, sent_ma[4] = {1000, -1000, 6000, 0};
+  const int32_t want[4] = {1000, -1000, IK_DRIVE_MAX_CURRENT_MA + 1000, 0},
+                sent_ma[4] = {1000, -1000, IK_DRIVE_MAX_CURRENT_MA, 0};
   for (unsigned w = 0; w < 4U; ++w) ik_drive_current_ma[w] = want[w];
   ik_drive_enable = 1; run(200, 1);
   for (unsigned w = 0; w < 4U; ++w) {

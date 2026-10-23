@@ -59,7 +59,7 @@ The rules are checked in this order and the first violated one is reported. NULL
 
 ### Range validation (ESC, against its own compile-time limits)
 
-SPEED |setpoint| <= `MAX_APPLICATION_SPEED_RPM` (2976); |ff| and CURRENT |setpoint| <= `IQMAX_A` (6000 mA)
+SPEED |setpoint| <= `MAX_APPLICATION_SPEED_RPM` (2976); |ff| and CURRENT |setpoint| <= `IQMAX_A` (8000 mA)
 [OUT_OF_RANGE]. Out-of-range values are rejected, never clamped. A value within the hard limit but above the
 effective limit (configured limit or I2T derate) is applied and limited; the reply says INHIBITED(LIMITED).
 
@@ -103,7 +103,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 3 | reason (table below; 0 for a plain APPLIED) |
 | 4 | session the ESC accepts now (the challenge while DISARMED) |
 | 5-6 | int16 measured speed, RPM (the one speed estimate of [C](../technical-development-plans/esc-command-v2/C-ownership.md)); 0 when not valid |
-| 7 | int8 measured q-current, 50 mA units, nearest step with halves away from zero, saturated at +-127 (+-6.35 A covers the 6 A limit); 0 while the output is off (the old STATUS showed ~25 A on IDLE wheels on 2026-10-20, so MCSDK's Iq is not meaningful with the bridge off; cause confirmed in Stage 0) |
+| 7 | int8 measured q-current, 50 mA units, nearest step with halves away from zero, saturated at +-127 (+-6.35 A; the 8 A limit reads as 6.35 A here, the recorder and STATUS carry the full value); 0 while the output is off (the old STATUS showed ~25 A on IDLE wheels on 2026-10-20, so MCSDK's Iq is not meaningful with the bridge off; cause confirmed in Stage 0) |
 
 - Produced by the 1 kHz tick that processed the frame, not by the ISR, so APPLIED means "the target is handed to
   the controller this tick". The speed loop runs it from its next step (at most 1 ms later: the application hook

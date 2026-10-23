@@ -32,8 +32,8 @@
 #define IK_DRIVE_DEFAULT_ACCEL_RPMPS 900 /**< wheel acceleration limit, RPM/s */
 #define IK_DRIVE_MAX_LINEAR_MMPS 5000    /**< accepted |vx|, |vy|, mm/s */
 #define IK_DRIVE_MAX_OMEGA_MRADPS 6000   /**< accepted |omega|, mrad/s */
-#define IK_DRIVE_FF_MAX_MA 6000          /**< |feed-forward| sent, mA (the ESC's hard limit) */
-#define IK_DRIVE_MAX_CURRENT_MA 6000     /**< |current setpoint| sent in current mode, mA (the ESC's hard limit) */
+#define IK_DRIVE_FF_MAX_MA 8000          /**< |feed-forward| sent, mA (the ESC's hard limit) */
+#define IK_DRIVE_MAX_CURRENT_MA 8000     /**< |current setpoint| sent in current mode, mA (the ESC's hard limit) */
 #define IK_DRIVE_BREAKAWAY_RPM 30        /**< a wheel this fast along its target has broken free, RPM */
 #define IK_DRIVE_BREAKAWAY_WHEELS 2U     /**< wheels broken free that end the breakaway boost */
 #define IK_LINK_NONE 0xFFU               /**< ik_drive_link.lifecycle before the first reply */

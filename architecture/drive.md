@@ -53,13 +53,13 @@ STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault
 | ESC hardware/MCSDK | Over-current comparator, over-voltage 18 V, under-voltage 8 V, over-temperature 70 °C |
 | ESC arming | Motion only after an ARM carrying the session the ESC announced; a timeout or a cleared fault starts a new session, so nothing sent before can move the wheel |
 | ESC watchdog | No fresh accepted motion frame for 100 ms → output off, disarmed (3 lost 50 Hz frames are tolerated, 4 trip) |
-| ESC I²t | Iq limit 6 A; after ~30 A²s above 3.26 A it derates to 3 A until it cools |
+| ESC I²t | Iq limit 8 A; after ~30 A²s above 3.26 A it derates to 3 A until it cools (~0.56 s at a steady 8 A, ~1.2 s at 6 A) |
 | ESC fault latch | Any fault (MCSDK, stall, Hall loss, start timeout) keeps the wheel off until CLEAR_FAULT, then a new ARM |
 | ESC HOLD | Target 0 RPM and standstill (< 45 RPM, the Hall estimate's floor) for 150 ms → zero-current hold with the bridge on; the next non-zero target resumes without an MCSDK start. Holding zero speed on the Hall estimate only buzzed (0.2–0.6 A average, peaks 3.9 A) |
 | ESC stall | ≥ 80 % of the current limit with no Hall progress along the command for 500 ms → FAULTED(STALL) |
 | ESC Hall loss | Hall code 0/7 beyond the estimator's stale window, or MCSDK's speed-feedback fault → FAULTED(HALL_LOST) |
 | ESC alignment gate | A non-zero target is rejected (NOT_ALIGNED) until the Hall shift is known (built in or measured) |
-| ESC range check | Targets beyond 2976 RPM or 6 A are rejected, never clamped |
+| ESC range check | Targets beyond 2976 RPM or 8 A are rejected, never clamped |
 | Nucleo link | A wheel that misses 3 replies in a row is LOST; a LOST or FAULTED wheel stops the robot (DISABLE to all) and latches `ik_drive_fault` until the PC sets enable to 0; `esc_tool clear` clears ESC faults |
 | Nucleo heartbeat | PC silent for 300 ms → decelerate, hold 200 ms, broadcast DISABLE ×3 |
 | Kinematics | All wheels scaled together so none exceeds 900 RPM (~3 m/s) |

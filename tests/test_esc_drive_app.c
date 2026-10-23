@@ -254,7 +254,7 @@ static void test_i2t_derates_and_recovers(void)
   tick(1); CHECK(iqdref.q <= 3 * 544); /* the loop obeys the derated limit at once */
   iqd.q = 2 * 544; t = 0;
   while (drive_app.derated && t < 10000) { speed_cmd(300); tick(10); HALL_M1.EdgesPos += 2; t += 10; }
-  CHECK(!drive_app.derated && drive_app.iq_limit_counts == 6 * 544);
+  CHECK(!drive_app.derated && drive_app.iq_limit_counts == (int32_t)IQMAX);
 }
 
 static void test_config_only_when_idle(void)
@@ -271,7 +271,7 @@ static void test_config_only_when_idle(void)
   rx(DIAG_READ | MOTOR_CAN_ID, 0); drive_app_poll(send);
   CHECK(sent_id == (DIAG_REPLY | MOTOR_CAN_ID) && f16(sent + 4) == -30 && sent[6] == ESC_ALIGN_NONE);
   CHECK((sent[0] | sent[1] << 8) == 1236); /* 23831 * 34 * 100 / 65536 centivolts */
-  r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_IQ_LIMIT_MA, 9000); /* above IQMAX: refused, nothing changes */
+  r = cfg(MOTOR_CONFIG_SET, MOTOR_CFG_IQ_LIMIT_MA, (int16_t)(IQMAX_A * 1000 + 1)); /* above IQMAX: refused, nothing changes */
   CHECK(r.status == MOTOR_CFG_BAD_VALUE && r.stored == 4000 && drive_app.iq_limit_counts == 2176);
   CHECK(drive_app.rejected == 1);
   drive_app.derated = 1; drive_app.i2t_a2s = 40.0f; /* derated and still hot: the tick keeps it derated */
@@ -366,7 +366,7 @@ static void test_capture_steps_id_and_reads_out(void)
 {
   setup(11); /* capture: hold, sample-exact Id step, readout */
   const uint32_t start = (uint32_t)ESC_CAPTURE_START << 24;
-  rx(CAPTURE | MOTOR_CAN_ID, start | 7000U); tick_isr(2); /* above IQMAX */
+  rx(CAPTURE | MOTOR_CAN_ID, start | (uint32_t)(IQMAX_A * 1000 + 1)); tick_isr(2); /* above IQMAX */
   CHECK(drive_app.capture_status == ESC_CAPTURE_REJECTED && starts == 0);
   rx(CAPTURE | MOTOR_CAN_ID, start | 3000U); tick_isr(2);
   CHECK(drive_align_force && drive_align_angle == 0 && starts == 1);

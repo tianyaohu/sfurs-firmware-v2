@@ -136,3 +136,12 @@ Append only; format in design/README.md.
   wheels' reply speeds keeps the four wheels pushing together; ending on two (not all four) stops a wheel that has
   broken free from being overdriven while one is still stuck. The ESC's 50 A/s ff slew smooths the step back.
 - Touches: src/shared (friction_ff), src/nucleo (ik_drive), src/tools (drive_ops, ik_link).
+
+## 2026-10-22  Current limit 8 A (was 6 A)  (who: claude, decided with Frank H)
+- Decision: `IQMAX_A` 8 on the ESC (CONFIG range and default limit follow it); the Nucleo's ff and current-mode
+  clamps 8000 mA. I2T unchanged (3.26 A nominal, 30 A²s, derate to 3 A), so it stays the thermal guard.
+- Why: mat vx starts with the breakaway boost (4S, 2026-10-22) held all four wheels at the 6 A limit for ~100 ms
+  with the robot not moving; breakaway came at 0.5-0.66 s and one run aborted with FL stuck at -6 A. Board sense range
+  is +-60 A (3 mOhm x 9.14), so the limit is a tuning choice, not a hardware one. At a steady 8 A the I2T derates
+  after ~0.56 s (6 A: ~1.2 s). The CONTROL_REPLY Iq byte saturates at 6.35 A; the recorder and STATUS do not.
+- Touches: src/esc (drive_parameters.h), src/nucleo (ik_drive.h), host tests derive limits from the constants.

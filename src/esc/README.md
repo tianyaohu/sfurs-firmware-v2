@@ -31,7 +31,7 @@ parameter edits in `Inc/drive_parameters.h`, `Inc/pmsm_motor_parameters.h` and
 `SPEED_UNIT` in `Inc/mc_stm_types.h`. Everything else is MCSDK/CubeMX output.
 
 Regenerating from Workbench overwrites the parameter headers: re-apply the
-values listed in `architecture/drive.md` (speed-loop gains and stall defaults, 6 A, `U_RPM`,
+values listed in `architecture/drive.md` (speed-loop gains and stall defaults, 8 A, `U_RPM`,
 Hall FIFO depth 6, OV 18 V, default speed 0) and keep the `drive_app.c`, `motor_cmd.c` and
 `motor_speed.c` links in `STM32CubeIDE/.project` (the build itself uses
 `scripts/esc_sources.txt`).

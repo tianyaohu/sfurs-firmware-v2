@@ -1,6 +1,7 @@
 # Omni drive
 
-Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
+Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo, or skynet → ST-LINK
+virtual COM port → `skynet_link.c` → the same mailbox → Nucleo
 (`src/nucleo/CM7/Core/Src/ik_drive.c`) → CAN → four ESCs
 (`src/esc/motor_config/Src/drive_app.c` and `motor_cmd.c`, on top of ST MCSDK 6.4.1).
 
@@ -26,6 +27,27 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
    faults, HOLD; [command-lifecycle.md](command-lifecycle.md)); `motor_speed.c` is the 1 kHz
    speed loop (below); `drive_app.c` runs both every millisecond, hands the q-current to
    MCSDK (`MC_SetCurrentReferenceMotor1`) and replies to status/diag polls.
+
+## skynet serial link
+
+skynet's real-robot output (`ENABLE_SERIAL` build, `ControlWire.cpp`) is a byte stream with
+one 7-byte record per team robot per send: CRC-16/CCITT-FALSE of the payload, little-endian,
+then 5 payload bytes (byte 0: ID bits 0-3, dribbler bit 4; byte 1: chipper bit 0, kick 1-4;
+bytes 2-4: forward, left, CCW rotation as int8 with 127 = 6 m/s or 6 rad/s). There is no
+frame marker; `skynet_link.c` slides over the stream until a record's CRC and zero reserved
+bits match, then stays aligned. Corrupt bytes are skipped (`skynet_link_skipped`).
+
+The record whose ID equals `skynet_link_robot_id` (default 0, writable over SWD) becomes the
+mailbox twist: forward → +vy, left → −vx, rotation → ω, clamped to the mailbox limits;
+`ik_drive_enable` is set and the heartbeat bumped, so everything downstream (arming, slew,
+faults, the 300 ms stop) is the SWD path's. Resolution is skynet's: 47 mm/s and
+0.047 rad/s per step. Dribbler, chipper and kick are ignored (no hardware).
+
+USART3 on PD8/PD9 is the ST-LINK virtual COM port, so the Pi needs only the Nucleo's USB
+cable: it appears as `/dev/ttyACM*`. skynet: build with `-DENABLE_SERIAL=ON`, run with
+`SKYNET_ROBOT_PORT=ttyACM0` (baud 250000 is its default; the link is fixed at 250000). Only
+one command source at a time: the link writes the mailbox only while it receives records for
+this robot, and an SWD tool driving at the same time would fight it.
 
 ## CAN protocol
 
@@ -64,6 +86,7 @@ STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault
 | ESC range check | Targets beyond 2976 RPM or 8 A are rejected, never clamped |
 | Nucleo link | A wheel that misses 6 replies in a row (60 ms) is LOST; a LOST or FAULTED wheel stops the robot (DISABLE to all) and latches `ik_drive_fault` until the PC sets enable to 0; `esc_tool clear` clears ESC faults |
 | Nucleo heartbeat | PC silent for 300 ms → decelerate, hold 200 ms, broadcast DISABLE ×3 |
+| skynet link | No valid record for this robot for 300 ms → twist 0 and `ik_drive_enable` 0 (also acknowledges a latched fault); a fault stays latched while skynet keeps streaming |
 | Kinematics | All wheels scaled together so none exceeds 900 RPM (~3 m/s) |
 
 The stall monitor waits 500 ms at high current, so a loaded wheel still builds torque to

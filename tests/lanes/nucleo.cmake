@@ -46,3 +46,14 @@ host_test(test_friction_ff
   SOURCES src/shared/src/friction_ff.c src/shared/src/rover_kinematics.c
   INCLUDES src/shared/inc
   LIBS m)
+
+# skynet serial link into the real drive mailbox; each case needs fresh static state.
+host_test(test_skynet_link
+  SOURCES src/nucleo/CM7/Core/Src/skynet_link.c src/nucleo/CM7/Core/Src/ik_drive.c
+          src/shared/src/rover_kinematics.c src/shared/src/friction_ff.c src/shared/src/motor_protocol.c
+  INCLUDES src/nucleo/CM7/Core/Inc src/shared/inc src/shared/can
+  LIBS m
+  CASES crc_matches_ccitt_false batch_drives_this_robot other_robots_leave_mailbox_alone
+        finds_records_after_garbage_and_splits corrupt_record_is_dropped reserved_bits_reject_record
+        full_scale_is_clamped_to_drive_limits silence_stops_and_restart_drives ring_overflow_is_counted
+        link_heartbeat_starts_drive_session)

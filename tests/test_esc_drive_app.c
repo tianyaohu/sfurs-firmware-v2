@@ -182,7 +182,7 @@ static void test_streaming_and_watchdog(void)
   CHECK(last_reply().reason == MOTOR_R_NOT_ARMED);
   arm(); speed_cmd(0); tick(3); CHECK(starts == 0); /* zero does not start */
   speed_cmd(150); tick(3); CHECK(starts == 1 && state == RUN && drive_app.active);
-  CHECK(drive_speed.ref_to_rpm == 150); /* the speed loop interpolates to it over 20 ms */
+  CHECK(drive_speed.ref_to_rpm == 150); /* the speed loop interpolates to it over 10 ms */
   for (int i = 0; i < 25; ++i) { speed_cmd(-90); tick(20); } /* < 1 s: the edge-less fake wheel would stall */
   CHECK(state == RUN && drive_speed.ref_to_rpm == -90 && drive_speed.ref_rpm == -90 && starts == 1);
   tick(79); CHECK(state == RUN); /* 99 ms since the last command */
@@ -560,9 +560,9 @@ static void test_speed_loop_recorder(void)
   for (int i = 0; i < 20; ++i) { tick(20); speed_cmd(100); }
   rx(CAPTURE | MOTOR_CAN_ID, read | (3U << 16) | 1U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 4) == 384 && f16(frame[0] + 6) == 10);
-  /* trigger: the first loop tick with |ref| >= 10 RPM; 100 RPM over 20 ticks is 5, 10, ... */
+  /* trigger: the first loop tick with |ref| >= 10 RPM; 100 RPM over 10 ticks starts at 10 */
   rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (2U << 10) | 9U); frames = 0; drive_app_poll(send);
-  CHECK(frames == 2 && f16(frame[0] + 2) == 5 && f16(frame[1] + 2) == 10); /* ref around the trigger */
+  CHECK(frames == 2 && f16(frame[0] + 2) == 0 && f16(frame[1] + 2) == 10); /* ref around the trigger */
   CHECK(f16(frame[1] + 4) == 0 && f16(frame[1] + 6) == 40);              /* estimate (no edges), P = 4 x 10 */
   rx(CAPTURE | MOTOR_CAN_ID, read | (1U << 16) | (1U << 10) | 10U); frames = 0; drive_app_poll(send);
   CHECK(f16(frame[0] + 2) == 0 && f16(frame[0] + 4) == 0 && f16(frame[0] + 6) == 40); /* I (Q14 < 1), ff, Iq ref */
@@ -602,9 +602,9 @@ static void test_recorder_idle_arm_and_early_stop(void)
   arm(); speed_cmd(51);                    /* ARM and motion in the same tick */
   int start_ms = 0; while (state != RUN && start_ms < 10) { tick(1); ++start_ms; }
   CHECK(state == RUN);
-  /* samples before the trigger: IDLE, motor start-up (its last tick already runs the loop at ref 2),
-   * then the loop ticks at 5 and 7 RPM; the trigger sample is 10 (51 / 20 per tick) */
-  const int pre = 5 + start_ms + 2;
+  /* samples before the trigger: IDLE and motor start-up (its last tick runs the loop at ref 5);
+   * the next loop tick triggers at 10 RPM (51 / 10 per tick) */
+  const int pre = 5 + start_ms;
   CHECK(pre < 20);
   tick(40);
   disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);   /* stopped before the window filled */
@@ -616,7 +616,7 @@ static void test_recorder_idle_arm_and_early_stop(void)
    * them plus (384 - 20) samples */
   CHECK(f16(frame[0] + 2) == ESC_RECORD_DONE && f16(frame[0] + 6) == pre && f16(frame[0] + 4) == pre + 384 - 20);
   rx(CAPTURE | MOTOR_CAN_ID, read | (0U << 16) | (2U << 10) | (uint32_t)(pre - 1)); frames = 0; drive_app_poll(send);
-  CHECK(f16(frame[0] + 2) == 7 && f16(frame[1] + 2) == 10); /* trigger at the first |ref| >= 10 RPM */
+  CHECK(f16(frame[0] + 2) == 5 && f16(frame[1] + 2) == 10); /* trigger at the first |ref| >= 10 RPM */
   rx(CAPTURE | MOTOR_CAN_ID, ((uint32_t)ESC_CAPTURE_START << 24) | 1000U); tick(2);
   CHECK(drive_app.capture_status == ESC_CAPTURE_RUNNING); /* buffer released */
 }

@@ -445,7 +445,7 @@ static void test_hold_parks_after_a_long_stop(void)
 /* CURRENT mode: starts like SPEED, LIMITED above the effective limit (still applied, the caller clamps),
  * no mode change while running, and no HOLD at zero current (that is a legitimate command). */
 /* The watchdog is also judged at a frame's receive time: 99 ms after the last accepted motion it is still
- * armed, at exactly 100 ms the frame finds it disarmed (4 lost 50 Hz frames trip), even in the same tick. */
+ * armed, at exactly 100 ms the frame finds it disarmed, even in the same tick. */
 static void test_watchdog_at_receive_time(void)
 {
   run_at(100);

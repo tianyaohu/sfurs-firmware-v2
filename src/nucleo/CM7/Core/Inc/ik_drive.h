@@ -24,11 +24,11 @@
  */
 
 #define IK_DRIVE_ABI 0x494B000AU         /**< ABI tag the host checks before talking */
-#define IK_DRIVE_PERIOD_MS 20U           /**< drive loop period, ms (= MOTOR_PROTOCOL_PERIOD_MS) */
+#define IK_DRIVE_PERIOD_MS 10U           /**< drive loop period, ms (= MOTOR_PROTOCOL_PERIOD_MS) */
 #define IK_DRIVE_HEARTBEAT_MS 300U       /**< heartbeat age that counts as lost, ms */
 #define IK_DRIVE_HOLD_MS 200U            /**< time at zero before DISABLE is sent, ms */
 #define IK_DRIVE_STOP_FRAMES 3U          /**< DISABLE broadcasts per stop */
-#define IK_DRIVE_LOST_PERIODS 3U         /**< periods in a row without a reply -> wheel LOST */
+#define IK_DRIVE_LOST_PERIODS 6U         /**< keep the 60 ms lost-reply window at 100 Hz */
 #define IK_DRIVE_DEFAULT_ACCEL_RPMPS 900 /**< wheel acceleration limit, RPM/s */
 #define IK_DRIVE_MAX_LINEAR_MMPS 5000    /**< accepted |vx|, |vy|, mm/s */
 #define IK_DRIVE_MAX_OMEGA_MRADPS 6000   /**< accepted |omega|, mrad/s */

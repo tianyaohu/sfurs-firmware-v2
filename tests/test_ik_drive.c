@@ -12,6 +12,7 @@
 #define MAX_FRAMES 16384U
 static unsigned count, fail;
 static uint32_t ids[MAX_FRAMES], lens[MAX_FRAMES];
+static uint32_t sent_ms[MAX_FRAMES];
 static uint8_t payload[MAX_FRAMES][8];
 static uint32_t now;
 
@@ -24,7 +25,8 @@ static int send(uint32_t id, const uint8_t *d, uint32_t len)
 {
   if (fail) return 0;
   CHECK(count < MAX_FRAMES && (len == 4U || len == 8U));
-  ids[count] = id; lens[count] = len; memset(payload[count], 0, 8); memcpy(payload[count], d, len); ++count;
+  ids[count] = id; lens[count] = len; sent_ms[count] = now;
+  memset(payload[count], 0, 8); memcpy(payload[count], d, len); ++count;
   for (unsigned w = 0; w < 4U; ++w) /* the ESC hardware filter: frames carrying its select bit */
     if ((id & (1U << w)) && (id & MOTOR_CAN_ID_BASE_MASK) == MOTOR_CAN_ID_CONTROL)
       motor_cmd_rx(&esc[w], id, d, len, now);
@@ -128,12 +130,12 @@ static void test_links_then_starts_together(void)
     CHECK(ik_drive_link[i].lifecycle == MOTOR_LC_DISARMED && ik_drive_link[i].reason == MOTOR_R_BAD_SESSION);
     CHECK(ik_drive_link[i].session == esc[i].session);
   }
-  run(20, 1); /* period 2: armed with the announced session */
+  run(IK_DRIVE_PERIOD_MS, 1); /* period 2: armed with the announced session */
   CHECK(ik_drive_armed == 0xFU);
   for (unsigned i = 0; i < 4; ++i) CHECK(esc[i].lifecycle == MOTOR_LC_READY && count_speed(i) == 0);
-  run(20, 1); /* period 3: motion, every wheel in the same period */
+  run(IK_DRIVE_PERIOD_MS, 1); /* period 3: motion, every wheel in the same period */
   for (unsigned i = 0; i < 4; ++i) {
-    CHECK(count_speed(i) == 1 && abs(last_rpm(i)) >= 16 && abs(last_rpm(i)) <= 18); /* 900 RPM/s * 20 ms */
+    CHECK(count_speed(i) == 1 && abs(last_rpm(i)) >= 8 && abs(last_rpm(i)) <= 9); /* 900 RPM/s * 10 ms */
     CHECK(ik_drive_link[i].start_count == 1U && ik_drive_link[i].outcome == MOTOR_OUT_INHIBITED);
     CHECK(ik_drive_link[i].reason == MOTOR_R_STARTING && esc[i].lifecycle == MOTOR_LC_STARTING);
   }
@@ -148,13 +150,24 @@ static void test_streams_and_slews_to_target(void)
 {
   drive_forward();
   const unsigned mark[4] = {count_speed(0), count_speed(1), count_speed(2), count_speed(3)};
+  const unsigned first = count;
   run(1000, 1);
   for (unsigned i = 0; i < 4; ++i) {
     const unsigned frames = count_speed(i) - mark[i];
-    CHECK(frames >= 49 && frames <= 51);
+    CHECK(frames == 100U);
     CHECK(last_rpm(i) == fwd1[i] && ik_drive_target_rpm[i] == fwd1[i]);
     CHECK(ik_drive_link[i].outcome == MOTOR_OUT_APPLIED && ik_drive_link[i].misses == 0U);
     CHECK(ik_drive_link[i].applied_seq == ik_drive_link[i].request_seq);
+    unsigned seen = 0;
+    uint32_t previous_ms = 0;
+    for (unsigned k = first; k < count; ++k) {
+      struct motor_control c;
+      if (ids[k] != (MOTOR_CAN_ID_CONTROL | (1U << i)) || !decode(k, &c) || c.mode != MOTOR_MODE_SPEED) continue;
+      if (seen != 0U) CHECK(sent_ms[k] - previous_ms == 10U);
+      previous_ms = sent_ms[k];
+      ++seen;
+    }
+    CHECK(seen == 100U);
   }
 }
 
@@ -248,11 +261,11 @@ static void test_raw_frames_only_when_stopped(void)
 static void test_tx_failures_counted(void)
 {
   drive_forward();
-  fail = 1; run(40, 1); fail = 0; /* two periods unsent: tolerated */
+  fail = 1; run(40, 1); fail = 0; /* four periods unsent: still inside the 60 ms lost window */
   CHECK(ik_drive_tx_fail >= 8 && ik_drive_state == IK_DRIVING && ik_drive_fault == 0U);
   run(1000, 1);
   for (unsigned i = 0; i < 4; ++i) CHECK(last_rpm(i) == fwd1[i] && ik_drive_link[i].misses == 0U);
-  fail = 1; run(20 * (IK_DRIVE_LOST_PERIODS + 1U), 1); /* a wheel that cannot be commanded is lost */
+  fail = 1; run(IK_DRIVE_PERIOD_MS * (IK_DRIVE_LOST_PERIODS + 1U), 1); /* a wheel that cannot be commanded is lost */
   CHECK(ik_drive_fault == 0xF0U && ik_drive_state != IK_DRIVING);
   fail = 0; run(200, 1);
   CHECK(ik_drive_state == IK_STOPPED);
@@ -261,7 +274,7 @@ static void test_tx_failures_counted(void)
 static void test_custom_acceleration(void)
 {
   ik_drive_accel_rpmps = 2530; ik_drive_vy_mmps = 1000; ik_drive_enable = 1;
-  run(160, 1); /* 40 ms to arm, then 253 RPM in 100 ms */
+  run(160, 1); /* two periods to arm, then 253 RPM in 100 ms */
   for (unsigned i = 0; i < 4; ++i) CHECK(last_rpm(i) == fwd1[i]);
 }
 
@@ -271,12 +284,14 @@ static void test_lost_wheel_stops_the_robot(void)
   for (unsigned w = 0; w < 4; ++w) {
     drive_forward();
     drop_replies[w] = 1;
+    const uint32_t dropped_at = now;
     unsigned before = count;
-    for (unsigned t = 0; t < 20 * (IK_DRIVE_LOST_PERIODS + 1U) && ik_drive_fault == 0U; ++t) {
+    for (unsigned t = 0; t < IK_DRIVE_PERIOD_MS * (IK_DRIVE_LOST_PERIODS + 1U) && ik_drive_fault == 0U; ++t) {
       before = count;
       run(1, 1);
     }
     CHECK(ik_drive_fault == (1U << (4U + w)) && ik_drive_link[w].misses >= IK_DRIVE_LOST_PERIODS);
+    CHECK(now - dropped_at >= 60U && now - dropped_at <= 70U);
     /* the detecting period sends DISABLE and no further motion */
     CHECK(count_disable_all(before) == 1U);
     for (unsigned i = 0; i < 4; ++i) {
@@ -349,9 +364,9 @@ static void test_feed_forward_rides_in_speed_frames(void)
 static void test_lost_start_reply_stays_invalid(void)
 {
   ik_drive_vy_mmps = 1000; ik_drive_enable = 1;
-  run(40, 1);                                   /* probe at t=0, ARM at t=20 */
-  drop_replies[0] = 1; run(1, 1); drop_replies[0] = 0; /* t=40: the first motion frame */
-  run(6000, 1);                                 /* ~300 frames: the sequence wraps */
+  run(2U * IK_DRIVE_PERIOD_MS, 1);               /* probe at t=0, ARM at t=10 */
+  drop_replies[0] = 1; run(1, 1); drop_replies[0] = 0; /* t=20: the first motion frame */
+  run(6000, 1);                                 /* ~600 frames: the sequence wraps */
   CHECK(ik_drive_fault == 0U && ik_drive_link[0].start_count == 1U);
   CHECK(ik_drive_link[0].first_start_valid == 0U);
   for (unsigned i = 1; i < 4; ++i) CHECK(ik_drive_link[i].first_start_valid == 1U);
@@ -467,11 +482,11 @@ static void test_breakaway_boost_time_limit(void)
   ik_drive_ff_enable = 1; ik_drive_ff_coulomb_y_mn = 3000; ik_drive_ff_breakaway_y_mn = 9000;
   ik_drive_ff_breakaway_ms = 200; ik_drive_ff_a_per_nm_milli = 40000;
   ik_drive_vy_mmps = 1000; ik_drive_enable = 1;
-  run(41, 1); /* the first motion frame: boost period 1 */
+  run(2U * IK_DRIVE_PERIOD_MS + 1U, 1); /* the first motion frame: boost period 1 */
   CHECK(ik_drive_ff_boost == 1U);
   int32_t boosted[4];
   for (unsigned w = 0; w < 4U; ++w) boosted[w] = ik_drive_ff_ma[w];
-  run(9U * IK_DRIVE_PERIOD_MS, 1); /* periods 2-10: 200 ms */
+  run(200U - IK_DRIVE_PERIOD_MS, 1); /* the last boosted frame before the 200 ms limit */
   CHECK(ik_drive_ff_boost == 1U);
   run(IK_DRIVE_PERIOD_MS, 1);
   CHECK(ik_drive_ff_boost == 0U);
@@ -580,11 +595,11 @@ static void test_reply_latency_histogram(void)
       if (b != bin[w]) CHECK(ik_drive_reply_lat_hist[w][b] == 0U);
       total += ik_drive_reply_lat_hist[w][b];
     }
-    CHECK(total >= 48U && total <= 51U); /* one per 20 ms period of the 1 s stream */
+    CHECK(total == 100U); /* one reply per 10 ms period of the 1 s stream */
     CHECK(ik_drive_reply_lat_max_us[w] == delay[w]);
   }
   const uint32_t before = ik_drive_reply_lat_hist[0][0];
-  drop_replies[0] = 1; run(40, 1); drop_replies[0] = 0; /* two periods unanswered: nothing timed */
+  drop_replies[0] = 1; run(40, 1); drop_replies[0] = 0; /* four periods unanswered: nothing timed */
   CHECK(ik_drive_reply_lat_hist[0][0] == before);
 }
 

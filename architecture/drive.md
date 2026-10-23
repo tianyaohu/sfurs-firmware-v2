@@ -61,7 +61,8 @@ so link `/dev/ttyUSB0` to the ST-LINK port. Baud 250000 is skynet's default and 
 
 skynet itself resends every robot's last command whenever any robot's command changes, and
 its 5 ms send throttle can hold back a halt that follows a move. The link cannot tell a
-stale resent command from a constant one; both need fixing in skynet's `ControlWire`.
+stale resent command from a constant one; both need fixing in skynet's `ControlWire`, as does
+its uninitialised `ControlWire::lastCommandTime`, which can stop it sending at all.
 
 ## CAN protocol
 

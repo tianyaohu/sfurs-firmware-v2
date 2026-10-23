@@ -351,6 +351,12 @@ static void test_link_rows_faults(void)
     CHECK(ik_check_fault(&mailbox, 1U << (w + 4)) != 0); CHECK(strstr(mailbox.err, "LOST (no replies)"));
     r[1] = MOTOR_LC_FAULTED; r[3] = MOTOR_R_FAULT_MCSDK;
     CHECK(ik_check_fault(&mailbox, 0) != 0); CHECK(strstr(mailbox.err, "FAULTED (FAULT_MCSDK)"));
+    /* Faulted before this session: the probe reply carries BAD_SESSION or NONE, never a cause. */
+    r[3] = MOTOR_R_BAD_SESSION; r[18] = MOTOR_R_BAD_SESSION;
+    CHECK(ik_check_fault(&mailbox, 1U << w) != 0); CHECK(strstr(mailbox.err, "faulted before this session"));
+    CHECK(!strstr(mailbox.err, "BAD_SESSION"));
+    r[3] = MOTOR_R_NONE; r[18] = MOTOR_R_NONE;
+    CHECK(ik_check_fault(&mailbox, 1U << w) != 0); CHECK(strstr(mailbox.err, "faulted before this session"));
     r[1] = MOTOR_LC_DISARMED;
     CHECK_EQ(ik_check_fault(&mailbox, 0), 0);
     fail_sym = IK_LINK; CHECK(ik_link_rows(&mailbox, rows) != 0);

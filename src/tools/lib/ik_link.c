@@ -277,6 +277,18 @@ int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS])
   return 0;
 }
 
+const char *ik_fault_cause(const ik_link_row_t *r, bool latched, bool lost)
+{
+  /* Codes from FAULT_MCSDK up are causes. Later replies overwrite reason, so fault_reason keeps the one latched with
+   * the bit (0 = LOST). An ESC already FAULTED when the session opened answers the probe with NONE or BAD_SESSION,
+   * and after the stop only DISABLE replies (NONE) follow: no reply names its cause. */
+  if (!r->valid) return "unreadable link";
+  if (latched && r->fault_reason >= MOTOR_R_FAULT_MCSDK) return r->fault_reason_name;
+  if (r->lifecycle == MOTOR_LC_FAULTED && r->reason >= MOTOR_R_FAULT_MCSDK) return r->reason_name;
+  if (lost && !r->fault_reason) return "no replies";
+  return r->lifecycle == MOTOR_LC_FAULTED ? "cause not reported: faulted before this session" : r->reason_name;
+}
+
 int ik_check_fault(ik_link_t *l, uint32_t fault)
 {
   ik_link_row_t rows[IK_WHEELS];
@@ -288,10 +300,7 @@ int ik_check_fault(ik_link_t *l, uint32_t fault)
     bool faulted = (fault & (1U << w)) || (r->valid && r->lifecycle == MOTOR_LC_FAULTED);
     bool lost = fault & (1U << (w + 4));
     if (!faulted && !lost) continue;
-    /* Later replies overwrite reason; fault_reason keeps the cause latched with the bit (0 = LOST). */
-    const char *cause = !r->valid ? "unreadable link" :
-                        !latched ? r->reason_name :
-                        r->fault_reason ? r->fault_reason_name : lost ? "no replies" : r->reason_name;
+    const char *cause = ik_fault_cause(r, latched, lost);
     size_t used = strlen(reasons);
     snprintf(reasons + used, sizeof reasons - used, "%s%s %s%s%s (%s)", used ? "; " : "",
              IK_WHEEL_POS[w], faulted ? "FAULTED" : "", faulted && lost ? "/" : "",

@@ -200,6 +200,14 @@ void ik_decode_link_row(const uint32_t words[IK_LINK_WORDS], ik_link_row_t *row)
  * @param reason Protocol reason code.
  */
 const char *ik_reason_name(uint32_t reason);
+/** @brief Cause to print for a FAULTED or LOST wheel.
+ * @param r The wheel's link row.
+ * @param latched The wheel's ik_drive_fault bit (FAULTED or LOST) is set.
+ * @param lost The wheel's LOST bit is set.
+ * @return A fault reason name (FAULT_*, TIMEOUT, LIFECYCLE_OVERFLOW), "no replies", "unreadable link", or a note that
+ *         the ESC faulted before this session (its replies then carry no cause; read it before power-cycling).
+ */
+const char *ik_fault_cause(const ik_link_row_t *r, bool latched, bool lost);
 /** @brief Refuse latched drive faults or FAULTED links; set l->err with wheel/reason and recovery hint.
  * @param l Open mailbox link.
  * @param fault Snapshot of ik_drive_fault (bits w FAULTED, bits 4+w LOST).

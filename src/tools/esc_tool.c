@@ -118,7 +118,7 @@ static int cmd_status(ik_link_t *l)
            IK_WHEEL_POS[i], IK_WHEEL_CORNER[i], link->valid ? link->lifecycle_name : "unreadable",
            link->valid ? link->outcome_name : "?", link->valid ? link->reason_name : "?",
            link->session, link->misses, faulted, lost,
-           !(faulted || lost) ? "-" : !link->valid ? "?" : link->fault_reason ? link->fault_reason_name : lost ? "no replies" : "NONE",
+           !(faulted || lost) ? "-" : ik_fault_cause(link, true, lost),
            !!(status.armed & (1U << i)));
     /* rows keep the last values; only a new count means the ESC is live */
     if (!r->valid || !r->status_count || (before[i].valid && before[i].status_count == r->status_count)) {

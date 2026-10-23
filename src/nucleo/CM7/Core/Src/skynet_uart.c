@@ -34,7 +34,7 @@ void USART3_IRQHandler(void)
   /* A framing/noise/parity byte is still delivered: the record CRC rejects it. */
   USART3->ICR = USART_ICR_ORECF | USART_ICR_FECF | USART_ICR_NECF | USART_ICR_PECF;
   while (isr & USART_ISR_RXNE_RXFNE) {
-    skynet_link_isr_byte((uint8_t)USART3->RDR);
+    skynet_link_isr_byte((uint8_t)USART3->RDR, HAL_GetTick());
     isr = USART3->ISR;
   }
 }

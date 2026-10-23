@@ -274,7 +274,8 @@ Error_Handler();
     (void)ik_drive_abi; /* keep the debugger-visible ABI word through linker GC */
     /* every pass also keeps the microsecond clock accumulating while the bus is quiet */
     (void)skynet_link_abi;
-    skynet_link_poll(now); /* skynet commands land in the mailbox before this pass reads it */
+    /* skynet commands land in the mailbox before this pass reads it; B1 acknowledges a link fault */
+    skynet_link_poll(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
     ik_drive_tick(now, now_us(), can_send_len);
     const uint32_t poll_id = ik_telemetry_poll_due(now);
     if (poll_id != 0U) {

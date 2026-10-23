@@ -194,6 +194,31 @@ static void terminal_case(int mode)
   close(master); close(slave); unlink(log_path); unsetenv("FAKE_OCD_MEM");
 }
 
+/* A start refused before driving (here: the drive reports a fault, as when an ESC is still FAULTED from the
+ * previous run) must leave that run's log untouched. */
+static void refused_start_keeps_log(bool fault)
+{
+  uint32_t addresses[IK_SYM_COUNT]; char err[256];
+  CHECK_EQ(ik_resolve(FAKE_ELF, addresses, err, sizeof err), 0);
+  char mem[8192]; size_t used = 0;
+  used += (size_t)snprintf(mem, sizeof mem, "%x=%x,%x=0,%x=2,%x=0", addresses[IK_ABI_SYM], IK_ABI,
+                           addresses[IK_STATE], addresses[IK_FAULT], addresses[IK_MODE]);
+  for (int w = 0; w < 4; w++) for (int k = 0; k < IK_ROW_WORDS; k++)
+    used += (size_t)snprintf(mem + used, sizeof mem - used, ",%x=0", addresses[IK_TELEM] + (w * IK_ROW_WORDS + k) * 4);
+  setenv("FAKE_OCD_MEM", mem, 1);
+  int master, slave; CHECK_EQ(openpty(&master, &slave, NULL, NULL, NULL), 0);
+  char log_path[256]; snprintf(log_path, sizeof log_path, "%s/keyboard-refused.jsonl", directory);
+  FILE *previous = fopen(log_path, "w"); CHECK(previous != NULL);
+  fputs("PREVIOUS_RUN_THAT_FAULTED\n", previous); fclose(previous);
+  const char *args[] = {"--elf", fault ? FAKE_ELF : "/nonexistent.elf", "--log", log_path, NULL};
+  CHECK_EQ(wait_child(spawn(KEYBOARD_TOOL, args, slave), 8), 1);
+  CHECK(file_contains(log_path, "PREVIOUS_RUN_THAT_FAULTED"));
+  close(master); close(slave); unlink(log_path); unsetenv("FAKE_OCD_MEM");
+}
+
+static void test_keyboard_fault_keeps_log(void) { refused_start_keeps_log(true); }
+static void test_keyboard_missing_elf_keeps_log(void) { refused_start_keeps_log(false); }
+
 static void test_keyboard_x_restores_terminal(void) { terminal_case(0); }
 static void test_keyboard_escape_restores_terminal(void) { terminal_case(1); }
 static void test_keyboard_signal_waits_three_seconds_and_restores(void) { terminal_case(2); }
@@ -223,12 +248,14 @@ int main(int argc, char **argv)
     test_keyboard_x_restores_terminal();
     test_keyboard_escape_restores_terminal();
     test_keyboard_signal_waits_three_seconds_and_restores();
-    puts("drive CLI RPC: 4 test cases passed");
+    test_keyboard_fault_keeps_log();
+    puts("drive CLI RPC: 5 test cases passed");
   } else {
     test_help_and_invalid_arguments();
     test_non_camera_options_parse_before_elf_refusal();
     test_keyboard_nonterminal_refusal();
-    puts("drive CLI: 3 test cases passed");
+    test_keyboard_missing_elf_keeps_log();
+    puts("drive CLI: 4 test cases passed");
   }
   unlink(output_path); CHECK_EQ(rmdir(directory), 0);
   return 0;

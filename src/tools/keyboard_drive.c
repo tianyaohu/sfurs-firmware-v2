@@ -48,8 +48,7 @@ int main(int argc, char **argv)
   }
   struct termios saved;
   if (tcgetattr(STDIN_FILENO, &saved)) { perror("keyboard input needs a terminal"); return 1; }
-  FILE *log = log_path ? fopen(log_path, "w") : NULL; /* reruns reuse the name (user, 2026-10-22) */
-  if (log_path && !log) { perror(log_path); return 1; }
+  FILE *log = NULL;
   struct sigaction action = {.sa_handler = interrupt_handler}, old_int, old_term, old_hup;
   sigemptyset(&action.sa_mask);
   sigaction(SIGINT, &action, &old_int);
@@ -72,6 +71,10 @@ int main(int argc, char **argv)
     if (drive_ff_write(&link, &ff)) { rc = -1; goto done; }
     ff_written = true;
   }
+  /* Reruns reuse the name (user, 2026-10-22), but only a drive that can start may overwrite it: a start refused
+   * because an ESC is still FAULTED would otherwise wipe the log of the run that faulted. */
+  log = log_path ? fopen(log_path, "w") : NULL;
+  if (log_path && !log) { perror(log_path); rc = -1; goto done; }
   struct termios raw = saved;
   raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
   raw.c_iflag &= (tcflag_t)~(IXON | ICRNL);

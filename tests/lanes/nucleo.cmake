@@ -57,7 +57,7 @@ host_test(test_skynet_link
         finds_batches_after_garbage_and_splits corrupt_record_discards_its_batch ids_out_of_order_discard_batch
         reserved_bits_reject_record full_scale_is_clamped_to_drive_limits silence_stops_and_restart_drives
         stale_bytes_are_dropped record_cut_by_silence_is_not_completed ring_overflow_is_counted
-        refuses_current_mode_and_busy_drive fault_latches_until_acknowledged damaged_streams_never_forge_commands)
+        refuses_current_mode_and_busy_drive fault_latches_until_acknowledged damaged_streams_apply_only_sent_commands)
 
 # The link against the whole drive: real ik_drive.c and four real ESC lifecycles (test_ik_drive.c fixture).
 host_test(test_skynet_link_drive
@@ -66,6 +66,6 @@ host_test(test_skynet_link_drive
           src/esc/motor_config/Src/motor_cmd.c
   INCLUDES src/nucleo/CM7/Core/Inc src/shared/inc src/shared/can src/esc/motor_config/Inc
   LIBS m
-  CASES dropped_byte_forges_nothing fault_waits_for_operator_0 fault_waits_for_operator_1
+  CASES dropped_byte_applies_no_command fault_waits_for_operator_0 fault_waits_for_operator_1
         fault_waits_for_operator_2 fault_waits_for_operator_3 inherited_current_session_is_refused
         queued_record_goes_stale cut_record_does_not_absorb_halt)

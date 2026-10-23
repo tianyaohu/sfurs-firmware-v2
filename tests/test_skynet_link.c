@@ -327,7 +327,7 @@ static void fault_latches_until_acknowledged(void)
 
 /* Random team batches with dropped, inserted and flipped bytes: whatever the stream, every command the link
  * applies must be one that skynet actually sent for this robot. */
-static void damaged_streams_never_forge_commands(void)
+static void damaged_streams_apply_only_sent_commands(void)
 {
   srand(82);
   skynet_link_robot_id = 2U;
@@ -394,7 +394,7 @@ int main(int argc, char **argv)
     {"ring_overflow_is_counted", ring_overflow_is_counted},
     {"refuses_current_mode_and_busy_drive", refuses_current_mode_and_busy_drive},
     {"fault_latches_until_acknowledged", fault_latches_until_acknowledged},
-    {"damaged_streams_never_forge_commands", damaged_streams_never_forge_commands},
+    {"damaged_streams_apply_only_sent_commands", damaged_streams_apply_only_sent_commands},
   };
   CHECK(argc == 2);
   for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i)

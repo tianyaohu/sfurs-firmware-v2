@@ -1,6 +1,6 @@
 /* skynet_link.c against the whole drive: the real ik_drive.c and four real ESC command lifecycles
- * (motor_cmd.c) from test_ik_drive.c's fixture. Each case is an attack found in review of the first link:
- * forged commands from a dropped byte, a stale or cut record, an inherited current-mode session, and a
+ * (motor_cmd.c) from test_ik_drive.c's fixture. Each case is a failure found in review of the first link:
+ * a spurious command from a dropped byte, a stale or cut record, an inherited current-mode session, and a
  * fault acknowledged by mere silence. */
 #define main ik_drive_fixture_main
 #include "test_ik_drive.c"
@@ -107,7 +107,7 @@ static void cut_record_does_not_absorb_halt(void)
   for (unsigned w = 0; w < 4; w++) CHECK(esc[w].lifecycle != MOTOR_LC_RUNNING || last_rpm(w) == 0);
 }
 
-static void dropped_byte_forges_nothing(void)
+static void dropped_byte_applies_no_command(void)
 {
   stream(1000, 0); /* serial halts have armed all four wheels */
   for (unsigned id = 0; id < 4; id++) wire(id, 0, 0, 0);
@@ -122,7 +122,7 @@ int main(int argc, char **argv)
 {
   CHECK(argc == 2);
   setup();
-  if (!strcmp(argv[1], "dropped_byte_forges_nothing")) dropped_byte_forges_nothing();
+  if (!strcmp(argv[1], "dropped_byte_applies_no_command")) dropped_byte_applies_no_command();
   else if (!strncmp(argv[1], "fault_waits_for_operator_", 25)) {
     const unsigned w = (unsigned)atoi(argv[1] + 25);
     CHECK(w < 4);

@@ -97,7 +97,7 @@ enum { ESC_CAPTURE_NONE = 0, ESC_CAPTURE_RUNNING = 1, ESC_CAPTURE_DONE = 2,
  * sample index.
  * Channels (motor_speed.h): applied ref RPM, speed estimate RPM, P, I, ff, Iq reference, measured Iq
  * (counts), packed: bits 0-1 loop mode (ESC_REC_MODE_*), 2 estimate valid, 3 request saturated,
- * 4 over-speed bleed this tick, 5 stall timer counting, 6-7 0, 8-11 net Hall edges (+ minus -)
+ * 4 over-speed bleed this tick, 5 stall timer counting, 6 stall rest, 7 0, 8-11 net Hall edges (+ minus -)
  * mod 16, 12-14 raw Hall state (HALL_M1.HallState, 1..6; 0/7 = invalid) so tools know the
  * starting sector and the sector after each edge, 15 speed loop ran this tick (else ref, P, I,
  * ff and Iq ref are 0). */

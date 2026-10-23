@@ -226,7 +226,7 @@ const char *ik_reason_name(uint32_t reason)
     "NONE", "BAD_VERSION", "BAD_MODE", "BAD_FLAGS", "RESERVED_NONZERO", "BAD_SELECT",
     "OUT_OF_RANGE", "NOT_ARMED", "BAD_SESSION", "STALE", "SEQ_AMBIGUOUS", "SEQ_JUMP",
     "NOT_ALIGNED", "BUSY", "MODE_CHANGE", "NOT_IDLE", "LIMITED", "STARTING", "FF_UNUSED",
-    "CONFLICT", "BAD_LENGTH", "UNSUPPORTED", [MOTOR_R_FAULT_MCSDK] = "FAULT_MCSDK",
+    "CONFLICT", "BAD_LENGTH", "UNSUPPORTED", "STALLED", [MOTOR_R_FAULT_MCSDK] = "FAULT_MCSDK",
     [MOTOR_R_FAULT_STALL] = "FAULT_STALL", [MOTOR_R_FAULT_HALL_LOST] = "FAULT_HALL_LOST",
     [MOTOR_R_TIMEOUT] = "TIMEOUT", [MOTOR_R_LIFECYCLE_OVERFLOW] = "LIFECYCLE_OVERFLOW"
   };
@@ -448,6 +448,7 @@ void ik_unpack_record(const ik_record_sample_t *s, ik_record_unpacked_t *u)
   u->saturated = p & 0x08;
   u->bleed = p & 0x10;
   u->stall_timer = p & 0x20;
+  u->stall_rest = p & 0x40;
   u->edges_mod16 = (int)((p >> 8) & 15);
   u->hall_state = (int)((p >> 12) & 7);
   u->loop = p & 0x8000;

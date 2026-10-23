@@ -48,7 +48,7 @@ enum motor_cmd_stop {
   MOTOR_CMD_STOP_NONE = 0,
   MOTOR_CMD_STOP_DISABLE,     /**< DISABLE frame */
   MOTOR_CMD_STOP_TIMEOUT,     /**< command watchdog */
-  MOTOR_CMD_STOP_FAULT,       /**< MCSDK fault, start timeout, stall or Hall loss */
+  MOTOR_CMD_STOP_FAULT,       /**< MCSDK fault, start timeout or Hall loss */
   MOTOR_CMD_STOP_OVERFLOW,    /**< inbox overflow (faulty sender) */
   MOTOR_CMD_STOP_PARKED       /**< HOLD outlasted MOTOR_CMD_PARK_MS */
 };
@@ -69,7 +69,7 @@ struct motor_cmd_inputs {
   uint8_t aligned;      /**< Hall phase shift known */
   uint8_t busy;         /**< Hall alignment or current capture running */
   uint8_t standstill;   /**< the speed loop sees the wheel at rest (motor_speed_outputs.standstill) */
-  uint8_t stall_fault;  /**< the speed loop's stall timer expired (motor_speed_outputs.stall_fault) */
+  uint8_t stall_rest;   /**< the speed loop is resting after a stall (motor_speed_outputs.stall_rest) */
   uint8_t hall_lost;    /**< Hall sensing lost: invalid Hall code past the stale window, or MCSDK's
                              speed-feedback fault (with mc FAULT it names the fault HALL_LOST) */
   int16_t rpm;          /**< speed estimate, RPM */

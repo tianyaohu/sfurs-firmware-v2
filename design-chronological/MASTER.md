@@ -158,3 +158,15 @@ Append only; format in design/README.md.
   visible. The bootloader clears the MCU reset flags, so the app cannot report a reset cause; the boot session can
   mark a restart without a protocol change.
 - Touches: src/esc (motor_cmd.c), src/nucleo (ik_drive), src/tools (ik_link, esc_tool, keyboard_drive), docs.
+
+## 2026-10-22  A stall rests and retries instead of latching FAULTED(STALL)  (who: claude, decided with Frank H)
+- Decision: when the stall monitor fires (>= 80 % of the limit, no Hall progress for STALL_MS) the speed loop rests:
+  Iq 0 and ff 0 for 300 ms with the output on, I/slip/timer cleared, then a fresh push from 0 (the stall ramp again).
+  The wheel stays RUNNING; motion replies are INHIBITED(STALLED, new code 22); FAULT_STALL (33) is retired. Recorder
+  s7 bit 6 marks the rest. MCSDK faults (over-current etc.) and HALL_LOST still latch.
+- Why: on the tournament-like carpet a stuck wheel latched FAULTED for the rest of a drive and needed DISABLE +
+  CLEAR_FAULT + ARM; a competition robot must keep driving on the other wheels and retry. Heat is I2T's job (it
+  derates a wheel that keeps retrying to 3 A); TIGERs' motor firmware has no stall fault at all. Reverses the C4 /
+  E-speed-loop "STALL -> FAULTED" decision (2026-10-21).
+- Touches: src/esc (motor_speed, motor_cmd, drive_app), src/shared (motor_protocol.h, can_datatypes.h),
+  src/tools (ik_link, drive_record), docs.

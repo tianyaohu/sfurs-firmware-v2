@@ -117,6 +117,7 @@ typedef struct {
   bool saturated;    /**< Current request saturated at the limit. */
   bool bleed;        /**< Over-speed bleed applied this tick. */
   bool stall_timer;  /**< Stall timer counting (high current, no Hall progress). */
+  bool stall_rest;   /**< Resting after a stall: Iq 0, then the loop pushes again. */
   bool loop;         /**< Speed loop ran this tick (else ref, P, I, ff, Iq ref are 0). */
   int edges_mod16;
   int hall_state; /**< Raw Hall state 1..6 sampled in the same tick; 0/7 invalid. */

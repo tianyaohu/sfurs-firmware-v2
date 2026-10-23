@@ -40,7 +40,9 @@ stall monitor and park check read this value. The plausibility cap and the rever
   the stale window. An invalid estimate after motion is not a fault (a re-stuck wheel is the stall ramp's job).
 - STALL: |iq_ref| >= 0.8*L, |r| >= 10 RPM, no progress edge for 500 ms (CONFIG `STALL_MS`); resets on progress edge,
   sign flip, |r| < 10, leaving RUNNING; while |iq_ref| < 0.8*L it pauses (keeps its count). Replaces loop_failed /
-  STOP_LOOP_FAILED. "Saturated" also counts a P term clipped to +-L.
+  STOP_LOOP_FAILED. "Saturated" also counts a P term clipped to +-L. **[amended 2026-10-22]** It ends in a stall rest
+  (Iq 0, ff 0, I/slip/timer cleared for 300 ms, then a fresh push; reply INHIBITED(STALLED); recorder s7 bit 6), not
+  FAULTED(STALL): on the mat a stuck wheel latched off for the rest of the drive.
 - HOLD: RUNNING, setpoint 0, |w_hat| < 45 RPM for 150 ms -> output stays on, I = ff = slip = 0, Iq ref 0. Any
   non-zero SPEED frame -> RUNNING with no MCSDK start. DISABLE/watchdog/fault leave HOLD like RUNNING; "MCSDK left
   RUN" also checked in HOLD. STOP_PARKED retired.

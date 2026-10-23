@@ -44,7 +44,7 @@ The 1 kHz tick evaluates, in this order: (1) MCSDK fault, (2) lifecycle FIFO, (3
 | HOLD | SPEED frame with setpoint != 0 | RUNNING | speed loop on, integrator 0, ff slew from 0 |
 | HOLD | CURRENT frame | unchanged | REJECTED(MODE_CHANGE): mode is latched until DISABLE |
 | HOLD | 1000 ms in HOLD (`MOTOR_CMD_PARK_MS`) | READY | `MC_StopMotor1`, stop reason PARKED (8), target cleared; still armed, so the next non-zero target starts MCSDK again (READY -> STARTING) |
-| RUNNING | stall monitor fires | FAULTED | reason FAULT_STALL, `MC_StopMotor1` |
+| RUNNING | stall monitor fires | RUNNING | stall rest: the speed loop holds Iq 0 (ff too) for 300 ms with the output on, clears I, slip and the timer, then pushes again from 0; motion replies INHIBITED(STALLED) meanwhile |
 | RUNNING, HOLD | Hall code invalid (0 or 7) for longer than the stale window | FAULTED | reason FAULT_HALL_LOST, `MC_StopMotor1`. A wheel that sticks again is not a Hall loss: its estimate decays and the stall ramp handles it |
 | HOLD | MCSDK leaves RUN | FAULTED | reason FAULT_MCSDK |
 | armed, not FAULTED | watchdog age >= 100 ms | DISARMED | `MC_StopMotor1` if on, new session, reason TIMEOUT (sticky in DIAG until the next ARM) |
@@ -59,7 +59,8 @@ Notes:
 - Stall monitor (RUNNING only, in `motor_speed.c`): counts while |Iq request| >= 80 % of the effective limit and
   |applied reference| >= 10 RPM, pauses below that current, and fires after 500 ms (CONFIG 200-2000 ms) with no
   progress edge (a new furthest position along the command). It resets on a progress edge, a reference sign change,
-  |reference| < 10 RPM, or leaving RUNNING. In CURRENT mode the stall monitor is off (a
+  |reference| < 10 RPM, or leaving RUNNING. It ends in a stall rest, not a fault: a stuck wheel lets go and retries
+  every ~1 s while the others drive, and I2T derates a wheel that keeps trying. In CURRENT mode the stall monitor is off (a
   roll-out against a wall is a legitimate test); the current limit and I2T protect the motor there.
 
 ## Ordering of received frames (ISR -> tick)

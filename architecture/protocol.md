@@ -113,8 +113,8 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
   command-apply skew. It does not mean the speed was reached.
 - SUPERSEDED: accepted, then replaced in the single motion slot by a newer frame before a tick consumed it.
 - INHIBITED: applied, but the output cannot follow. Reasons: LIMITED (effective limit below the request), STARTING
-  (MCSDK start in progress), FF_UNUSED (18, retired with the old speed loop: never sent, never reused), and
-  the FAULTED reasons.
+  (MCSDK start in progress), STALLED (stall rest: Iq 0 for 300 ms, then the loop pushes again), FF_UNUSED (18,
+  retired with the old speed loop: never sent, never reused), and the FAULTED reasons.
 - Pending replies sit in a 4-entry ring; when it is full the newest is dropped and counted (`reply_dropped`, ESC
   state over SWD); see [command-lifecycle.md](command-lifecycle.md) for why.
 - The Nucleo timestamps each reply on receipt. Command-apply skew across wheels is the spread of those receipt
@@ -132,12 +132,12 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 | 5 | BAD_SELECT | 17 | STARTING |
 | 6 | OUT_OF_RANGE | 18 | FF_UNUSED |
 | 7 | NOT_ARMED | 32 | FAULT_MCSDK (over-current, voltage, temperature) |
-| 8 | BAD_SESSION | 33 | FAULT_STALL |
+| 8 | BAD_SESSION | 33 | FAULT_STALL (retired 2026-10-22: a stall rests, STALLED; never sent, never reused) |
 | 9 | STALE | 34 | FAULT_HALL_LOST |
 | 10 | SEQ_AMBIGUOUS | 35 | TIMEOUT |
 | 11 | SEQ_JUMP | 36 | LIFECYCLE_OVERFLOW |
 | 19 | CONFLICT | 20 | BAD_LENGTH (DLC != 8 or wrong ID base; counted, never sent) |
-| 21 | UNSUPPORTED (valid mode this firmware does not implement yet) | | |
+| 21 | UNSUPPORTED (valid mode this firmware does not implement yet) | 22 | STALLED (INHIBITED: stall rest) |
 
 Codes 32 and up are latched causes. While FAULTED every reply carries the cause as its reason (and the Nucleo keeps
 it as `ik_drive_link.fault_reason`). The cause of the last disarm (timeout, overflow) is kept in the ESC's

@@ -83,8 +83,9 @@ enum motor_reason {
   MOTOR_R_CONFLICT = 19,        /**< same sequence as the last accepted frame, different payload */
   MOTOR_R_BAD_LENGTH = 20,      /**< DLC is not 8: counted, never replied to */
   MOTOR_R_UNSUPPORTED = 21,     /**< valid mode this firmware does not implement yet */
+  MOTOR_R_STALLED = 22,         /**< INHIBITED: resting after a stall (no Hall progress at high current), then retry */
   MOTOR_R_FAULT_MCSDK = 32,     /**< MCSDK protection (over-current, voltage, temperature, start timeout) */
-  MOTOR_R_FAULT_STALL = 33,     /**< sustained current with no Hall progress */
+  MOTOR_R_FAULT_STALL = 33,     /**< retired 2026-10-22 (a stall now rests and retries: STALLED); never reused */
   MOTOR_R_FAULT_HALL_LOST = 34, /**< Hall sensing lost: invalid Hall code or MCSDK speed-feedback fault */
   MOTOR_R_TIMEOUT = 35,         /**< command watchdog expired */
   MOTOR_R_LIFECYCLE_OVERFLOW = 36 /**< more than 4 lifecycle frames pending */

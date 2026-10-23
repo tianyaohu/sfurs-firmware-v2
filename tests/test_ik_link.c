@@ -92,17 +92,18 @@ static void test_unpack_record(void)
   ik_record_unpacked_t u;
   ik_unpack_record(&s, &u);
   CHECK(!strcmp(u.mode, "hold"));
-  CHECK(u.valid && !u.saturated && u.bleed && !u.stall_timer && u.loop);
+  CHECK(u.valid && !u.saturated && u.bleed && !u.stall_timer && !u.stall_rest && u.loop);
   CHECK_EQ(u.edges_mod16, 3);
   CHECK_EQ(u.hall_state, 5);
   CHECK_NEAR(u.p_a, 0.5, 1e-9);
   CHECK_NEAR(u.iq_a, -1.0, 1e-9);
   const char *const modes[] = {"off", "run", "hold", "stall_ramp"};
   for (unsigned m = 0; m < 4; m++) {
-    s.packed = (int16_t)(m | 0x08 | 0x20);
+    s.packed = (int16_t)(m | 0x08 | 0x20 | 0x40);
     ik_unpack_record(&s, &u);
     CHECK(!strcmp(u.mode, modes[m]));
-    CHECK(!u.valid && u.saturated && !u.bleed && u.stall_timer && !u.loop);
+    CHECK(!u.valid && u.saturated && !u.bleed && u.stall_timer && u.stall_rest && !u.loop);
+    CHECK(!strcmp(ik_reason_name(MOTOR_R_STALLED), "STALLED"));
     CHECK_EQ(u.edges_mod16, 0);
     CHECK_EQ(u.hall_state, 0);
   }

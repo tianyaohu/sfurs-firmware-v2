@@ -324,9 +324,7 @@ static void rules(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct
       }
       break;
     case MOTOR_LC_RUNNING:
-      if (in->stall_fault) {
-        fault(m, out, MOTOR_R_FAULT_STALL);
-      } else if (in->hall_lost) {
+      if (in->hall_lost) {
         fault(m, out, MOTOR_R_FAULT_HALL_LOST);
       } else if (in->mc != MOTOR_CMD_MC_RUN) { /* MCSDK left RUN on its own */
         fault(m, out, MOTOR_R_FAULT_MCSDK);
@@ -391,6 +389,8 @@ void motor_cmd_tick(struct motor_cmd *m, const struct motor_cmd_inputs *in, stru
       reply(m, in, c->seq, MOTOR_OUT_INHIBITED, m->latched);
     else if (c->setpoint != 0 && (m->lifecycle == MOTOR_LC_READY || m->lifecycle == MOTOR_LC_STARTING))
       reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_STARTING);
+    else if (in->stall_rest && m->lifecycle == MOTOR_LC_RUNNING)
+      reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_STALLED); /* applied; the loop pushes again after the rest */
     else if ((c->mode == MOTOR_MODE_CURRENT && (c->setpoint > in->limit_ma || c->setpoint < -in->limit_ma)) ||
              (c->mode == MOTOR_MODE_SPEED && (c->ff_ma > in->limit_ma || c->ff_ma < -in->limit_ma)))
       reply(m, in, c->seq, MOTOR_OUT_INHIBITED, MOTOR_R_LIMITED); /* applied, limited to the effective limit */

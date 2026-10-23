@@ -39,9 +39,9 @@ int drive_records_read(ik_link_t *l, const char *path, double t0_monotonic_s, dr
       const ik_record_unpacked_t *r = &rows[k];
       fprintf(f, "%s{\"ref_rpm\":%d,\"rpm\":%d,\"p_a\":%.6g,\"i_a\":%.6g,\"ff_a\":%.6g,"
                  "\"iq_ref_a\":%.6g,\"iq_a\":%.6g,\"mode\":\"%s\",\"valid\":%s,\"saturated\":%s,"
-                 "\"bleed\":%s,\"stall_timer\":%s,\"loop\":%s,\"edges_mod16\":%d,\"hall_state\":%d}",
+                 "\"bleed\":%s,\"stall_timer\":%s,\"stall_rest\":%s,\"loop\":%s,\"edges_mod16\":%d,\"hall_state\":%d}",
               k ? "," : "", r->ref_rpm, r->rpm, r->p_a, r->i_a, r->ff_a, r->iq_ref_a, r->iq_a,
-              r->mode, B(r->valid), B(r->saturated), B(r->bleed), B(r->stall_timer), B(r->loop),
+              r->mode, B(r->valid), B(r->saturated), B(r->bleed), B(r->stall_timer), B(r->stall_rest), B(r->loop),
               r->edges_mod16, r->hall_state);
     }
     fputs("]}", f);

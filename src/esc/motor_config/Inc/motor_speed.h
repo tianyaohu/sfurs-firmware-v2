@@ -36,6 +36,7 @@ extern "C" {
 #define MOTOR_SPEED_MCSDK_EDGES 6         /**< edges after which MCSDK's 6-edge average is used */
 #define MOTOR_SPEED_STALE_MIN_MS 20       /**< stale window lower bound, ms */
 #define MOTOR_SPEED_STALE_MAX_MS 100      /**< stale window upper bound, ms */
+#define MOTOR_SPEED_STALL_REST_MS 300     /**< after a stall: Iq 0 this long, then a fresh push, ms */
 #define MOTOR_SPEED_BLEED_RING 16U        /**< progress-tick records kept (>= BLEED_SPAN_MS + 1) */
 
 /** @brief What the lifecycle wants from the loop this tick. */
@@ -50,7 +51,7 @@ struct motor_speed_config {
   int16_t kp;                   /**< counts per RPM x 256 (1024 = 4 counts/RPM = 7.35 mA/RPM) */
   int16_t ki;                   /**< counts per RPM per ms x 16384 (553 = 62 mA/s per RPM) */
   uint16_t stall_ramp_ma_per_s; /**< stall-ramp integrator slope, mA/s */
-  uint16_t stall_ms;            /**< high current without progress this long -> stall_fault, ms */
+  uint16_t stall_ms;            /**< high current without progress this long -> stall rest, ms */
 };
 
 /** @brief Sampled by the caller before each tick. */
@@ -79,7 +80,7 @@ struct motor_speed_outputs {
   uint8_t stall_ramp;    /**< rule (a) moved the integrator this tick */
   uint8_t bleed;         /**< rule (c) halved the integrator this tick */
   uint8_t stall_timer;   /**< the stall timer counted this tick */
-  uint8_t stall_fault;   /**< the stall timer has reached stall_ms (stays set until it resets) */
+  uint8_t stall_rest;    /**< resting after a stall: Iq 0 for ::MOTOR_SPEED_STALL_REST_MS, then retry */
 };
 
 /** @brief Loop state; one per wheel controller, statically allocated. Fields are private to motor_speed.c. */
@@ -117,6 +118,7 @@ struct motor_speed {
   uint8_t ring_head;       /**< next write slot */
   uint8_t ring_len;        /**< records in the current consecutive run */
   uint16_t stall_count_ms; /**< stall timer */
+  uint16_t rest_ms;        /**< stall rest ticks left */
 };
 
 /**

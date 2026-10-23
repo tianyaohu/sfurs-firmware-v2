@@ -312,16 +312,23 @@ static void test_mcsdk_leaving_run_faults(void)
   CHECK_EQ(m.latched, MOTOR_R_FAULT_MCSDK);
 }
 
-/* The speed loop's verdicts become faults: stall, Hall loss while RUNNING, and an MCSDK fault that the
- * caller attributes to Hall sensing. */
+/* A stall rest is not a fault: the wheel stays RUNNING with the output on, and motion is answered
+ * INHIBITED(STALLED) while it lasts. Hall loss while RUNNING and an MCSDK fault that the caller attributes to
+ * Hall sensing are faults. */
 static void test_speed_loop_faults(void)
 {
   run_at(100);
-  in.stall_fault = 1U;
+  drain_replies();
+  in.stall_rest = 1U;
+  speed(100);
   tick();
-  CHECK_EQ(m.lifecycle, MOTOR_LC_FAULTED);
-  CHECK_EQ(m.latched, MOTOR_R_FAULT_STALL);
-  CHECK(act.stop && act.stop_cause == MOTOR_CMD_STOP_FAULT);
+  CHECK_EQ(m.lifecycle, MOTOR_LC_RUNNING);
+  CHECK(!act.stop);
+  expect(seq, MOTOR_OUT_INHIBITED, MOTOR_R_STALLED, MOTOR_LC_RUNNING);
+  in.stall_rest = 0U;
+  speed(100);
+  tick();
+  expect(seq, MOTOR_OUT_APPLIED, MOTOR_R_NONE, MOTOR_LC_RUNNING);
 
   setup();
   run_at(100);

@@ -483,42 +483,59 @@ static void hold(void)
   CHECK_EQ(out.iq_ref_counts, 20);
 }
 
-/* Counts ticks with the stall timer running until the fault; returns that count. */
-static unsigned until_fault(unsigned limit)
+/* Counts ticks with the stall timer running until the stall rest starts; returns that count. */
+static unsigned until_rest(unsigned limit)
 {
   unsigned counted = 0;
   for (unsigned n = 0; n < limit; ++n) {
     tick();
     counted += out.stall_timer;
-    if (out.stall_fault) return counted;
+    if (out.stall_rest) return counted;
   }
   return 0;
 }
 
 /* STALL: |iq| >= 0.8 L, |r| >= 10, no progress for stall_ms; pauses below 0.8 L; resets on progress, |r| < 10,
- * sign flip, leaving RUNNING. */
+ * sign flip, leaving RUNNING. Then a rest of MOTOR_SPEED_STALL_REST_MS with Iq 0 (ff included) and the loop
+ * cleared, and a fresh push that can stall and rest again. */
 static void stall_timer(void)
 {
   struct motor_speed_config c = dflt;
   c.stall_ms = 200;
   setup_cfg(&c);
   in.limit_counts = 100;
+  motor_speed_set(&s, 100, 300); /* ff along the command: the rest drops it too */
+  CHECK_EQ(until_rest(1000), 200);
+  CHECK_EQ(out.iq_ref_counts, 0);
+  for (unsigned n = 1; n < MOTOR_SPEED_STALL_REST_MS; ++n) {
+    tick();
+    CHECK(out.stall_rest); CHECK_EQ(out.iq_ref_counts, 0); CHECK_EQ(out.ff_counts, 0); CHECK_EQ(s.i_q14, 0);
+    CHECK(!out.stall_timer);
+  }
+  tick(); /* rest over: P alone saturates L = 100 again, so the timer runs from this tick */
+  CHECK(!out.stall_rest); CHECK_EQ(out.iq_ref_counts, 100); CHECK(out.stall_timer);
+  CHECK_EQ(until_rest(1000), 199);
+  setup_cfg(&c);
+  in.limit_counts = 100;
   motor_speed_set(&s, 100, 0);
-  CHECK_EQ(until_fault(1000), 200);
+  CHECK_EQ(until_rest(1000), 200);
+  in.mode = MOTOR_SPEED_HOLD; /* leaving RUNNING ends the rest */
   tick();
-  CHECK(out.stall_fault); /* stays until a reset */
+  in.mode = MOTOR_SPEED_RUNNING;
+  tick();
+  CHECK(!out.stall_rest); CHECK_EQ(out.iq_ref_counts, 100);
 
   setup_cfg(&c);
   in.limit_counts = 100;
   settle(100, 0);
   ticks(100);
-  CHECK(out.stall_timer && !out.stall_fault);
+  CHECK(out.stall_timer && !out.stall_rest);
   in.limit_counts = 3264; /* iq ~ 400-700 < 0.8 L: paused, not reset */
   for (int n = 0; n < 50; ++n) { tick(); CHECK(!out.stall_timer); }
   in.limit_counts = 100;
   const uint16_t held = s.stall_count_ms;
   CHECK(held >= 100);
-  CHECK_EQ(until_fault(1000), 200U - held);
+  CHECK_EQ(until_rest(1000), 200U - held);
 
   setup_cfg(&c);
   in.limit_counts = 100;
@@ -527,7 +544,7 @@ static void stall_timer(void)
   edge(1, 1U); /* progress */
   tick();
   CHECK_EQ(s.stall_count_ms, 0);
-  CHECK_EQ(until_fault(1000), 200);
+  CHECK_EQ(until_rest(1000), 200);
 
   setup_cfg(&c);
   in.limit_counts = 100;
@@ -538,7 +555,7 @@ static void stall_timer(void)
   CHECK_EQ(s.stall_count_ms, 0);
   CHECK(!out.stall_timer);
   motor_speed_set(&s, -100, 0); /* through 0: sign flip */
-  CHECK_EQ(until_fault(1000), 200);
+  CHECK_EQ(until_rest(1000), 200);
 
   setup_cfg(&c);
   in.limit_counts = 100;
@@ -546,14 +563,14 @@ static void stall_timer(void)
   ticks(150);
   in.mode = MOTOR_SPEED_HOLD;
   tick();
-  CHECK(!out.stall_fault);
+  CHECK(!out.stall_rest);
   in.mode = MOTOR_SPEED_RUNNING;
-  CHECK_EQ(until_fault(1000), 200);
+  CHECK_EQ(until_rest(1000), 200);
 
   setup();
   in.limit_counts = 100;
   motor_speed_set(&s, -100, 0);
-  CHECK_EQ(until_fault(2000), 500);
+  CHECK_EQ(until_rest(2000), 500);
 }
 
 /* Estimate: validity, edge-interval speed, MCSDK average from 6 edges, 1/t bound, stale window, wrap, HALL_LOST. */

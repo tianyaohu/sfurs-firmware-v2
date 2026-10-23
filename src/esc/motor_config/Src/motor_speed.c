@@ -86,6 +86,7 @@ static void loop_clear(struct motor_speed *s)
   s->back_edges = 0;
   s->ring_len = 0U;
   s->stall_count_ms = 0U;
+  s->rest_ms = 0U;
 }
 
 static uint16_t stale_window_ms(const struct motor_speed *s)
@@ -249,6 +250,14 @@ void motor_speed_tick(struct motor_speed *s, const struct motor_speed_inputs *in
   const int8_t dir = s->ref_sign;
 
   s->slip = clamp32(s->slip + r_abs - (int32_t)gained * SLIP_UNIT, 0, SLIP_MAX);
+  if (s->rest_ms != 0U) {
+    /* Stall rest: no current (ff included), then a fresh push from zero; the wheel stays RUNNING. */
+    const uint16_t left = (uint16_t)(s->rest_ms - 1U);
+    loop_clear(s);
+    s->rest_ms = left;
+    out->stall_rest = 1U;
+    return;
+  }
   ff_slew(s);
   const int32_t ff = ma_to_counts(s->ff_ma);
   const int32_t e = clamp32(r - w, -MOTOR_SPEED_E_MAX_RPM, MOTOR_SPEED_E_MAX_RPM);
@@ -285,7 +294,13 @@ void motor_speed_tick(struct motor_speed *s, const struct motor_speed_inputs *in
     if (s->stall_count_ms < s->cfg.stall_ms) ++s->stall_count_ms;
     out->stall_timer = 1U;
   }
-  out->stall_fault = s->cfg.stall_ms != 0U && s->stall_count_ms >= s->cfg.stall_ms;
+  if (s->cfg.stall_ms != 0U && s->stall_count_ms >= s->cfg.stall_ms) {
+    /* A wheel that cannot move is not a fault: let go, and push again after the rest (I2T guards the heat). */
+    loop_clear(s);
+    s->rest_ms = MOTOR_SPEED_STALL_REST_MS - 1U; /* this tick is the first of the rest */
+    out->stall_rest = 1U;
+    return;
+  }
 
   out->iq_ref_counts = (int16_t)iq;
   out->p_counts = (int16_t)p;

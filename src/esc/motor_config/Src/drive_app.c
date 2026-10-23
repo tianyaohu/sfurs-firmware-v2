@@ -197,7 +197,7 @@ static void record_sample(uint8_t speed_mode)
   s[5] = o->iq_ref_counts;
   s[6] = measured_iq();
   s[7] = (int16_t)(mode | ((o->valid & 1U) << 2) | ((o->saturated & 1U) << 3) | ((o->bleed & 1U) << 4) |
-                   ((o->stall_timer & 1U) << 5) |
+                   ((o->stall_timer & 1U) << 5) | ((o->stall_rest & 1U) << 6) |
                    (((uint32_t)(HALL_M1.EdgesPos - HALL_M1.EdgesNeg) & 15U) << 8) |
                    (((uint32_t)HALL_M1.HallState & 7U) << 12) | (ran << 15));
   if (status == ESC_RECORD_ARMED) {
@@ -563,7 +563,7 @@ static void command_tick(uint16_t state)
     .mc_fault_present = state == FAULT_NOW || MC_GetCurrentFaultsMotor1() != MC_NO_FAULTS,
     .aligned = drive_app.aligned != 0U, .busy = (uint8_t)busy(),
     /* the loop's verdicts are from the previous tick: it runs after the lifecycle decides its mode */
-    .standstill = speed_out.standstill, .stall_fault = speed_out.stall_fault,
+    .standstill = speed_out.standstill, .stall_rest = speed_out.stall_rest,
     .hall_lost = speed_out.hall_lost ||
                  ((MC_GetCurrentFaultsMotor1() | MC_GetOccurredFaultsMotor1()) & MC_SPEED_FDBK) != 0U,
     .rpm = speed_out.w_hat_rpm,

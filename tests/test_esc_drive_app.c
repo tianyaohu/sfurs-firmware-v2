@@ -489,8 +489,8 @@ static void test_current_mode_drives_q_current(void)
   disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);
 }
 
-/* Torque mode: Iq 0 programmed before the start, the loop's request published in RUN; stall and Hall
- * loss end as latched faults with the output off. */
+/* Torque mode: Iq 0 programmed before the start, the loop's request published in RUN; a stall rests with the
+ * output on and pushes again; Hall loss ends as a latched fault with the output off. */
 static void test_speed_loop_drives_and_faults(void)
 {
   setup(15);
@@ -499,11 +499,15 @@ static void test_speed_loop_drives_and_faults(void)
   arm(); speed_cmd(100); tick(1);
   CHECK(starts == 1 && iqdref.q == 0 && iqdref.d == 0);
   tick(4); CHECK(state == RUN && iqdref.q > 0 && iqdref.d == 0);
-  int t = 0; /* the wheel never moves (no Hall edges): stall ramp, then the stall timer */
-  while (drive_cmd.lifecycle != MOTOR_LC_FAULTED && t < 3000) { speed_cmd(100); tick(20); t += 20; }
-  printf("stall fault after %d ms\n", t);
-  CHECK(drive_cmd.latched == MOTOR_R_FAULT_STALL && t > 800 && t < 1300);
-  CHECK(state == IDLE && drive_app.stop_reason == ESC_STOP_FAULT);
+  int t = 0; /* the wheel never moves (no Hall edges): stall ramp, then the stall timer, then the rest */
+  while (iqdref.q != 0 && t < 3000) { if (t % 20 == 0) speed_cmd(100); tick(1); ++t; }
+  printf("stall rest after %d ms\n", t);
+  CHECK(t > 800 && t < 1300 && drive_cmd.lifecycle == MOTOR_LC_RUNNING && state == RUN);
+  int rest = 0;
+  while (iqdref.q == 0 && rest < 1000) { if ((t + rest) % 20 == 0) speed_cmd(100); tick(1); ++rest; }
+  CHECK(rest >= MOTOR_SPEED_STALL_REST_MS - 2 && rest <= MOTOR_SPEED_STALL_REST_MS + 2);
+  CHECK(iqdref.q > 0 && drive_cmd.lifecycle == MOTOR_LC_RUNNING && state == RUN); /* a fresh push, no fault */
+  disable(MOTOR_CAN_ID); tick(3); CHECK(state == IDLE);
 
   setup(15);
   drive_app.aligned = 1;

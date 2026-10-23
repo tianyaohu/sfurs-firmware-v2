@@ -669,24 +669,23 @@ static void stage2_monitors(void)
     tick(&f, 11 + offset);
     EQ(f.m.lifecycle, MOTOR_LC_RUNNING); EQ(f.a.stop, 0); EQ(f.a.start, 0);
   }
+  /* Amended 2026-10-22: a stall rest is not a fault. The wheel stays RUNNING with the output on; motion is
+   * answered INHIBITED(STALLED) while the loop rests, APPLIED again after it. */
   establish(&f, MOTOR_LC_RUNNING);
-  f.in.stall_fault = 1;
-  tick(&f, 20); EQ(f.m.lifecycle, MOTOR_LC_FAULTED);
-  EQ(f.m.latched, MOTOR_R_FAULT_STALL); EQ(f.a.stop, 1);
-  EQ(f.a.stop_cause, MOTOR_CMD_STOP_FAULT);
-  f.in.stall_fault = 0;
+  f.in.stall_rest = 1;
+  tick(&f, 20); EQ(f.m.lifecycle, MOTOR_LC_RUNNING); EQ(f.a.stop, 0);
   rx(&f, command(0, 12, f.m.session), 21); tick(&f, 21);
-  one(&f, 12, MOTOR_OUT_REJECTED, MOTOR_R_FAULT_STALL); EQ(f.a.start, 0);
-  struct motor_control failed_zero = command(0, 12, f.m.session); failed_zero.setpoint = 0;
-  rx(&f, failed_zero, 22); tick(&f, 22);
-  one(&f, 12, MOTOR_OUT_REJECTED, MOTOR_R_FAULT_STALL);
-  EQ(f.m.lifecycle, MOTOR_LC_FAULTED); EQ(f.a.start, 0);
+  one(&f, 12, MOTOR_OUT_INHIBITED, MOTOR_R_STALLED); EQ(f.a.start, 0); EQ(f.a.stop, 0);
+  f.in.stall_rest = 0;
+  rx(&f, command(0, 13, f.m.session), 41); tick(&f, 41);
+  one(&f, 13, MOTOR_OUT_APPLIED, MOTOR_R_NONE);
+  EQ(f.m.lifecycle, MOTOR_LC_RUNNING);
 
-  /* Watchdog precedes monitors: a coincident stall verdict cannot prevent disarm. */
-  establish(&f, MOTOR_LC_RUNNING); f.in.stall_fault = 1;
+  /* Watchdog precedes monitors: a coincident stall rest cannot prevent disarm. */
+  establish(&f, MOTOR_LC_RUNNING); f.in.stall_rest = 1;
   tick(&f, 111); EQ(f.m.lifecycle, MOTOR_LC_DISARMED);
   EQ(f.a.stop_cause, MOTOR_CMD_STOP_TIMEOUT);
-  f.in.stall_fault = 0;
+  f.in.stall_rest = 0;
 
   variant = 150;
   establish(&f, MOTOR_LC_RUNNING);

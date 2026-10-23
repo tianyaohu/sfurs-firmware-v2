@@ -10,6 +10,9 @@ answer in the doc it changes.
 - Current sense: the phase-U reading looks wrong (ΔIq ≈ −0.55·ΔId); ADC1
   shared with the Vbus/temperature conversions is the open lead (DRIVE.md).
 - Kinematics contact positions are hand-measured and provisional.
+- Drive motor part number (read the motor label). TIGERs' Nanotec DF45L024048 has nearly the same
+  R, L and pole pairs; if ours matches, its Ke 0.0225 V·s/rad is a prior for the tuning plan.
+- Is an IMU fitted and readable on the robot? The tuning plan (stage 7) uses one for yaw inertia if so.
 - Does open loop meet ±10 cm, or is IMU heading hold needed?
 - Rig ground truth: slide the tag a known 210 mm several times in the centre;
   one hand move read 193 mm. Suspects: `--tag-mm` print size, calibration error.

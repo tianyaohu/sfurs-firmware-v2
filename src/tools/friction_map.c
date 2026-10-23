@@ -9,7 +9,7 @@
  *
  * Floor/mat, clear space: each listed speed drives out then back for distance/|speed|
  * (m and m/s for vx/vy; radians and rad/s for wz), <=1 m or 1 rad and <=5 s per leg.
- * Collection uses measured 50 Hz RPM/Iq after the transient and 0.2 s of constant,
+ * Collection uses the measured RPM/Iq replies after the transient and 0.2 s of constant,
  * unslewed reference. Reject <5 samples, sign reversals or speed SD >10% of mean.
  * Fits equal-weight segment means: Iq[mA] = Ic[mA]*sign(RPM) + b[mA/RPM]*RPM.
  * Breakaway ramps selected wheel(s) in both directions, zeros each after 3 consecutive

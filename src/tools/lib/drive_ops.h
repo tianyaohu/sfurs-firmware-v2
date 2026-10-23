@@ -25,7 +25,7 @@ typedef struct {
 } drive_ff_t;
 #define DRIVE_FF_SCALE_NOMINAL_PCT 100 /**< ik_drive_ff_scale_pct boot value (ik_drive.c) */
 #define DRIVE_FF_BREAKAWAY_MS_DEFAULT 300 /**< boost time when a breakaway level is given without --ff-breakaway-ms */
-#define DRIVE_FF_BREAKAWAY_MS_MAX 2000    /**< longest boost accepted, ms (the ESC stall fault comes after ~1 s anyway) */
+#define DRIVE_FF_BREAKAWAY_MS_MAX 2000    /**< longest boost accepted, ms (the ESC stall rest comes after ~1 s anyway) */
 /** @brief Per-wheel values of DRIVE_SETTING_KEYS, in each key's CONFIG unit, plus the
  *  Nucleo feed-forward model the stage runs with (off unless a tool sets it). */
 typedef struct { int value[IK_WHEELS][DRIVE_KEYS]; drive_ff_t ff; } drive_settings_t;

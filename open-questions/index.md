@@ -4,9 +4,12 @@ Questions raised but not yet answered. Delete a line when answered and put the
 answer in the doc it changes.
 
 - Exact accuracy spec: along-track vs cross-track vs heading, speed, floor.
-- Speed loop on the ground: do Kp/Ki 1024/553 with the 10 A/s stall ramp start
-  and hold the robot on the mat without overshoot, and stay calm on a raised
-  wheel (see LESSONS)? Not yet run on hardware (gate H4a).
+- Speed loop on the mat with the own Hall angle: wheel starts within 24-62 ms and overshoot <= 1.4x, except one
+  first-free wheel at 2.1x (2026-10-22). Is that the stall-ramp I held at breakaway, and does it need a limit?
+- ESC restarts: all four ESCs restarted together at least twice during keyboard drives on 2026-10-22 (boot
+  sessions back, RAM settings lost); the Nucleo (USB-powered) did not. Battery connector, switch or ESC power
+  wiring? `esc_tool status` / keyboard_drive now count restarts.
+- 100 Hz command stream (fix/drive-100hz, merged): bus load and reply latency not yet measured on hardware.
 - Current sense: the phase-U reading looks wrong (ΔIq ≈ −0.55·ΔId); ADC1
   shared with the Vbus/temperature conversions is the open lead (DRIVE.md).
 - Kinematics contact positions are hand-measured and provisional.

@@ -92,7 +92,7 @@
 
 /* Speed loop stall handling (motor_speed.h, technical-development-plans/esc-command-v2/E-speed-loop.md).
  * Mat 2026-10-21: breakaway took 3.3-4.7 A; at 10 A/s the stuck-wheel ramp reaches 3.3 A in ~0.3 s.
- * STALL_MS: >= 80 % of the current limit with no Hall progress this long -> FAULTED(STALL).
+ * STALL_MS: >= 80 % of the current limit with no Hall progress this long -> stall rest (Iq 0 for 300 ms, then retry).
  * CONFIG STALL_RAMP_MA_PER_S / STALL_MS (motor_protocol.h). */
 #define SPEED_STALL_RAMP_MA_PER_S_DEFAULT   10000
 #define SPEED_STALL_MS_DEFAULT              500

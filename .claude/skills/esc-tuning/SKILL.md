@@ -126,7 +126,7 @@ stall_ramp) and the bleed and stall-timer bits.
   CONFIG `stall_ramp_ma_per_s`; the real fix is the Nucleo's friction
   feed-forward (`friction_ff.c`, mailbox `ik_drive_ff_*`, off by default; measure the
   floor with `friction_map`), not a higher Ki.
-- **Ground limit cycle**: all wheels at the 6 A limit, loud buzz, no motion
+- **Ground limit cycle**: all wheels at the current limit, loud buzz, no motion
   (Kp 4096 / Ki 2200 here). Back off Ki; a higher current limit only makes it
   louder.
 - An obstacle at the mat edge looks like a stall — check the floor before

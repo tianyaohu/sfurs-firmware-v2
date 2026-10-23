@@ -542,7 +542,7 @@ static int cmd_reject(ik_link_t *l, const wheel_t *wheel, const char *json)
   if (spin_interrupted) failed = 1;
   if (esc_ctl_disable(&c, wheel->index)) { fprintf(stderr, "%s\n", l->err); failed = 1; }
   const char *uncovered = "MODE_CHANGE, LIMITED, UNSUPPORTED (every mode is supported), NOT_ALIGNED, FAULT_HALL_LOST, TIMEOUT-as-reject, "
-                          "LIFECYCLE_OVERFLOW, BAD_LENGTH, STARTING/BUSY/FAULT_STALL/NOT_IDLE, FAULT_MCSDK";
+                          "LIFECYCLE_OVERFLOW, BAD_LENGTH, STARTING/BUSY/STALLED/NOT_IDLE, FAULT_MCSDK";
   printf("%s: not produced by this command\n", uncovered);
   if (f) {
     fprintf(f, "],\"pass\":%s,\"not_produced\":\"%s\"}\n", failed ? "false" : "true", uncovered);

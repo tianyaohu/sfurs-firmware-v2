@@ -20,7 +20,7 @@
  * over/under voltage and over-temperature:
  *  - command watchdog (motor_cmd): no fresh CONTROL frame for MOTOR_WATCHDOG_MS -> off, disarmed;
  *  - I2T: sustained current above nominal derates the current limit;
- *  - stall (motor_speed): high current without Hall progress -> FAULTED(STALL);
+ *  - stall (motor_speed): high current without Hall progress -> stall rest (Iq 0 for 300 ms, then a fresh push);
  *  - Hall loss: invalid Hall code past the stale window, or MCSDK's speed-feedback fault -> FAULTED(HALL_LOST);
  *  - any fault latches the wheel off until DISABLE + CLEAR_FAULT and a new ARM. */
 

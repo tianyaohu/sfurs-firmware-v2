@@ -29,8 +29,8 @@ Raised:
    minute in another terminal is not possible (one tool per probe): instead stop after 5 min and read the temperature
    by hand (finger test on the ESC/motor) and listen for buzz. Pass: no buzz, motors/ESCs not warmer than after normal
    driving, wheel turns by hand with mild resistance.
-4. Faults on purpose: block one wheel by hand during `esc_tool spin <W> --rpm 60 --seconds 3`: expect FAULTED(STALL)
-   after ~1 s (stall ramp + 500 ms), status shows fault, `esc_tool clear` recovers. Hall loss: unplug a Hall connector
+4. Faults on purpose: block one wheel by hand during `esc_tool spin <W> --rpm 60 --seconds 3`: expect a stall rest [amended 2026-10-22: was FAULTED(STALL)]
+   after ~1 s (stall ramp + 500 ms): Iq 0 for 300 ms, replies INHIBITED(STALLED), then a fresh push; no fault. Hall loss: unplug a Hall connector
    ONLY if the user agrees (it is a connector stress); otherwise mark HALL_LOST "host-tested only".
 Mat:
 5. `move_test --out ... --axis vy --speed 0.47 --distance 0.28 --accel 900 --record --record-pre 20 --record-delay 200

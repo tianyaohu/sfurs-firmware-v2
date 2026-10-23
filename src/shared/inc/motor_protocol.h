@@ -126,7 +126,7 @@ enum motor_config_key {
   MOTOR_CFG_CURRENT_KP = 0x0102,           /**< current loop Kp (Iq and Id), MCSDK units, 0..32767 */
   MOTOR_CFG_CURRENT_KI = 0x0103,           /**< current loop Ki (Iq and Id), MCSDK units, 0..32767 */
   MOTOR_CFG_STALL_RAMP_MA_PER_S = 0x0104,  /**< stuck-wheel integrator slope, mA/s, 2000..30000 */
-  MOTOR_CFG_STALL_MS = 0x0105              /**< stall fault time, ms, 200..2000 */
+  MOTOR_CFG_STALL_MS = 0x0105              /**< high current without progress this long -> stall rest, ms, 200..2000 */
 };
 
 /** @brief CONFIG_REPLY status beyond the ::motor_reason codes. */

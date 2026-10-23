@@ -170,3 +170,17 @@ Append only; format in design/README.md.
   E-speed-loop "STALL -> FAULTED" decision (2026-10-21).
 - Touches: src/esc (motor_speed, motor_cmd, drive_app), src/shared (motor_protocol.h, can_datatypes.h),
   src/tools (ik_link, drive_record), docs.
+
+## 2026-10-22  Own rotor angle between Hall edges (override of MCSDK's HALL_CalcElAngle)  (who: claude, decided with Frank H)
+- Decision: drive_app.c overrides MCSDK's weak HALL_CalcElAngle with hall_angle.c. Below one edge per 20 ms (~62 RPM),
+  or with the speed against the last edge, the angle is the centre of the sector the Hall sensors report; at speed it
+  extrapolates from the edge, holds at the next boundary for a quarter sector period more, then goes to the centre.
+  No CONFIG switch: tonight's stock-MCSDK recordings are the A/B baseline.
+- Why: the user asked why 6-8 A does not move the robot while 4-6 A does in current mode from rest. MCSDK runs the
+  angle up to 60 deg past the last edge and returns to the sector centre only after 150 ms without an edge, so a
+  wheel that creeps over an edge and sticks has its current up to 60 deg off (half the torque per amp). In all of
+  tonight's mat recordings 109 of 271 high-current Hall gaps >= 40 ms ended 150-169 ms after the previous edge
+  (4-7 per 10 ms bin elsewhere), 107 of them forward: stuck wheels moved when MCSDK reset its angle. The speed loop's
+  stall ramp only reacted to the missing torque by raising Iq. TIGERs' Hall-only mode also uses the sector centre.
+- Expected on hardware: the 150 ms gap peak disappears; vx/vy breakaway at lower current; fewer limit hits.
+- Touches: src/esc (hall_angle.c/.h new, drive_app.c), tests (test_hall_angle, drive_app fake HALL fields), docs.

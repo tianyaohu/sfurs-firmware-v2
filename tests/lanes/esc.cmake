@@ -15,6 +15,7 @@ set(esc_app_cases
   test_speed_config_keys
   test_holds_at_zero_command
   test_speed_loop_drives_and_faults
+  test_hall_angle_override
   test_current_mode_drives_q_current
   test_speed_loop_recorder
   test_recorder_idle_arm_and_early_stop)
@@ -28,6 +29,7 @@ foreach(wheel NE SE SW NW)
   endif()
   host_test(${app_test}
     SOURCES src/esc/motor_config/Src/drive_app.c src/esc/motor_config/Src/motor_cmd.c src/esc/motor_config/Src/motor_speed.c
+            src/esc/motor_config/Src/hall_angle.c
             src/shared/src/motor_protocol.c
     INCLUDES tests/esc_drive_app_fakes src/esc/motor_config/Inc src/esc/Inc src/shared/can src/shared/inc
     DEFS MOTOR_${wheel} DRIVE_APP_VALIDITY=fake_validity

@@ -126,6 +126,11 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Src/motor_cmd.c</locationURI>
 		</link>
 		<link>
+			<name>Application/User/hall_angle.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Src/hall_angle.c</locationURI>
+		</link>
+		<link>
 			<name>Application/User/motor_speed.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Src/motor_speed.c</locationURI>

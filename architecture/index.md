@@ -39,6 +39,7 @@ When you add a file or folder, add a line here in the same commit.
 | `motor_config/Src/drive_app.c` | All application behaviour: start, speed target, status/diag, config, protections |
 | `motor_config/Src/motor_cmd.c` | Command lifecycle (pure): ARM/session/sequence checks, watchdog, faults, replies |
 | `motor_config/Src/motor_speed.c` | Speed loop (pure; drive_app runs it every 1 ms): reference interpolation, Hall speed estimate, P + I + ff with stall ramp, over-speed bleed, stall timer |
+| `motor_config/Src/hall_angle.c` | Rotor electrical angle (pure; drive_app's `HALL_CalcElAngle` override runs it every PWM period): sector centre when slow or late, extrapolation at speed |
 | `motor_config/Src/mc_tasks_foc.c` | Forced-angle and capture hooks in the FOC current controller (alignment, capture) |
 | `motor_config/Inc/*parameters.h` | Motor and loop parameters |
 | `bootloader/` | 16 KiB CAN bootloader; compiles the protocol from `src/shared` |

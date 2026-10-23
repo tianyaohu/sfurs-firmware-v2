@@ -24,7 +24,8 @@ builds all four plus the Nucleo images.
 
 Ours: `Src/drive_app.c`, `Inc/drive_app.h` (application glue on MCSDK, see
 `architecture/drive.md`), `Src/motor_cmd.c` / `Inc/motor_cmd.h` (command lifecycle) and
-`Src/motor_speed.c` / `Inc/motor_speed.h` (speed loop), the `USER CODE` sections of
+`Src/motor_speed.c` / `Inc/motor_speed.h` (speed loop), `Src/hall_angle.c` / `Inc/hall_angle.h` (rotor angle,
+behind drive_app's override of MCSDK's weak `HALL_CalcElAngle`), the `USER CODE` sections of
 `Src/main.c`, the angle and capture hooks in `FOC_CurrControllerM1` (`Src/mc_tasks_foc.c`),
 the `USER` Hall edge counters `EdgesPos`/`EdgesNeg` in `hall_speed_pos_fdbk.h/.c`, and
 parameter edits in `Inc/drive_parameters.h`, `Inc/pmsm_motor_parameters.h` and

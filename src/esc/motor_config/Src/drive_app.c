@@ -1,5 +1,6 @@
 #include "drive_app.h"
 #include "can_datatypes.h"
+#include "hall_angle.h"
 #include "motor_controller_can.h"
 #include "mc_api.h"
 #include "mc_config.h"
@@ -84,6 +85,7 @@ static uint32_t capture_ms, capture_vbus_cv;
 static uint32_t read_next, read_end, read_bank, read_ch67; /* poll context only */
 
 struct motor_speed drive_speed;
+struct hall_angle drive_hall_angle;
 static struct motor_speed_config speed_cfg;
 static struct motor_speed_outputs speed_out; /* this tick's loop results, for replies and the recorder */
 
@@ -106,6 +108,7 @@ void drive_app_init(void)
     .kp = PID_SPEED_KP_DEFAULT, .ki = PID_SPEED_KI_DEFAULT,
     .stall_ramp_ma_per_s = SPEED_STALL_RAMP_MA_PER_S_DEFAULT, .stall_ms = SPEED_STALL_MS_DEFAULT };
   motor_speed_init(&drive_speed, &speed_cfg, HALL_M1.EdgesPos, HALL_M1.EdgesNeg);
+  hall_angle_init(&drive_hall_angle, HALL_M1.EdgesPos, HALL_M1.EdgesNeg);
 #ifdef HALL_PHASE_SHIFT_OVERRIDE
   drive_app.aligned = 1U; /* measured shift compiled in by scripts/esc_build.sh --hall-shift */
 #endif
@@ -115,6 +118,18 @@ void drive_app_init(void)
     .select = MOTOR_CAN_ID, .max_rpm = MAX_APPLICATION_SPEED_RPM, .max_ma = (int16_t)(IQMAX_A * 1000),
     .current_supported = 1U };
   motor_cmd_init(&drive_cmd, &cfg, MOTOR_CAN_ID);
+}
+
+/* Replaces MCSDK's weak HALL_CalcElAngle (hall_speed_pos_fdbk.c); the FOC task calls it once per PWM period and
+ * reads the result through SPD_GetElAngle. Why and the rules: hall_angle.h. Alignment and capture still force their
+ * own angle afterwards (mc_tasks_foc.c USER CODE). */
+int16_t HALL_CalcElAngle(HALL_Handle_t *pHandle)
+{
+  const int16_t angle = hall_angle_step(&drive_hall_angle, pHandle->EdgesPos, pHandle->EdgesNeg,
+                                        pHandle->MeasuredElAngle, pHandle->_Super.hElSpeedDpp,
+                                        pHandle->_Super.hElAngle);
+  pHandle->_Super.hElAngle = angle;
+  return angle;
 }
 
 void drive_app_can_rx(uint32_t id, const uint8_t *data, uint32_t length)

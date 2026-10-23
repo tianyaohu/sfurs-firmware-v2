@@ -491,6 +491,21 @@ static void test_current_mode_drives_q_current(void)
 
 /* Torque mode: Iq 0 programmed before the start, the loop's request published in RUN; a stall rests with the
  * output on and pushes again; Hall loss ends as a latched fault with the output off. */
+/* The HALL_CalcElAngle override reads MCSDK's edge counters, edge angle and speed, and writes the angle MCSDK's FOC
+ * task then reads (SPD_GetElAngle -> _Super.hElAngle). Rules: test_hall_angle.c. */
+static void test_hall_angle_override(void)
+{
+  setup(15);
+  HALL_M1._Super.hElAngle = 1234; HALL_M1._Super.hElSpeedDpp = 0;
+  CHECK(HALL_CalcElAngle(&HALL_M1) == 1234 && HALL_M1._Super.hElAngle == 1234); /* no edge yet: MCSDK's start angle */
+  ++HALL_M1.EdgesPos; HALL_M1.MeasuredElAngle = 2000; /* MCSDK's edge interrupt */
+  CHECK(HALL_CalcElAngle(&HALL_M1) == 2000 + HALL_ANGLE_S60 / 2 && HALL_M1._Super.hElAngle == 2000 + HALL_ANGLE_S60 / 2);
+  HALL_M1._Super.hElSpeedDpp = 200; /* at speed: extrapolated from the edge */
+  CHECK(HALL_CalcElAngle(&HALL_M1) == 2000 + 200 && HALL_M1._Super.hElAngle == 2000 + 200); /* one period after the edge */
+  ++HALL_M1.EdgesNeg; HALL_M1.MeasuredElAngle = 2000; HALL_M1._Super.hElSpeedDpp = -10; /* rocked back, slow */
+  CHECK(HALL_CalcElAngle(&HALL_M1) == 2000 - HALL_ANGLE_S60 / 2);
+}
+
 static void test_speed_loop_drives_and_faults(void)
 {
   setup(15);
@@ -624,6 +639,7 @@ int main(int argc, char **argv)
     { "test_speed_config_keys", test_speed_config_keys },
     { "test_holds_at_zero_command", test_holds_at_zero_command },
     { "test_speed_loop_drives_and_faults", test_speed_loop_drives_and_faults },
+    { "test_hall_angle_override", test_hall_angle_override },
     { "test_current_mode_drives_q_current", test_current_mode_drives_q_current },
     { "test_speed_loop_recorder", test_speed_loop_recorder },
     { "test_recorder_idle_arm_and_early_stop", test_recorder_idle_arm_and_early_stop },

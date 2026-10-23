@@ -1,6 +1,7 @@
 #ifndef DRIVE_APP_H
 #define DRIVE_APP_H
 #include <stdint.h>
+#include "hall_angle.h"
 #include "motor_cmd.h"
 #include "motor_speed.h"
 
@@ -71,6 +72,8 @@ void drive_capture_isr_store(int16_t id, int16_t iq, int16_t vd, int16_t vq,
 
 /** @brief Speed loop of this wheel (readable over SWD). */
 extern struct motor_speed drive_speed;
+/** @brief Rotor angle state behind the HALL_CalcElAngle override (hall_angle.c). */
+extern struct hall_angle drive_hall_angle;
 
 /** @brief Initialise the application state. */
 void drive_app_init(void);

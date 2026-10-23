@@ -69,6 +69,19 @@ STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault
 The stall monitor waits 500 ms at high current, so a loaded wheel still builds torque to
 breakaway first (the stall ramp below gets there in a few hundred ms); then it rests and retries.
 
+## Rotor angle between Hall edges
+
+MCSDK's `HALL_CalcElAngle` runs the angle on at the last edge's speed up to 60° electrical past
+that edge and returns to the sector centre only after 150 ms without an edge. A wheel stuck just
+past an edge then has its current up to 60° off (half the torque per measured amp); on the mat
+stuck wheels moved again 150 ms after their last edge, 107 of 109 times forward
+(hardware-test-results/2026-10-22-mat-boost-8a.md). `drive_app.c` overrides that weak function
+with `hall_angle.c`: below one edge per 20 ms (~62 RPM), or with the speed against the last edge,
+the angle is the centre of the sector the Hall sensors report (≤ 30° off, ≥ 87 % of the torque);
+at speed it extrapolates from the edge, holds at the next boundary for a quarter sector period
+more (sector widths vary ±6 %), then goes to the centre. Alignment and capture still force their
+own angle.
+
 ## Hall alignment
 
 FOC needs the electrical angle of the Hall edges (`HALL_PHASE_SHIFT`). A wrong

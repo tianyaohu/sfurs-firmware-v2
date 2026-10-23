@@ -3,7 +3,7 @@
  *
  * friction_map --out DIR --axis vx|vy|wz --speeds=-0.1,-0.2,0.1,0.2
  *   [--distance 0.2 --transient 0.3 --pause 1 --min-vbus 11 --max-rpm 300]
- * friction_map --out DIR --breakaway [--wheel FR|BR|BL|FL|NE|SE|SW|NW|all]
+ * friction_map --out DIR --breakaway [--wheel FR|BR|BL|FL|NE|SE|SW|NW|all | --body vx|vy|wz]
  *   [--rate-ma-s 2000 --cap-ma 4000 --motion-rpm 20 --reps 3]
  * Both: [--check --elf F --sn SERIAL]. --check performs preflight without motion.
  *
@@ -15,13 +15,18 @@
  * Breakaway ramps selected wheel(s) in both directions, zeros each after 3 consecutive
  * fresh telemetry reads past the motion threshold (a read may skip replies), and stops between trials. Reports commanded current
  * at confirmation and measured Iq; a cap without motion is censored, not a threshold.
+ * --body ramps all four wheels together with the current pattern of a pure force along the axis (the
+ * Nucleo friction ff's wheel split, largest wheel = the ramp) and stops all four once two wheels turn,
+ * the rule of the Nucleo's breakaway boost; it reports every wheel's current at that moment.
  * Heartbeat, ESC faults, fresh telemetry, Vbus and max RPM are guarded throughout.
  * Ctrl-C/SIGTERM/SIGHUP zero currents and enable, wait for STOPPED/IDLE and release SWD.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "drive_ops.h"
+#include "friction_ff.h"
 #include "friction_run.h"
 #include "gen_esc_defaults.h"
+#include "rover_kinematics.h"
 #include <errno.h>
 #include <math.h>
 #include <signal.h>
@@ -31,6 +36,7 @@
 
 #define MAX_SPEEDS 16
 #define MAX_REPS 20
+#define BODY_STOP_WHEELS 2U /* same rule as the Nucleo breakaway boost (IK_DRIVE_BREAKAWAY_WHEELS) */
 static volatile sig_atomic_t interrupted;
 static void interrupt_handler(int sig) { interrupted = sig; }
 
@@ -60,6 +66,21 @@ static unsigned wheels_parse(const char *text)
   return 0;
 }
 
+/* Current pattern of a unit body force (or torque) along axis a, scaled so the largest wheel is 1. */
+static int body_weights(int a, double weight[4])
+{
+  const struct friction_ff_params p = {
+    .coulomb_x_n = a == 0, .coulomb_y_n = a == 1, .coulomb_w_nm = a == 2, .motor_a_per_nm = 1,
+    .wheel_scale = {1, 1, 1, 1}};
+  float amps[4];
+  if (!friction_ff_wheel_amps(rover_ik_provisional, &p, a == 0, a == 1, a == 2, 0, amps)) return -1;
+  double largest = 0;
+  for (int w = 0; w < 4; w++) largest = fmax(largest, fabs(amps[w]));
+  if (!(largest > 0)) return -1;
+  for (int w = 0; w < 4; w++) weight[w] = fabs(amps[w]) == largest ? copysign(1, amps[w]) : amps[w] / largest;
+  return 0;
+}
+
 static void fit_json(FILE *f, friction_fit_t fit)
 {
   fprintf(f, "{\"valid\":%s,\"points\":%zu,\"ic_ma\":", fit.valid ? "true" : "false", fit.points);
@@ -71,7 +92,7 @@ static void fit_json(FILE *f, friction_fit_t fit)
 
 int main(int argc, char **argv)
 {
-  const char *out = NULL, *axis = "vy", *speeds_text = "-0.1,-0.2,0.1,0.2", *wheel = "all";
+  const char *out = NULL, *axis = "vy", *speeds_text = "-0.1,-0.2,0.1,0.2", *wheel = "all", *body = NULL;
   const char *elf = IK_DEFAULT_ELF, *sn = IK_DEFAULT_SN;
   double distance = 0.2, pause = 1, rate = 2000, cap = 4000, motion = 20;
   int reps = 3;
@@ -82,7 +103,7 @@ int main(int argc, char **argv)
     DRIVE_OPT("distance", DOUBLE, &distance), DRIVE_OPT("pause", DOUBLE, &pause),
     DRIVE_OPT("transient", DOUBLE, &limits.transient_s), DRIVE_OPT("min-vbus", DOUBLE, &limits.min_vbus_v),
     DRIVE_OPT("max-rpm", DOUBLE, &limits.max_rpm), DRIVE_OPT("breakaway", BOOL, &breakaway),
-    DRIVE_OPT("wheel", STRING, &wheel), DRIVE_OPT("rate-ma-s", DOUBLE, &rate), DRIVE_OPT("cap-ma", DOUBLE, &cap),
+    DRIVE_OPT("wheel", STRING, &wheel), DRIVE_OPT("body", STRING, &body), DRIVE_OPT("rate-ma-s", DOUBLE, &rate), DRIVE_OPT("cap-ma", DOUBLE, &cap),
     DRIVE_OPT("motion-rpm", DOUBLE, &motion), DRIVE_OPT("reps", INT, &reps), DRIVE_OPT("check", BOOL, &check),
     DRIVE_OPT("elf", STRING, &elf), DRIVE_OPT("sn", STRING, &sn)
   };
@@ -90,15 +111,20 @@ int main(int argc, char **argv)
   if (parsed) {
     if (parsed > 0) puts("friction_map --out DIR [--axis vx|vy|wz --speeds=-0.1,-0.2,0.1,0.2 --distance 0.2]\n"
       "  [--transient 0.3 --pause 1 --min-vbus 11 --max-rpm 300]\n"
-      "  [--breakaway --wheel FR|BR|BL|FL|NE|SE|SW|NW|all --rate-ma-s 2000 --cap-ma 4000 --motion-rpm 20 --reps 3]\n"
+      "  [--breakaway --wheel FR|BR|BL|FL|NE|SE|SW|NW|all | --body vx|vy|wz]\n"
+      "  [--rate-ma-s 2000 --cap-ma 4000 --motion-rpm 20 --reps 3]\n"
       "  [--check --elf F --sn SERIAL] Writes DIR/result.json. MOTION on floor unless --check.\n"
       "Speed list requires both signs; each speed gets a reverse return leg. wz units: radians, rad/s.");
     return parsed < 0;
   }
   double speeds[MAX_SPEEDS]; size_t n_speeds = 0;
   unsigned selected = wheels_parse(wheel);
+  int body_axis = !body ? -1 : !strcmp(body, "vx") ? 0 : !strcmp(body, "vy") ? 1 : !strcmp(body, "wz") ? 2 : 3;
+  double weight[4] = {0};
+  if (body_axis >= 0 && body_axis < 3 && !body_weights(body_axis, weight)) selected = 15;
+  else for (int w = 0; w < 4; w++) weight[w] = selected & (1U << w) ? 1 : 0;
   int a = !strcmp(axis, "vx") ? 0 : !strcmp(axis, "vy") ? 1 : !strcmp(axis, "wz") ? 2 : -1;
-  if (!out || !*out || a < 0 || !selected || distance <= 0 || distance > 1 || pause < 0 || pause > 10 ||
+  if (!out || !*out || a < 0 || !selected || (body && (!breakaway || body_axis < 0 || body_axis > 2)) || distance <= 0 || distance > 1 || pause < 0 || pause > 10 ||
       limits.min_vbus_v < 8 || limits.max_rpm <= 0 || limits.max_rpm > 600 ||
       limits.transient_s < 0 || limits.transient_s > 4 || reps < 1 || reps > MAX_REPS ||
       rate <= 0 || cap <= 0 || cap > ESC_IQMAX_A * 1000 || cap / rate > 5 || motion <= 0 || motion >= limits.max_rpm ||
@@ -127,6 +153,7 @@ int main(int argc, char **argv)
   friction_point_t points[4][MAX_SPEEDS * 2] = {{{0}}}; size_t n_points = 0;
   double commands[MAX_SPEEDS * 2] = {0};
   friction_breakaway_t trials[4][2][MAX_REPS] = {{{{0}}}};
+  bool body_stopped[2][MAX_REPS] = {{0}};
   bool acquired = !rc && !check;
   char error[sizeof link.err] = "";
   if (acquired && !breakaway) for (size_t i = 0; i < n_speeds && !rc && !interrupted; i++) {
@@ -151,8 +178,19 @@ int main(int argc, char **argv)
     for (int rep = 0; rep < reps && !rc && !interrupted; rep++) {
       if ((rc = drive_preflight(&link, limits.min_vbus_v))) break;
       friction_breakaway_t measured[4];
-      rc = friction_breakaway_run(&link, selected, d ? 1 : -1, rate, cap, motion, &limits, measured);
+      double signed_weight[4];
+      for (int w = 0; w < 4; w++) signed_weight[w] = (d ? 1 : -1) * weight[w];
+      rc = friction_breakaway_run(&link, signed_weight, body ? BODY_STOP_WHEELS : 0, rate, cap, motion, &limits, measured);
       for (int w = 0; w < 4; w++) trials[w][d][rep] = measured[w];
+      unsigned moved = 0;
+      for (int w = 0; w < 4; w++) moved += measured[w].moved;
+      body_stopped[d][rep] = body && !rc && moved >= BODY_STOP_WHEELS;
+      if (body && !rc) {
+        printf("%s %c rep %d: %s;", body, d ? '+' : '-', rep + 1, body_stopped[d][rep] ? "moved" : "no motion at cap");
+        for (int w = 0; w < 4; w++)
+          printf(" %s%s %.0f mA", IK_WHEEL_POS[w], measured[w].moved ? "*" : "", measured[w].command_ma);
+        puts(" (* turned)");
+      }
       double end = pulse_now_s() + pause;
       while (!rc && !interrupted && pulse_now_s() < end) pulse_sleep_s(0.02);
     }
@@ -199,7 +237,7 @@ int main(int argc, char **argv)
           double v = trials[w][d][rep].command_ma; values[count++] = v;
           min = fmin(min, v); max = fmax(max, v);
         }
-        if ((selected & (1U << w)) && count != (size_t)reps) insufficient = true;
+        if (!body && (selected & (1U << w)) && count != (size_t)reps) insufficient = true;
         double median = drive_median(values, count);
         fprintf(f, "%s{\"sign\":%d,\"detected\":%zu,\"median_ma\":", d ? "," : "", d ? 1 : -1, count);
         drive_json_number(f, median); fputs(",\"min_ma\":", f); drive_json_number(f, count ? min : NAN);
@@ -208,11 +246,12 @@ int main(int argc, char **argv)
           const friction_breakaway_t *t = &trials[w][d][rep];
           fprintf(f, "%s{\"attempted\":%s,\"capped\":%s,\"moved\":%s,\"command_ma\":",
                   rep ? "," : "", t->attempted ? "true" : "false", t->capped ? "true" : "false", t->moved ? "true" : "false");
-          drive_json_number(f, t->moved ? t->command_ma : NAN); fputs(",\"measured_ma\":", f);
-          drive_json_number(f, t->moved ? t->measured_ma : NAN); fputc('}', f);
+          bool recorded = t->moved || (body && t->attempted && !t->capped);
+          drive_json_number(f, recorded ? t->command_ma : NAN); fputs(",\"measured_ma\":", f);
+          drive_json_number(f, recorded ? t->measured_ma : NAN); fputc('}', f);
         }
         fputs("]}", f);
-        if (selected & (1U << w)) {
+        if (!body && (selected & (1U << w))) {
           if (count) printf("%s %c %zu/%d %.0f %.0f %.0f\n", IK_WHEEL_POS[w], d ? '+' : '-', count, reps, median, min, max);
           else printf("%s %c 0/%d no confirmed motion; cap %.0f mA\n", IK_WHEEL_POS[w], d ? '+' : '-', reps, cap);
         }
@@ -220,7 +259,22 @@ int main(int argc, char **argv)
       fputs("]}", f);
     }
   }
-  fprintf(f, "},\"sufficient_data\":%s}\n", insufficient ? "false" : "true");
+  fputc('}', f);
+  if (breakaway && body) {
+    fputs(",\"body\":{\"axis\":", f); drive_json_string(f, body);
+    fprintf(f, ",\"stop_wheels\":%u,\"weights\":[%.6f,%.6f,%.6f,%.6f],\"directions\":[", BODY_STOP_WHEELS,
+            weight[0], weight[1], weight[2], weight[3]);
+    for (int d = 0; d < 2; d++) {
+      fprintf(f, "%s{\"sign\":%d,\"moved\":[", d ? "," : "", d ? 1 : -1);
+      for (int rep = 0; rep < reps; rep++) {
+        if (!body_stopped[d][rep]) insufficient = true;
+        fprintf(f, "%s%s", rep ? "," : "", body_stopped[d][rep] ? "true" : "false");
+      }
+      fputs("]}", f);
+    }
+    fputs("]}", f);
+  }
+  fprintf(f, ",\"sufficient_data\":%s}\n", insufficient ? "false" : "true");
   if (ferror(f)) rc = -1;
   if (fclose(f)) rc = -1;
   puts(path);

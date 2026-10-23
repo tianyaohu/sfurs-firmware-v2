@@ -140,7 +140,9 @@ breakaway level is given), `--ff-a-per-nm` (motor A per N·m, required) and `--f
 (%, 1–200); they write it only while the drive is stopped and switch it off again on exit, and
 `move_test` records it under `settings.ff` in result.json. `ik_drive_ff_boost` is 1 while the frames
 carry the boost. With the provisional geometry 1 N gives about 0.095 A per wheel in y and 0.15 A in
-x per 10 A/N·m of `--ff-a-per-nm`. `friction_map` measures the floor friction it needs.
+x per 10 A/N·m of `--ff-a-per-nm`. `friction_map` measures the floor friction it needs;
+`friction_map --breakaway --body vx` ramps all four wheels in current mode with this wheel split and stops
+them together once two turn, so it gives the body breakaway current per axis without the speed loop.
 
 Motor constants in `pmsm_motor_parameters.h` are the Workbench placeholder
 (Rs 0.22 Ω, Ls 0.11 mH, 3.0 V/kRPM). Measured by capture on all four motors:

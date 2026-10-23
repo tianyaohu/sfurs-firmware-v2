@@ -3,6 +3,7 @@
 #include "friction_run.h"
 #include "pulse_run.h"
 #include "gen_esc_defaults.h"
+#include <math.h>
 #include <string.h>
 
 static double clock_s;
@@ -11,6 +12,8 @@ static bool enabled, freeze, io_failure, fault_latch, stop_failure, scheduling_g
 static int bad_wheel, problem, direction;
 static volatile sig_atomic_t cancelled;
 static int32_t last_current[4], peak_current[4];
+static int wheel_sign[4];      /* direction each wheel turns once it moves */
+static unsigned motion_tick[4]; /* first tick a wheel reports motion in CURRENT mode */
 static friction_limits_t limits;
 
 static void reset(void)
@@ -19,6 +22,7 @@ static void reset(void)
   enabled = freeze = io_failure = fault_latch = stop_failure = scheduling_gap = false;
   bad_wheel = -1; problem = 0; direction = 1; cancelled = 0;
   memset(last_current, 0, sizeof last_current); memset(peak_current, 0, sizeof peak_current);
+  for (int w = 0; w < 4; w++) { wheel_sign[w] = 1; motion_tick[w] = 10; }
   limits = (friction_limits_t){11, 300, 0.3, &cancelled};
 }
 
@@ -76,8 +80,9 @@ int __wrap_ik_link_rows(ik_link_t *l, ik_link_row_t r[4])
   (void)l;
   for (int w = 0; w < 4; w++) {
     r[w] = (ik_link_row_t){.valid = true, .reply_count = tick, .lifecycle = MOTOR_LC_RUNNING,
-      .outcome = MOTOR_OUT_APPLIED, .rpm = direction * (100 + w), .iq_ma = direction * (300 + w * 50)};
-    if (mode == IK_MODE_CURRENT && tick < 10) r[w].rpm = 0;
+      .outcome = MOTOR_OUT_APPLIED, .rpm = direction * wheel_sign[w] * (100 + w),
+      .iq_ma = direction * wheel_sign[w] * (300 + w * 50)};
+    if (mode == IK_MODE_CURRENT && tick < motion_tick[w]) r[w].rpm = 0;
     if (w == bad_wheel && tick >= 8) {
       if (problem == 1) r[w].rpm = 301;
       if (problem == 3) r[w].reply_count = 7;
@@ -145,7 +150,9 @@ static void breakaway_ramps(void)
     reset(); direction = sign;
     ik_link_t l = {0}; friction_breakaway_t out[4];
     unsigned selected = w == 4 ? 15 : 1U << w;
-    CHECK_EQ(friction_breakaway_run(&l, selected, sign, 2000, 4000, 20, &limits, out), 0);
+    double weight[4];
+    for (int j = 0; j < 4; j++) weight[j] = selected & (1U << j) ? sign : 0;
+    CHECK_EQ(friction_breakaway_run(&l, weight, 0, 2000, 4000, 20, &limits, out), 0);
     CHECK_EQ(mode, IK_MODE_CURRENT); stopped();
     for (int j = 0; j < 4; j++) {
       CHECK_EQ(out[j].moved, !!(selected & (1U << j)));
@@ -157,12 +164,43 @@ static void breakaway_ramps(void)
   }
   reset(); direction = -1;
   ik_link_t l = {0}; friction_breakaway_t out[4];
-  CHECK_EQ(friction_breakaway_run(&l, 15, 1, 2000, 400, 20, &limits, out), 0); stopped();
+  const double all[4] = {1, 1, 1, 1};
+  CHECK_EQ(friction_breakaway_run(&l, all, 0, 2000, 400, 20, &limits, out), 0); stopped();
   for (int w = 0; w < 4; w++) { CHECK(!out[w].moved); CHECK(out[w].attempted && out[w].capped); }
   for (int w = 0; w < 4; w++) {
     reset(); bad_wheel = w; problem = 1;
-    CHECK_EQ(friction_breakaway_run(&l, 15, 1, 2000, 4000, 20, &limits, out), -1); stopped();
+    CHECK_EQ(friction_breakaway_run(&l, all, 0, 2000, 4000, 20, &limits, out), -1); stopped();
   }
+}
+
+/* Body ramp: mixed-sign pattern on all four, held until two wheels turn, then all released together. */
+static void body_breakaway(void)
+{
+  const double weight[4] = {-1, 0.87, -0.87, 1};
+  for (int sign = -1; sign <= 1; sign += 2) for (int first = 0; first < 4; first++) {
+    reset(); direction = sign;
+    double w_signed[4];
+    for (int w = 0; w < 4; w++) { w_signed[w] = sign * weight[w]; wheel_sign[w] = weight[w] > 0 ? 1 : -1; motion_tick[w] = 60; }
+    const int second = (first + 2) % 4;
+    motion_tick[first] = 10; motion_tick[second] = 14;
+    ik_link_t l = {0}; friction_breakaway_t out[4];
+    CHECK_EQ(friction_breakaway_run(&l, w_signed, 2, 2000, 4000, 20, &limits, out), 0);
+    CHECK_EQ(mode, IK_MODE_CURRENT); stopped();
+    for (int w = 0; w < 4; w++) {
+      CHECK(out[w].attempted && !out[w].capped);
+      CHECK_EQ(out[w].moved, w == first || w == second);
+      CHECK(out[w].command_ma * w_signed[w] > 0);       /* every wheel was still driven, with its own sign */
+      CHECK(peak_current[w] > 0);
+    }
+    /* Unmoved wheels hold the pattern ratio at the stop: the stop happened on the same ramp value. */
+    for (int w = 0; w < 4; w++) if (w != first && w != second) {
+      CHECK(fabs(out[w].command_ma / out[second].command_ma - weight[w] / weight[second]) < 0.01);
+    }
+  }
+  reset(); ik_link_t l = {0}; friction_breakaway_t out[4];
+  for (int w = 0; w < 4; w++) motion_tick[w] = 1000; /* nothing moves: every wheel capped */
+  CHECK_EQ(friction_breakaway_run(&l, weight, 2, 2000, 400, 20, &limits, out), 0); stopped();
+  for (int w = 0; w < 4; w++) CHECK(out[w].attempted && out[w].capped && !out[w].moved);
 }
 
 static void rejected_segments(void)
@@ -182,16 +220,20 @@ static void invalid_limits(void)
   CHECK_EQ(friction_speed_move(&l, (int32_t[]){0, 200, 0}, 6, &limits, out), -1);
   limits.min_vbus_v = 7;
   CHECK_EQ(friction_speed_move(&l, (int32_t[]){0, 200, 0}, 1, &limits, out), -1);
-  reset(); CHECK_EQ(friction_breakaway_run(&l, 16, 1, 2000, 4000, 20, &limits, b), -1);
-  CHECK_EQ(friction_breakaway_run(&l, 15, 0, 2000, 4000, 20, &limits, b), -1);
-  CHECK_EQ(friction_breakaway_run(&l, 15, 1, 2000, ESC_IQMAX_A * 1000 + 1, 20, &limits, b), -1);
-  CHECK_EQ(friction_breakaway_run(&l, 15, 1, 1, 4000, 20, &limits, b), -1);
+  const double all[4] = {1, 1, 1, 1}, over[4] = {2, 0, 0, 0}, none[4] = {0}, small[4] = {0.5, 0.5, 0, 0};
+  reset(); CHECK_EQ(friction_breakaway_run(&l, over, 0, 2000, 4000, 20, &limits, b), -1);
+  CHECK_EQ(friction_breakaway_run(&l, none, 0, 2000, 4000, 20, &limits, b), -1);
+  CHECK_EQ(friction_breakaway_run(&l, small, 0, 2000, 4000, 20, &limits, b), -1); /* largest weight must be 1 */
+  CHECK_EQ(friction_breakaway_run(&l, all, 5, 2000, 4000, 20, &limits, b), -1);   /* more stop wheels than driven */
+  CHECK_EQ(friction_breakaway_run(&l, NULL, 0, 2000, 4000, 20, &limits, b), -1);
+  CHECK_EQ(friction_breakaway_run(&l, all, 0, 2000, ESC_IQMAX_A * 1000 + 1, 20, &limits, b), -1);
+  CHECK_EQ(friction_breakaway_run(&l, all, 0, 1, 4000, 20, &limits, b), -1);
   CHECK_EQ(disables, 0); CHECK_EQ(current_commands, 0);
 }
 
 int main(void)
 {
-  speed_collection(); abort_guards(); breakaway_ramps(); rejected_segments(); invalid_limits();
-  puts("friction_run: 5 test groups passed (all four wheels)");
+  speed_collection(); abort_guards(); breakaway_ramps(); body_breakaway(); rejected_segments(); invalid_limits();
+  puts("friction_run: 6 test groups passed (all four wheels)");
   return 0;
 }

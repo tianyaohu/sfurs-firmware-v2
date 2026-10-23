@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 static unsigned moves, ramps, preflights, stops, closes;
+static bool body_mode;
 static int acquisition_error, preflight_error, cancel_at;
 static double fake_time;
 static char directory[] = "/tmp/friction-map-XXXXXX";
@@ -42,22 +43,34 @@ int __wrap_friction_speed_move(ik_link_t *l, const int32_t twist[3], double dura
   if (acquisition_error) { strcpy(l->err, "fixture Vbus error"); return -1; }
   return 0;
 }
-int __wrap_friction_breakaway_run(ik_link_t *l, unsigned selected, int sign, double rate,
+int __wrap_friction_breakaway_run(ik_link_t *l, const double weight[4], unsigned stop_wheels, double rate,
                                   double cap, double threshold, const friction_limits_t *limits,
                                   friction_breakaway_t out[4])
 {
-  (void)l; CHECK_EQ(selected, 15); CHECK_EQ(rate, 2000); CHECK_EQ(cap, 4000);
+  (void)l; CHECK_EQ(rate, 2000); CHECK_EQ(cap, 4000);
   CHECK_EQ(threshold, 20); CHECK_EQ(limits->min_vbus_v, 11);
-  CHECK_EQ(sign, ramps < 3 ? -1 : 1);
-  for (int w = 0; w < 4; w++) out[w] = (friction_breakaway_t){.moved = true,
-    .command_ma = sign * (1000.0 + 100 * (ramps % 3)), .measured_ma = sign * 950, .attempted = true};
+  const int sign = ramps < 3 ? -1 : 1;
+  if (body_mode) {
+    /* vx pattern from the real kinematics table: FR and FL push one way, BR and BL the other, larger at the back */
+    CHECK_EQ(stop_wheels, 2);
+    for (int w = 0; w < 4; w++) CHECK(fabs(weight[w]) > 0.8 && fabs(weight[w]) <= 1);
+    CHECK(weight[0] * weight[1] < 0 && weight[1] * weight[2] > 0 && weight[2] * weight[3] < 0);
+    CHECK(weight[1] * sign > 0);
+    for (int w = 0; w < 4; w++) out[w] = (friction_breakaway_t){.moved = w < 2,
+      .command_ma = weight[w] * (5000.0 + 100 * (ramps % 3)), .measured_ma = weight[w] * 4900, .attempted = true};
+  } else {
+    CHECK_EQ(stop_wheels, 0);
+    for (int w = 0; w < 4; w++) CHECK_EQ(weight[w], sign);
+    for (int w = 0; w < 4; w++) out[w] = (friction_breakaway_t){.moved = true,
+      .command_ma = sign * (1000.0 + 100 * (ramps % 3)), .measured_ma = sign * 950, .attempted = true};
+  }
   ramps++;
   return 0;
 }
 
 static void reset_report(void)
 {
-  moves = ramps = preflights = stops = closes = 0;
+  moves = ramps = preflights = stops = closes = 0; body_mode = false;
   acquisition_error = preflight_error = cancel_at = 0; fake_time = 0;
 }
 
@@ -101,6 +114,23 @@ static void breakaway_report(void)
   CHECK(strstr(text, "\"attempted\":true,\"capped\":false,\"moved\":true"));
 }
 
+static void body_report(void)
+{
+  reset_report(); body_mode = true;
+  char *argv[] = {"friction_map", "--out", directory, "--pause", "0", "--breakaway", "--body", "vx", NULL};
+  CHECK_EQ(friction_map_main(8, argv), 0);
+  CHECK_EQ(ramps, 6); CHECK_EQ(stops, 1); CHECK_EQ(closes, 1);
+  char text[32768]; read_report(text, sizeof text);
+  CHECK(strstr(text, "\"body\":{\"axis\":\"vx\",\"stop_wheels\":2,\"weights\":["));
+  CHECK(strstr(text, "{\"sign\":-1,\"moved\":[true,true,true]}"));
+  CHECK(strstr(text, "\"sufficient_data\":true"));
+  /* A wheel that did not turn still reports the current it held when the body broke free. */
+  CHECK(strstr(text, "\"capped\":false,\"moved\":false,\"command_ma\":"));
+  reset_report(); body_mode = true;
+  char *bad[] = {"friction_map", "--out", directory, "--body", "vx", NULL}; /* --body needs --breakaway */
+  CHECK_EQ(friction_map_main(5, bad), 1); CHECK_EQ(ramps, 0);
+}
+
 static void failures_and_check(void)
 {
   reset_report(); CHECK_EQ(invoke("--check"), 0);
@@ -119,8 +149,8 @@ static void failures_and_check(void)
 int main(void)
 {
   CHECK(mkdtemp(directory));
-  speed_report(); breakaway_report(); failures_and_check();
+  speed_report(); breakaway_report(); body_report(); failures_and_check();
   CHECK_EQ(rmdir(directory), 0);
-  puts("friction_map: 3 test groups passed");
+  puts("friction_map: 4 test groups passed");
   return 0;
 }

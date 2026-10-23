@@ -60,7 +60,7 @@ Programs (one `targets/<tool>.cmake` each):
 | `keyboard_drive.c` | WASD/QE drive; optional Nucleo friction feed-forward (`--ff-*`) |
 | `move_test.c` | Scripted straight-line moves, logged with monotonic stamps; optional Nucleo friction feed-forward (`--ff-*`) |
 | `tune_ground.c` | Ground friction identification: breakaway and kinetic current per wheel |
-| `friction_map.c` | Guarded floor SPEED out-and-back friction map and CURRENT breakaway ramps; result.json |
+| `friction_map.c` | Guarded floor SPEED out-and-back friction map and CURRENT breakaway ramps (per wheel, or `--body` vx, vy or wz: all four with the body-force current pattern until two turn); result.json |
 | `sweep.c` | Oblique out-and-back pulses for friction identification |
 | `startup_report.c` | Aggregate `move_test --startup-metrics` `startup.tsv` files into a startup acceptance verdict |
 | `fwu_image/fwu_image.c` | ESC app to Nucleo FWU payload (own CMake project) |

@@ -170,12 +170,20 @@ int friction_speed_move(ik_link_t *l, const int32_t twist[3], double duration,
   return finish(l, rc);
 }
 
-int friction_breakaway_run(ik_link_t *l, unsigned selected, int sign, double rate,
+int friction_breakaway_run(ik_link_t *l, const double weight[4], unsigned stop_wheels, double rate,
                            double cap, double threshold, const friction_limits_t *a,
                            friction_breakaway_t out[4])
 {
   memset(out, 0, 4 * sizeof *out);
-  if (!limits_ok(a) || !selected || (selected & ~15U) || (sign != -1 && sign != 1) ||
+  unsigned selected = 0;
+  double largest = 0;
+  bool weights_ok = weight != NULL;
+  for (int w = 0; weights_ok && w < 4; w++) {
+    weights_ok = isfinite(weight[w]) && fabs(weight[w]) <= 1;
+    if (weights_ok && weight[w] != 0) { selected |= 1U << w; largest = fmax(largest, fabs(weight[w])); }
+  }
+  unsigned driven = (unsigned)__builtin_popcount(selected);
+  if (!limits_ok(a) || !weights_ok || largest != 1 || stop_wheels > driven ||
       !isfinite(rate) || !isfinite(cap) || rate <= 0 || cap <= 0 || cap > ESC_IQMAX_A * 1000 || cap / rate > 5 ||
       !isfinite(threshold) || threshold <= 0 || threshold >= a->max_rpm)
     return failure(l, "invalid breakaway ramp/limits");
@@ -184,27 +192,42 @@ int friction_breakaway_run(ik_link_t *l, unsigned selected, int sign, double rat
   int rc = start(l, &health, a, IK_MODE_CURRENT);
   friction_motion_t motion[4];
   for (int w = 0; w < 4; w++) motion[w] = (friction_motion_t){health.replies[w], 0};
-  unsigned pending = selected;
+  unsigned pending = selected, moved = 0;
+  bool stopped = false;
   int32_t current[4] = {0};
   double t0 = pulse_now_s();
-  while (!rc && pending && pulse_now_s() - t0 < cap / rate + 0.1) {
+  while (!rc && pending && !stopped && pulse_now_s() - t0 < cap / rate + 0.1) {
     double command_at = pulse_now_s(), elapsed = command_at - t0;
     if (command_at - health.last_command > 0.12) { rc = failure(l, "heartbeat scheduling gap >120 ms"); break; }
-    for (int w = 0; w < 4; w++) current[w] = pending & (1U << w) ? (int32_t)nearbyint(sign * fmin(cap, elapsed * rate)) : 0;
+    for (int w = 0; w < 4; w++)
+      current[w] = pending & (1U << w) ? (int32_t)nearbyint(weight[w] * fmin(cap, elapsed * rate)) : 0;
     if (interrupted(l, a) || ik_drive_current(l, current, true)) { rc = -1; break; }
     health.last_command = command_at;
     ik_status_t status; ik_link_row_t rows[4]; bool fresh[4];
     if (health_read(l, &health, a, &status, rows, fresh)) { rc = -1; break; }
-    for (int w = 0; w < 4; w++) if ((pending & (1U << w)) && fresh[w] &&
-        friction_motion(&motion[w], rows[w].reply_count, rows[w].rpm, sign, threshold)) {
+    unsigned newly = 0;
+    for (int w = 0; w < 4; w++) if ((pending & ~moved & (1U << w)) && fresh[w] &&
+        friction_motion(&motion[w], rows[w].reply_count, rows[w].rpm, weight[w] > 0 ? 1 : -1, threshold)) {
       out[w] = (friction_breakaway_t){.moved = true, .command_ma = current[w],
                                    .measured_ma = rows[w].iq_ma, .attempted = true};
-      pending &= ~(1U << w); current[w] = 0;
+      moved |= 1U << w; newly |= 1U << w;
+    }
+    if (stop_wheels && (unsigned)__builtin_popcount(moved) >= stop_wheels) {
+      /* Record where every driven wheel stood when the body broke free, then release all four together. */
+      for (int w = 0; w < 4; w++) if ((selected & ~moved & (1U << w)))
+        out[w] = (friction_breakaway_t){.command_ma = current[w], .measured_ma = rows[w].iq_ma, .attempted = true};
+      memset(current, 0, sizeof current);
+      stopped = true;
+    } else if (!stop_wheels && newly) {
+      pending &= ~newly;
+      for (int w = 0; w < 4; w++) if (newly & (1U << w)) current[w] = 0;
+    }
+    if (stopped || (!stop_wheels && newly)) {
       if (ik_drive_current(l, current, true)) { rc = -1; break; }
       health.last_command = pulse_now_s();
     }
     pace(command_at);
   }
-  if (!rc) for (int w = 0; w < 4; w++) if (pending & (1U << w)) out[w].capped = true;
+  if (!rc && !stopped) for (int w = 0; w < 4; w++) if (pending & ~moved & (1U << w)) out[w].capped = true;
   return finish(l, rc);
 }

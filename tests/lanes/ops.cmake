@@ -1,5 +1,5 @@
 set(ops_sources
-  src/shared/src/motor_protocol.c src/tools/lib/ik_config.c
+  src/shared/src/motor_protocol.c src/shared/src/friction_ff.c src/shared/src/rover_kinematics.c src/tools/lib/ik_config.c
   src/tools/lib/drive_ops.c src/tools/lib/drive_keyboard.c src/tools/lib/drive_record.c
   src/tools/lib/pulse_run.c src/tools/lib/esc_ops.c src/tools/lib/tune_analysis.c
   src/tools/lib/esc_defaults.c src/tools/lib/ik_link.c src/tools/lib/ocd.c src/tools/lib/elfsym.c

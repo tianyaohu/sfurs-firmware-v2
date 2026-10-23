@@ -114,12 +114,12 @@ static int cmd_status(ik_link_t *l)
     const ik_row_t *r = &rows[i];
     const ik_link_row_t *link = &links[i];
     const bool faulted = status.fault & (1U << i), lost = status.fault & (1U << (4 + i));
-    printf("%s/%s: link %s/%s/%s session %u misses %u fault %u lost %u cause %s armed %u\n",
+    printf("%s/%s: link %s/%s/%s session %u misses %u fault %u lost %u cause %s armed %u restarts %u\n",
            IK_WHEEL_POS[i], IK_WHEEL_CORNER[i], link->valid ? link->lifecycle_name : "unreadable",
            link->valid ? link->outcome_name : "?", link->valid ? link->reason_name : "?",
            link->session, link->misses, faulted, lost,
            !(faulted || lost) ? "-" : ik_fault_cause(link, true, lost),
-           !!(status.armed & (1U << i)));
+           !!(status.armed & (1U << i)), link->restarts);
     /* rows keep the last values; only a new count means the ESC is live */
     if (!r->valid || !r->status_count || (before[i].valid && before[i].status_count == r->status_count)) {
       printf("%s/%s: no reply\n", IK_WHEEL_POS[i], IK_WHEEL_CORNER[i]);

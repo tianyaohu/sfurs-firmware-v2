@@ -209,11 +209,13 @@ static void on_disable(struct motor_cmd *m, const struct motor_cmd_inputs *in, s
 static void on_arm(struct motor_cmd *m, const struct motor_cmd_inputs *in, struct candidate *cand,
                    const struct motor_cmd_rx_entry *e)
 {
+  /* Lifecycle before session, as for motion: the Nucleo opens every session with a session-0 probe, and a
+   * FAULTED wheel must name its cause to it, or a new session never learns why the wheel is off. */
+  if (m->lifecycle == MOTOR_LC_FAULTED) { reply(m, in, e->c.seq, MOTOR_OUT_REJECTED, m->latched); return; }
   if (e->c.session != m->session || m->session != m->tick_session) {
     reply(m, in, e->c.seq, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SESSION);
     return;
   }
-  if (m->lifecycle == MOTOR_LC_FAULTED) { reply(m, in, e->c.seq, MOTOR_OUT_REJECTED, m->latched); return; }
   supersede(m, in, cand);
   if (m->lifecycle == MOTOR_LC_DISARMED) {
     m->lifecycle = MOTOR_LC_READY;

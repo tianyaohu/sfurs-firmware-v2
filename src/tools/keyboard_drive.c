@@ -84,6 +84,9 @@ int main(int argc, char **argv)
   raw_enabled = true;
   fputs("\033[?25l", stdout);
   double t0_s = pulse_now_s(), next_tick_s = t0_s, last_ui_s = 0;
+  /* The Nucleo re-arms a restarted ESC without a fault, so restarts are shown and logged as they are counted. */
+  uint32_t restarts[IK_WHEELS] = {0};
+  bool restarts_known = false;
   while (!rc) {
     double now_s = pulse_now_s();
     if (interrupted && !controls.quitting) drive_keyboard_press(&controls, 'x', now_s);
@@ -107,13 +110,24 @@ int main(int argc, char **argv)
       last_ui_s = now_s;
       ik_status_t status;
       ik_row_t rows[4];
-      if (ik_status(&link, &status) || ik_rows(&link, rows)) { rc = -1; break; }
+      ik_link_row_t links[IK_WHEELS];
+      if (ik_status(&link, &status) || ik_rows(&link, rows) || ik_link_rows(&link, links)) { rc = -1; break; }
       if (log && drive_keyboard_log(log, now_s, t0_s, vector, &status, rows)) { perror(log_path); rc = -1; break; }
+      for (int w = 0; w < IK_WHEELS; w++) {
+        if (restarts_known && links[w].restarts != restarts[w] && log &&
+            (fprintf(log, "{\"t\":%.3f,\"event\":\"esc_restart\",\"wheel\":\"%s\",\"restarts\":%u}\n",
+                     now_s, IK_WHEEL_POS[w], links[w].restarts) < 0 || fflush(log))) { perror(log_path); rc = -1; }
+        restarts[w] = links[w].restarts;
+      }
+      if (rc) break;
+      restarts_known = true;
       printf("\033[H\033[Jspeed %.1f m/s yaw %.1f rad/s twist vx=%d vy=%d w=%d nucleo %u tx %u fail %u\n",
              controls.speed_mps, controls.yaw_radps, vector[0], vector[1], vector[2], status.state, status.tx_count, status.tx_fail);
       puts("WASD move, QE rotate, SPACE zero, +/- speed, X quit\n");
       drive_keyboard_show(&status, rows);
-      puts("\nflags: A active, D I2T derated, L aligning, H Hall shift known (! refuses drive: esc_tool align)");
+      printf("\nESC restarts since the Nucleo booted: FR %u BR %u BL %u FL %u%s\n", restarts[0], restarts[1],
+             restarts[2], restarts[3], restarts[0] | restarts[1] | restarts[2] | restarts[3] ? "  (power path?)" : "");
+      puts("flags: A active, D I2T derated, L aligning, H Hall shift known (! refuses drive: esc_tool align)");
       if (controls.quitting) puts("stopping...");
       fflush(stdout);
       if (controls.quitting && (status.state == 0 || now_s > controls.quit_deadline_s)) break;
@@ -134,6 +148,11 @@ done:
     fputs("\033[?25h\n", stdout);
   }
   if (rc && link.err[0]) fprintf(stderr, "%s\n", link.err);
+  if (rc && log && link.err[0]) { /* the fault that ended the drive comes between two 10 Hz rows */
+    fprintf(log, "{\"t\":%.3f,\"event\":\"stopped\",\"error\":", pulse_now_s());
+    drive_json_string(log, link.err);
+    fputs("}\n", log);
+  }
   if (log && fclose(log)) rc = -1;
   sigaction(SIGINT, &old_int, NULL);
   sigaction(SIGTERM, &old_term, NULL);

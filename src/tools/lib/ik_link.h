@@ -17,11 +17,11 @@
 #include "ocd.h"
 #include "motor_protocol.h"
 
-#define IK_ABI 0x494B0009U
+#define IK_ABI 0x494B000AU
 #define IK_WHEELS 4
 #define IK_CAPTURE_READ_MAX 32U
 #define IK_ROW_WORDS 19
-#define IK_LINK_WORDS 25
+#define IK_LINK_WORDS 26
 #define IK_LAT_BINS 16
 #define IK_LINK_NONE 0xFFU
 #define IK_DEFAULT_SN "002200364142500620353451"
@@ -76,6 +76,7 @@ typedef struct {
   uint32_t fault_reason;  /**< reason latched with the wheel's fault bit (0 for LOST) */
   uint32_t cfg_count, cfg_seq, cfg_status, cfg_key;
   int32_t cfg_stored, cfg_effective;
+  uint32_t restarts;      /**< ESC restarts the Nucleo saw since it booted */
   const char *lifecycle_name, *outcome_name, *reason_name, *fault_reason_name;
 } ik_link_row_t;
 

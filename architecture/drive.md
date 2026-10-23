@@ -18,7 +18,9 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
    (`ik_drive_reply_lat_hist`, 250 µs bins). For measurements the session can instead run in
    current mode (`ik_drive_mode`, latched at the session start): each wheel gets its own
    q-current setpoint (`ik_drive_current_ma`) in CURRENT frames, with the same heartbeat,
-   LOST and stop handling. Mailbox ABI 9.
+   LOST and stop handling. A DISARMED wheel is re-armed without a fault, so an ESC restart
+   (DISARMED in its boot session after being armed) is counted in `ik_drive_link.restarts`,
+   shown by `esc_tool status` and `keyboard_drive` (logged as an `esc_restart` event). Mailbox ABI 10.
 3. Each ESC runs MCSDK FOC with Hall sensors (16 kHz current loop) in torque mode.
    `motor_cmd.c` owns the command lifecycle (arming, session and sequence checks, watchdog,
    faults, HOLD; [command-lifecycle.md](command-lifecycle.md)); `motor_speed.c` is the 1 kHz

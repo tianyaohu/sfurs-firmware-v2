@@ -503,6 +503,52 @@ static void test_rejected_twist_has_no_ff(void)
   ik_drive_ff_enable = 0; ik_drive_ff_coulomb_y_mn = 0; ik_drive_ff_a_per_nm_milli = 0;
 }
 
+/* For every wheel: an ESC that restarts mid-drive comes back DISARMED in its boot session and is re-armed
+ * without a fault; the Nucleo counts it. A session that starts against freshly booted ESCs counts nothing. */
+static void test_esc_restart_is_counted(void)
+{
+  for (unsigned w = 0; w < 4; ++w) {
+    setup();
+    uint32_t before[4];
+    for (unsigned i = 0; i < 4U; ++i) {
+      const struct motor_cmd_config cfg = { .select = 1U << i, .max_rpm = 2976, .max_ma = IK_DRIVE_MAX_CURRENT_MA,
+                                            .current_supported = 1U };
+      motor_cmd_init(&esc[i], &cfg, 1U << i); /* drive_app seeds the boot session with the select bit */
+      before[i] = ik_drive_link[i].restarts;
+    }
+    drive_forward();
+    for (unsigned i = 0; i < 4U; ++i) CHECK(ik_drive_link[i].restarts == before[i]);
+    const struct motor_cmd_config cfg = { .select = 1U << w, .max_rpm = 2976, .max_ma = IK_DRIVE_MAX_CURRENT_MA,
+                                          .current_supported = 1U };
+    motor_cmd_init(&esc[w], &cfg, 1U << w); /* the restart: lifecycle and session back to their boot values */
+    esc_in[w].mc = MOTOR_CMD_MC_IDLE;
+    run(500, 1);
+    for (unsigned i = 0; i < 4U; ++i) CHECK(ik_drive_link[i].restarts == before[i] + (i == w ? 1U : 0U));
+    CHECK(esc[w].lifecycle == MOTOR_LC_RUNNING && ik_drive_fault == 0U); /* re-armed, as on the robot */
+    ik_drive_enable = 0; run(800, 1);
+  }
+}
+
+/* For every wheel: a session opened while an ESC is still FAULTED learns the cause from the probe reply
+ * (2026-10-22: it used to read BAD_SESSION, and the tools printed "cause not reported"). */
+static void test_new_session_learns_latched_cause(void)
+{
+  for (unsigned w = 0; w < 4; ++w) {
+    setup();
+    drive_forward();
+    esc_in[w].mc = MOTOR_CMD_MC_FAULT; esc_in[w].mc_fault_present = 1U;
+    run(300, 1);
+    CHECK(esc[w].lifecycle == MOTOR_LC_FAULTED && ik_drive_state == IK_STOPPED);
+    ik_drive_enable = 0; run(20, 1); CHECK(ik_drive_fault == 0U);
+    ik_drive_enable = 1; run(100, 1); /* new session: every link starts with the session-0 probe */
+    CHECK(ik_drive_fault & (1U << w));
+    CHECK(ik_drive_link[w].lifecycle == MOTOR_LC_FAULTED && ik_drive_link[w].fault_reason == MOTOR_R_FAULT_MCSDK);
+    ik_drive_enable = 0; run(300, 1);
+    esc_in[w].mc_fault_present = 0U; ++ik_drive_clear_seq; run(5, 1);
+    CHECK(esc[w].lifecycle == MOTOR_LC_DISARMED);
+  }
+}
+
 /* A fault stop runs to STOPPED even if the host re-enables at once; then a fresh probe/ARM session starts. */
 static void test_fault_stop_starts_a_new_session(void)
 {
@@ -570,6 +616,8 @@ int main(int argc, char **argv)
     { "breakaway_boost_until_two_wheels_turn", test_breakaway_boost_until_two_wheels_turn },
     { "breakaway_boost_time_limit", test_breakaway_boost_time_limit },
     { "fault_stop_starts_a_new_session", test_fault_stop_starts_a_new_session },
+    { "new_session_learns_latched_cause", test_new_session_learns_latched_cause },
+    { "esc_restart_is_counted", test_esc_restart_is_counted },
     { "current_mode_frames", test_current_mode_frames },
   };
   const char *name = argc == 2 ? argv[1] : cases[0].name;

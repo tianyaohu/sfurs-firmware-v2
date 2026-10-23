@@ -23,7 +23,7 @@
  * ::MOTOR_WATCHDOG_MS after the stream stops. All words are 32 bit for SWD access.
  */
 
-#define IK_DRIVE_ABI 0x494B0009U         /**< ABI tag the host checks before talking */
+#define IK_DRIVE_ABI 0x494B000AU         /**< ABI tag the host checks before talking */
 #define IK_DRIVE_PERIOD_MS 20U           /**< drive loop period, ms (= MOTOR_PROTOCOL_PERIOD_MS) */
 #define IK_DRIVE_HEARTBEAT_MS 300U       /**< heartbeat age that counts as lost, ms */
 #define IK_DRIVE_HOLD_MS 200U            /**< time at zero before DISABLE is sent, ms */
@@ -72,9 +72,11 @@ struct ik_drive_link {
   uint32_t cfg_key;        /**< its key */
   int32_t cfg_stored;      /**< value the ESC holds */
   int32_t cfg_effective;   /**< value in force (the derated limit for IQ_LIMIT_MA) */
+  uint32_t restarts;       /**< ESC restarts seen since the Nucleo booted: a DISARMED reply in the boot session
+                                from a wheel that was armed, faulted or in another session */
 };
 /** @brief Words per ::ik_drive_link row. */
-#define IK_DRIVE_LINK_WORDS 25U
+#define IK_DRIVE_LINK_WORDS 26U
 
 /** @brief ABI tag, equals ::IK_DRIVE_ABI. */
 extern volatile const uint32_t ik_drive_abi;

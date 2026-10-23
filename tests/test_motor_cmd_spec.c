@@ -222,8 +222,9 @@ static void transitions(void)
     uint8_t baseline = f.m.last_seq, session = f.m.session;
     rx(&f, command(2, 200, (uint8_t)(session + 1)), 20);
     tick(&f, 20);
-    // B: an ARM with a wrong session is BAD_SESSION in any state.
-    one(&f, 200, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SESSION);
+    // B: an ARM with a wrong session is BAD_SESSION in any state but FAULTED, which names its latched cause
+    // (amended 2026-10-22: the Nucleo's session-0 probe is how a new session learns why a wheel is off).
+    one(&f, 200, MOTOR_OUT_REJECTED, s == MOTOR_LC_FAULTED ? MOTOR_R_FAULT_MCSDK : MOTOR_R_BAD_SESSION);
     EQ(f.m.lifecycle, s);
     EQ(f.m.last_seq, baseline);
     EQ(f.m.session, session);

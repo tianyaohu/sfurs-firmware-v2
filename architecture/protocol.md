@@ -67,8 +67,10 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 
 - The ESC holds `session` (nonzero u8). It picks a new one on boot, command timeout, FAULTED -> cleared, and every
   disarm: `next = 1 + (prev - 1 + 1 + (entropy mod 254)) mod 255`, which is never 0 and never equal to `prev`.
-  `entropy` is the 1 kHz tick counter. At boot (`prev = 0`): `next = 1 + entropy mod 255`. Every reply carries the current `session` in byte 4.
-- ARM (mode DISABLE, flag ARM) is accepted only when byte 7 equals the current session [BAD_SESSION]. It sets the
+  `entropy` is the 1 kHz tick counter. At boot (`prev = 0`) the entropy is the wheel's select bit, so the boot
+  session is `1 + select` (FR 2, BR 3, BL 5, FL 9); a wheel seen back in it after another session has restarted. Every reply carries the current `session` in byte 4.
+- ARM (mode DISABLE, flag ARM) to a FAULTED wheel is REJECTED with the latched cause, whatever its session. Otherwise
+  it is accepted only when byte 7 equals the current session [BAD_SESSION]. It sets the
   sequence baseline `last_seq = seq`.
 - Motion frames (SPEED, CURRENT) need lifecycle armed [NOT_ARMED] and byte 7 == session [BAD_SESSION]. Then, with
   `d = (int8_t)(seq - last_seq)`:

@@ -145,3 +145,16 @@ Append only; format in design/README.md.
   is +-60 A (3 mOhm x 9.14), so the limit is a tuning choice, not a hardware one. At a steady 8 A the I2T derates
   after ~0.56 s (6 A: ~1.2 s). The CONTROL_REPLY Iq byte saturates at 6.35 A; the recorder and STATUS do not.
 - Touches: src/esc (drive_parameters.h), src/nucleo (ik_drive.h), host tests derive limits from the constants.
+
+## 2026-10-22  Fault cause on the probe reply; Nucleo counts ESC restarts  (who: claude, decided with Frank H)
+- Decision: an ARM to a FAULTED ESC is REJECTED with its latched cause before the session is checked (amends the
+  lifecycle rule "a wrong-session ARM is BAD_SESSION in any state"); DISABLE while FAULTED stays APPLIED/NONE.
+  The Nucleo counts per wheel a DISARMED reply in the ESC's boot session (1 + select) from a wheel that was armed,
+  faulted or in another session (`ik_drive_link.restarts`, ABI 10); keyboard_drive shows and logs it and writes the
+  stop error as the last log line.
+- Why: tonight a FAULTED BR answered every new session's session-0 probe with BAD_SESSION, so the tools printed
+  "cause not reported". And all four ESCs restarted together at least twice during keyboard drives (boot sessions
+  2/3/5/9 again, the RAM 7 A limit back at 8 A); the Nucleo re-armed them silently and only "BR faulted" was
+  visible. The bootloader clears the MCU reset flags, so the app cannot report a reset cause; the boot session can
+  mark a restart without a protocol change.
+- Touches: src/esc (motor_cmd.c), src/nucleo (ik_drive), src/tools (ik_link, esc_tool, keyboard_drive), docs.

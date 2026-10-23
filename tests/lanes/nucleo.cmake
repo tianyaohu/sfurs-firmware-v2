@@ -28,7 +28,9 @@ foreach(case
     rejected_twist_has_no_ff
     breakaway_boost_until_two_wheels_turn
     breakaway_boost_time_limit
-    fault_stop_starts_a_new_session)
+    fault_stop_starts_a_new_session
+    new_session_learns_latched_cause
+    esc_restart_is_counted)
   add_test(NAME test_ik_drive.${case} COMMAND test_ik_drive ${case})
 endforeach()
 host_test(test_ik_telemetry

@@ -243,7 +243,7 @@ void ik_decode_link_row(const uint32_t w[IK_LINK_WORDS], ik_link_row_t *r)
     .misses = w[12], .rejects = w[13], .start_count = w[14], .start_reply_us = w[15],
     .first_start_reply_us = w[16], .first_start_valid = w[17] != 0, .fault_reason = w[18],
     .cfg_count = w[19], .cfg_seq = w[20], .cfg_status = w[21], .cfg_key = w[22],
-    .cfg_stored = (int32_t)w[23], .cfg_effective = (int32_t)w[24]};
+    .cfg_stored = (int32_t)w[23], .cfg_effective = (int32_t)w[24], .restarts = w[25]};
   r->lifecycle_name = r->lifecycle < ARRAY_LEN(lifecycle) ? lifecycle[r->lifecycle] :
                       r->lifecycle == IK_LINK_NONE ? "NO_REPLY" : "UNKNOWN";
   r->outcome_name = r->outcome < ARRAY_LEN(outcome) ? outcome[r->outcome] : "UNKNOWN";
@@ -280,8 +280,8 @@ int ik_link_rows(ik_link_t *l, ik_link_row_t rows[IK_WHEELS])
 const char *ik_fault_cause(const ik_link_row_t *r, bool latched, bool lost)
 {
   /* Codes from FAULT_MCSDK up are causes. Later replies overwrite reason, so fault_reason keeps the one latched with
-   * the bit (0 = LOST). An ESC already FAULTED when the session opened answers the probe with NONE or BAD_SESSION,
-   * and after the stop only DISABLE replies (NONE) follow: no reply names its cause. */
+   * the bit (0 = LOST). An ESC already FAULTED when the session opened names its cause to the probe; ESC images
+   * before 2026-10-22 answered BAD_SESSION instead, hence the fallback text. */
   if (!r->valid) return "unreadable link";
   if (latched && r->fault_reason >= MOTOR_R_FAULT_MCSDK) return r->fault_reason_name;
   if (r->lifecycle == MOTOR_LC_FAULTED && r->reason >= MOTOR_R_FAULT_MCSDK) return r->reason_name;

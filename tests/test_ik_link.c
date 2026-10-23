@@ -70,17 +70,18 @@ static void test_config_keys(void)
 
 static void test_link_decode(void)
 {
-  CHECK_EQ(IK_ABI, 0x494B0009U); CHECK_EQ(IK_LINK_WORDS, 25);
+  CHECK_EQ(IK_ABI, 0x494B000AU); CHECK_EQ(IK_LINK_WORDS, 26);
   for (int wheel = 0; wheel < 4; wheel++) {
     uint32_t words[IK_LINK_WORDS] = {0};
     words[8] = (uint32_t)-123; words[9] = (uint32_t)-450;
     words[19] = 42 + wheel; words[20] = 255; words[21] = MOTOR_CFG_BAD_VALUE;
     words[22] = MOTOR_CFG_HALL_SHIFT_DEG; words[23] = (uint32_t)-64; words[24] = (uint32_t)-63;
+    words[25] = 3U + (uint32_t)wheel;
     ik_link_row_t row; ik_decode_link_row(words, &row);
     CHECK(row.valid); CHECK_EQ(row.rpm, -123); CHECK_EQ(row.iq_ma, -450);
     CHECK_EQ(row.cfg_count, 42 + wheel); CHECK_EQ(row.cfg_seq, 255);
     CHECK_EQ(row.cfg_status, MOTOR_CFG_BAD_VALUE); CHECK_EQ(row.cfg_key, MOTOR_CFG_HALL_SHIFT_DEG);
-    CHECK_EQ(row.cfg_stored, -64); CHECK_EQ(row.cfg_effective, -63);
+    CHECK_EQ(row.cfg_stored, -64); CHECK_EQ(row.cfg_effective, -63); CHECK_EQ(row.restarts, 3U + (uint32_t)wheel);
   }
 }
 

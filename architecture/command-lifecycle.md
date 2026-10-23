@@ -27,7 +27,8 @@ The 1 kHz tick evaluates, in this order: (1) MCSDK fault, (2) lifecycle FIFO, (3
 | any with output on | MCSDK fault (FAULT_NOW/FAULT_OVER) | FAULTED | reason FAULT_MCSDK, or FAULT_HALL_LOST when MCSDK's speed-feedback fault is set; MCSDK already disabled the bridge |
 | DISARMED | ARM with the current session | READY | `last_seq = seq`, `last_applied_seq = 0` |
 | any except FAULTED | ARM with the current session while armed | unchanged | re-baselines `last_seq`; reply APPLIED |
-| any | ARM with a wrong session | unchanged | REJECTED(BAD_SESSION) |
+| FAULTED | ARM (any session) | FAULTED | REJECTED(latched cause), checked before the session so the Nucleo's session-0 probe learns why the wheel is off |
+| any except FAULTED | ARM with a wrong session | unchanged | REJECTED(BAD_SESSION) |
 | STARTING, RUNNING, HOLD | DISABLE | READY | `MC_StopMotor1`, integrator and ff cleared, motion slot cleared |
 | DISARMED, READY | DISABLE | unchanged | none (idempotent) |
 | FAULTED | DISABLE | FAULTED | none (output already off) |

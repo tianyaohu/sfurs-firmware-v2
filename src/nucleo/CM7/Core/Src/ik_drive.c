@@ -125,6 +125,12 @@ int ik_drive_rx(uint32_t id, const uint8_t *data, uint32_t len, uint32_t now_us)
   if (w == 4U || motor_reply_decode(data, len, &r) != MOTOR_R_NONE) return 1; /* ours, but malformed */
   volatile struct ik_drive_link *l = &ik_drive_link[w];
   link_open(w);
+  /* A restarted ESC is DISARMED in its boot session (motor_session_next(0, select), as the ESC seeds it) and is
+   * re-armed here without a fault, so count it; a timeout or a cleared fault moves to another session instead. */
+  const uint32_t boot_session = motor_session_next(0U, SELECT[w]);
+  if (r.lifecycle == MOTOR_LC_DISARMED && r.session == boot_session && l->lifecycle != IK_LINK_NONE &&
+      (l->lifecycle != MOTOR_LC_DISARMED || l->session != boot_session))
+    ++l->restarts;
   l->lifecycle = r.lifecycle;
   l->outcome = r.outcome;
   l->reason = r.reason;

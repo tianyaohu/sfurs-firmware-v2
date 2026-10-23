@@ -84,12 +84,12 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 
 ### Timing
 
-- The Nucleo sends CONTROL to each wheel every 20 ms (`MOTOR_PROTOCOL_PERIOD_MS`).
+- The Nucleo sends CONTROL to each wheel every 10 ms / 100 Hz (`MOTOR_PROTOCOL_PERIOD_MS`).
 - The ESC moves its applied speed reference linearly from its present value to a new SPEED setpoint over
   `MOTOR_PROTOCOL_PERIOD_MS` (a protocol constant, not a field). That reconstructs the Nucleo's slewed trajectory;
   acceleration limiting happens only on the Nucleo.
 - Command watchdog: age = now - receive time of the last accepted fresh motion frame (ISR timestamp, 1 ms). Trip at
-  age >= 100 ms: 3 lost frames are tolerated, a 4th trips. The age is also checked at each frame's receive time, so a
+  age >= 100 ms. The age is also checked at each frame's receive time, so a
   frame arriving exactly at the deadline finds the wheel disarmed even when the tick drains it in the same millisecond. DISABLE, ARM, duplicates, rejects, CONFIG and polls do not
   refresh it. Trip action: output off, lifecycle DISARMED, new session, reason TIMEOUT.
 
@@ -116,7 +116,7 @@ effective limit (configured limit or I2T derate) is applied and limited; the rep
 - Pending replies sit in a 4-entry ring; when it is full the newest is dropped and counted (`reply_dropped`, ESC
   state over SWD); see [command-lifecycle.md](command-lifecycle.md) for why.
 - The Nucleo timestamps each reply on receipt. Command-apply skew across wheels is the spread of those receipt
-  times within one 20 ms cycle, with error = reply queueing (bounded, measured at H2).
+  times within one 10 ms cycle, with error = reply queueing (bounded, measured at H2).
 
 ### Reasons (u8)
 
@@ -195,8 +195,12 @@ stored value unchanged and the reply carries it.
 Sequence cases (last_seq = 250): 251 ok, 10 ok (d = 16), 11 SEQ_JUMP (d = 17), 250 DUPLICATE or CONFLICT,
 249 STALE, 122 SEQ_AMBIGUOUS (d = -128).
 
-## Bus load (estimate; measured at H2)
+## Bus load (estimate)
 
-Per 20 ms: 4 CONTROL + 4 CONTROL_REPLY + up to 4 STATUS/DIAG polls and replies = about 16 frames of ~110-130 bits
-(8-byte FD frame without BRS, with stuffing) = ~1900 bits = ~4 ms of every 20 ms, about 20 % at 500 kbit/s.
+Per 10 ms: 4 CONTROL + 4 CONTROL_REPLY + up to 2 STATUS/DIAG polls and replies. At approximately 130 bits per
+8-byte frame and 100 bits per 4-byte poll (including stuffing), this is ~1500 bits / 3 ms, about 30 % at
+500 kbit/s. H2 measured the previous 50 Hz command stream at about 20 %; 100 Hz needs hardware validation.
 Recorder readouts (CAPTURE_REPLY bursts) only run while the drive is stopped.
+
+The frame period is compiled into both the Nucleo and ESC speed interpolation. Install the matching Nucleo
+and all four ESC application images together when changing it; CAN timing and bootloaders stay at 500 kbit/s.

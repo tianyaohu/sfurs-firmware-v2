@@ -67,7 +67,7 @@ Refined during implementation (2026-10-21); same guarantees as the approved draf
 - The ISR decodes and structurally validates each frame, stamps it with the 1 kHz receive time, and appends it,
   rejects included, to one 8-entry ordered inbox. The inbox is a single-producer (ISR) / single-consumer (tick) ring
   with C11 release/acquire indices, so no interrupt masking is needed whichever context preempts the other. When the
-  inbox is full the ISR sets an overflow flag; the tick then forces DISABLE + disarm (LIFECYCLE_OVERFLOW). At 50 Hz per
+  inbox is full the ISR sets an overflow flag; the tick then forces DISABLE + disarm (LIFECYCLE_OVERFLOW). At 100 Hz per
   wheel it holds about one frame, so only a faulty sender fills it.
 - The tick drains the inbox in arrival order every 1 ms. Lifecycle frames take effect in that order. An accepted
   motion frame becomes the candidate target; a later accepted motion frame in the same drain replaces it, and a later
@@ -77,7 +77,7 @@ Refined during implementation (2026-10-21); same guarantees as the approved draf
   not refresh the watchdog.
 - Replies go into a 4-entry single-producer (tick) / single-consumer (main loop) ring; when it is full the newest reply
   is dropped and counted (dropping the oldest would need the producer to move the consumer's index). The next reply,
-  20 ms later, carries the current state.
+  10 ms later, carries the current state.
 - ARM starts the watchdog clock; after that only fresh accepted motion frames refresh it. An armed ESC that receives
   no motion for 100 ms disarms.
 - CLEAR_FAULT does not check the session: it can only lead to DISARMED, never to motion.

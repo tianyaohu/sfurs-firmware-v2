@@ -17,7 +17,7 @@ extern "C" {
 
 #define MOTOR_PROTOCOL_VERSION 1U    /**< value of CONTROL byte 0 bits 7-4 */
 #define MOTOR_PROTOCOL_DLC 8U        /**< every frame of this protocol carries exactly 8 bytes */
-#define MOTOR_PROTOCOL_PERIOD_MS 20U /**< Nucleo CONTROL period, ms; the ESC interpolates the speed reference over it */
+#define MOTOR_PROTOCOL_PERIOD_MS 10U /**< Nucleo CONTROL period, ms (100 Hz); the ESC interpolates the speed reference over it */
 #define MOTOR_WATCHDOG_MS 100U       /**< no accepted fresh motion frame for this long -> output off and disarm, ms */
 #define MOTOR_SEQ_WINDOW 16          /**< largest accepted forward sequence step (up to 15 lost frames) */
 

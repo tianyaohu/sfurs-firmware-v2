@@ -28,11 +28,11 @@ static void edge(int dir, unsigned n)
   if (dir > 0) in.edges_pos = (uint16_t)(in.edges_pos + n);
   else in.edges_neg = (uint16_t)(in.edges_neg + n);
 }
-/* New setpoint and the full 20-tick interpolation, wheel not moving. */
+/* Let the reference and a 1000 mA feed-forward slew settle for 20 ms, wheel not moving. */
 static void settle(int16_t rpm, int16_t ff_ma)
 {
   motor_speed_set(&s, rpm, ff_ma);
-  ticks(MOTOR_PROTOCOL_PERIOD_MS);
+  ticks(20);
   CHECK_EQ(out.ref_rpm, rpm);
 }
 
@@ -211,9 +211,10 @@ static void stall_ramp(void)
   CHECK(s.i_q14 != 0);
   motor_speed_set(&s, 125, 0);
   tick();
-  CHECK_EQ(out.ref_rpm, 14);
+  CHECK_EQ(out.ref_rpm, 20);
   CHECK(out.stall_ramp);
   /* Pause: back-driven at >= 45 RPM (two backward edges 20 ms apart: 62 RPM). */
+  ticks(21); /* let the earlier rocking edges go stale before timing this run */
   edge(-1, 1U);
   tick();
   ticks(19);
@@ -401,7 +402,7 @@ static void reversal_clears(void)
   CHECK(s.slip > 0);
   CHECK_EQ(out.ff_counts, 544);
   motor_speed_set(&s, -100, -1000);
-  ticks(9);
+  ticks(MOTOR_PROTOCOL_PERIOD_MS / 2U - 1U);
   CHECK(out.ref_rpm > 0);
   tick();
   CHECK_EQ(out.ref_rpm, 0);
@@ -410,10 +411,10 @@ static void reversal_clears(void)
   CHECK_EQ(out.ff_counts, 0);
   CHECK(out.valid);
   tick();
-  CHECK_EQ(out.ref_rpm, -10);
+  CHECK_EQ(out.ref_rpm, -20);
   CHECK(!out.valid);
-  CHECK_EQ(s.i_q14, 553 * -10);
-  CHECK_EQ(s.slip, 10);
+  CHECK_EQ(s.i_q14, 553 * -20);
+  CHECK_EQ(s.slip, 20);
   CHECK_EQ(out.ff_counts, -27);
   CHECK_EQ(s.back_edges, 0);
 }
@@ -478,9 +479,9 @@ static void hold(void)
   in.mode = MOTOR_SPEED_RUNNING;
   motor_speed_set(&s, 100, 0);
   tick();
-  CHECK_EQ(out.ref_rpm, 5);
-  CHECK_EQ(s.i_q14, 553 * 5);
-  CHECK_EQ(out.iq_ref_counts, 20);
+  CHECK_EQ(out.ref_rpm, 10);
+  CHECK_EQ(s.i_q14, 553 * 10);
+  CHECK_EQ(out.iq_ref_counts, 40);
 }
 
 /* Counts ticks with the stall timer running until the fault; returns that count. */
@@ -674,25 +675,25 @@ static void estimator(void)
   CHECK(!out.valid);
 }
 
-/* C5b: linear over exactly 20 ticks; a setpoint mid-ramp restarts from the present r; OFF holds r at 0. */
+/* Linear over exactly 10 ticks; a setpoint mid-ramp restarts from the present r; OFF holds r at 0. */
 static void interpolation(void)
 {
   setup();
   motor_speed_set(&s, 100, 0);
-  for (int k = 1; k <= 20; ++k) { tick(); CHECK_EQ(out.ref_rpm, 5 * k); }
+  for (int k = 1; k <= 10; ++k) { tick(); CHECK_EQ(out.ref_rpm, 10 * k); }
   tick();
   CHECK_EQ(out.ref_rpm, 100);
   setup();
   motor_speed_set(&s, 100, 0);
-  ticks(10);
+  ticks(5);
   CHECK_EQ(out.ref_rpm, 50);
   motor_speed_set(&s, -100, 0);
   tick();
-  CHECK_EQ(out.ref_rpm, 43); /* 50 + (-150 * 1) / 20, truncated */
-  ticks(17);
-  CHECK_EQ(out.ref_rpm, -85); /* k = 18: 50 - 135 */
+  CHECK_EQ(out.ref_rpm, 35); /* 50 + (-150 * 1) / 10 */
+  ticks(7);
+  CHECK_EQ(out.ref_rpm, -70); /* k = 8: 50 - 120 */
   tick();
-  CHECK_EQ(out.ref_rpm, -92); /* k = 19: 50 - 142 (-142.5 truncated) */
+  CHECK_EQ(out.ref_rpm, -85); /* k = 9: 50 - 135 */
   tick();
   CHECK_EQ(out.ref_rpm, -100);
   setup();
@@ -703,7 +704,7 @@ static void interpolation(void)
   CHECK_EQ(out.iq_ref_counts, 0);
   in.mode = MOTOR_SPEED_RUNNING;
   tick();
-  CHECK_EQ(out.ref_rpm, 5);
+  CHECK_EQ(out.ref_rpm, 10);
   in.mode = MOTOR_SPEED_OFF;
   tick();
   CHECK_EQ(out.ref_rpm, 0);

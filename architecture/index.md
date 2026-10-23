@@ -22,7 +22,7 @@ When you add a file or folder, add a line here in the same commit.
 | File | Role |
 |---|---|
 | `src/nucleo/CM7/Core/Src/main.c` | CubeMX init; our code only in `USER CODE` sections |
-| `src/nucleo/CM7/Core/Src/ik_drive.c` | 20 ms drive loop: read twist mailbox, IK, slew-limit, send protocol v1 CONTROL frames |
+| `src/nucleo/CM7/Core/Src/ik_drive.c` | 10 ms drive loop: read twist mailbox, IK, slew-limit, send protocol v1 CONTROL frames |
 | `src/nucleo/CM7/Core/Src/ik_telemetry.c` | Poll ESC status/diag, keep last reply per wheel for the PC |
 | `src/nucleo/CM7/Core/Src/fwu_updater.c`, `can_fwu_host.c` | Updater image: push an ESC app over CAN |
 | `src/shared/src/rover_kinematics.c` | Body twist <-> wheel speeds (IK table) |

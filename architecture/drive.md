@@ -9,7 +9,7 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
 1. The PC writes a body twist (vx, vy in mm/s, ω in mrad/s) and bumps a
    heartbeat at 50 Hz over the Nucleo's ST-LINK (OpenOCD attach through `lib/ocd.c`, no halt).
 2. When driving starts, the Nucleo probes every ESC, arms it with the session the ESC
-   announces, and starts motion only when all four are armed. Then every 20 ms it runs the
+   announces, and starts motion only when all four are armed. Then every 10 ms (100 Hz) it runs the
    inverse kinematics (`src/shared/src/rover_kinematics.c`), slews all wheels toward their
    targets with one acceleration limit (default 900 RPM/s, keeps the twist direction), and
    sends one protocol v1 CONTROL frame to each ESC ([protocol.md](protocol.md)). Every frame
@@ -52,7 +52,7 @@ STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault
 |---|---|
 | ESC hardware/MCSDK | Over-current comparator, over-voltage 18 V, under-voltage 8 V, over-temperature 70 °C |
 | ESC arming | Motion only after an ARM carrying the session the ESC announced; a timeout or a cleared fault starts a new session, so nothing sent before can move the wheel |
-| ESC watchdog | No fresh accepted motion frame for 100 ms → output off, disarmed (3 lost 50 Hz frames are tolerated, 4 trip) |
+| ESC watchdog | No fresh accepted motion frame for 100 ms → output off, disarmed |
 | ESC I²t | Iq limit 8 A; after ~30 A²s above 3.26 A it derates to 3 A until it cools (~0.56 s at a steady 8 A, ~1.2 s at 6 A) |
 | ESC fault latch | Any fault (MCSDK, stall, Hall loss, start timeout) keeps the wheel off until CLEAR_FAULT, then a new ARM |
 | ESC HOLD | Target 0 RPM and standstill (< 45 RPM, the Hall estimate's floor) for 150 ms → zero-current hold with the bridge on; the next non-zero target resumes without an MCSDK start. Holding zero speed on the Hall estimate only buzzed (0.2–0.6 A average, peaks 3.9 A) |
@@ -60,7 +60,7 @@ STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault
 | ESC Hall loss | Hall code 0/7 beyond the estimator's stale window, or MCSDK's speed-feedback fault → FAULTED(HALL_LOST) |
 | ESC alignment gate | A non-zero target is rejected (NOT_ALIGNED) until the Hall shift is known (built in or measured) |
 | ESC range check | Targets beyond 2976 RPM or 8 A are rejected, never clamped |
-| Nucleo link | A wheel that misses 3 replies in a row is LOST; a LOST or FAULTED wheel stops the robot (DISABLE to all) and latches `ik_drive_fault` until the PC sets enable to 0; `esc_tool clear` clears ESC faults |
+| Nucleo link | A wheel that misses 6 replies in a row (60 ms) is LOST; a LOST or FAULTED wheel stops the robot (DISABLE to all) and latches `ik_drive_fault` until the PC sets enable to 0; `esc_tool clear` clears ESC faults |
 | Nucleo heartbeat | PC silent for 300 ms → decelerate, hold 200 ms, broadcast DISABLE ×3 |
 | Kinematics | All wheels scaled together so none exceeds 900 RPM (~3 m/s) |
 
@@ -110,7 +110,7 @@ above about 0.8 kHz.
 
 Speed loop (`motor_speed.c`, spec
 [E-speed-loop.md](../technical-development-plans/esc-command-v2/E-speed-loop.md)): the
-reference moves linearly to each new setpoint over the 20 ms frame period; one speed
+reference moves linearly to each new setpoint over the 10 ms frame period; one speed
 estimate (Hall edge timing for the first edges after a start, then MCSDK's 6-edge average,
 decaying as 1/t when edges stop); Iq = P + I + ff, clamped to the current limit (including
 the I²t derate). Kp 1024/256 = 4 counts/RPM (100 RPM error → 0.75 A), Ki 553/16384 per ms

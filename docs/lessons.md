@@ -60,3 +60,5 @@ what someone does next; this is not a log.
   current at a fixed rate while stuck and cap the reference lead, so nothing is owed when the wheel lets go.
 - Mat vx breaks free at 4-6 A per wheel (all four together, current mode) and a lone freed wheel slips near 4.5-5 A: hold the breakaway boost until the wheels move (1 s, not 300 ms) and keep its level below the slip current.
 - MCSDK's Hall angle runs up to 60 deg ahead of a stuck rotor for 150 ms after each edge (half the torque per amp): a wheel that creeps then sticks needs our sector-centre angle (hall_angle.c); with it the mat body breakaway dropped from 4-6 A to 2.3-3.5 A.
+- On the mat the speed loop does not settle below ~150 wheel RPM (SD > 10 % of mean), so `friction_map` speed legs give no rolling-friction fit there; use vy at >= 0.7 m/s or breakaway ramps (2026-10-24).
+- `keyboard_drive --hold` must exceed the desktop key-repeat delay (GNOME set to 250 ms on the dev PC, 2026-10-24; default 500 ms elsewhere): below it a held key drops out until its first repeat. Over SSH or on another PC use `--hold 0.55`.

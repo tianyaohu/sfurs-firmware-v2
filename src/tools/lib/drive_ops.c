@@ -23,8 +23,18 @@ void drive_key_press(drive_keys_t *k, int key, double now_s)
   const char *p = key ? strchr(names, tolower((unsigned char)key)) : NULL;
   if (!p) return;
   int index = (int)(p - names), axis = index / 2;
+  const int key_lower = *p;
+  /* Autorepeat (GNOME default: 500 ms delay, then every 30 ms) is the only sign a key is still held. */
+  const bool repeating = key_lower == k->last_key && now_s - k->last_s <= k->release_s;
+  const double until_s = now_s + (repeating ? k->release_s : k->hold_s);
+  k->last_key = key_lower;
+  k->last_s = now_s;
   k->sign[axis] = index == 0 || index == 3 || index == 5 ? -1 : 1;
-  k->expiry_s[axis] = now_s + k->hold_s;
+  k->expiry_s[axis] = until_s;
+  /* Only the last key held repeats, so W then A would decay to A alone: every still-active axis follows the
+   * newest key (the hold while it waits for its first repeat, then release_s per repeat). */
+  for (int a = 0; a < 3; a++)
+    if (a != axis && k->sign[a] && k->expiry_s[a] > now_s) k->expiry_s[a] = until_s;
 }
 
 void drive_key_vector(drive_keys_t *k, double now_s, double speed_mps, double yaw_radps, int32_t out[3])
@@ -411,6 +421,20 @@ void drive_ff_off(drive_ff_t *ff)
   for (int w = 0; w < IK_WHEELS; w++) ff->scale_pct[w] = DRIVE_FF_SCALE_NOMINAL_PCT;
 }
 
+void drive_ff_preset(drive_ff_t *ff)
+{
+  drive_ff_off(ff);
+  ff->enable = true;
+  ff->a_per_nm_milli = DRIVE_FF_PRESET_A_PER_NM_MILLI;
+  ff->coulomb_x_mn = DRIVE_FF_PRESET_COULOMB_X_MN;
+  ff->coulomb_y_mn = DRIVE_FF_PRESET_COULOMB_Y_MN;
+  ff->coulomb_w_mnm = DRIVE_FF_PRESET_COULOMB_W_MNM;
+  ff->breakaway_x_mn = DRIVE_FF_PRESET_BREAKAWAY_X_MN;
+  ff->breakaway_y_mn = DRIVE_FF_PRESET_BREAKAWAY_Y_MN;
+  ff->breakaway_w_mnm = DRIVE_FF_PRESET_BREAKAWAY_W_MNM;
+  ff->breakaway_ms = DRIVE_FF_PRESET_BREAKAWAY_MS;
+}
+
 /* SI value -> int32 milli-unit word; rejects negative and out-of-range values. */
 static int milli_word(double value, int32_t *word)
 {
@@ -428,10 +452,11 @@ int drive_ff_from_options(const drive_option *options, size_t count, drive_ff_t 
   int32_t *words[] = {&ff->a_per_nm_milli, &ff->coulomb_x_mn, &ff->coulomb_y_mn, &ff->viscous_xy_mn_per_mps,
                       &ff->coulomb_w_mnm, &ff->viscous_w_mnm_per_radps, &ff->breakaway_x_mn, &ff->breakaway_y_mn,
                       &ff->breakaway_w_mnm};
-  bool a_given = false, ms_given = false;
+  bool a_given = false, ms_given = false, off = false;
   for (size_t k = 0; k < count; k++) {
     const drive_option *o = &options[k];
     if (!o->seen || strncmp(o->name, "ff-", 3)) continue;
+    if (!strcmp(o->name, "ff-off")) { off = *(const bool *)o->value; continue; }
     ff->enable = true;
     if (!strcmp(o->name, "ff-scale")) {
       const char *p = *(const char *const *)o->value;
@@ -466,6 +491,13 @@ int drive_ff_from_options(const drive_option *options, size_t count, drive_ff_t 
       if (n == 0) a_given = true;
     }
   }
+  if (off) {
+    if (ff->enable) { snprintf(err, errlen, "--ff-off cannot be combined with other --ff-* options"); return -1; }
+    drive_ff_off(ff);
+    return 0;
+  }
+  /* Driving without friction compensation leaves breakaway to each ESC's stall ramp, one wheel at a time. */
+  if (!ff->enable) { drive_ff_preset(ff); return 0; }
   /* A breakaway level without a time gets the default; a time alone boosts nothing (levels 0). */
   if (!ms_given && (ff->breakaway_x_mn || ff->breakaway_y_mn || ff->breakaway_w_mnm))
     ff->breakaway_ms = DRIVE_FF_BREAKAWAY_MS_DEFAULT;

@@ -9,8 +9,18 @@
 #define DRIVE_KEYS 4 /**< kp, ki, stall_ramp_ma_per_s, stall_ms: every RAM tunable the tools restore */
 #define DRIVE_MAX_MOVES 20 /**< moves per staged plan */
 
-/** @brief Keyboard state: per axis (x, y, yaw) the held sign and its expiry, s; hold_s is the hold time, s. */
-typedef struct { double hold_s, expiry_s[3]; int sign[3]; } drive_keys_t;
+/** @brief Keyboard state: per axis (x, y, yaw) the held sign and its expiry, s.
+ *  A terminal reports no releases and repeats only the last key held, after a delay. A fresh key lasts
+ *  hold_s (longer than that delay); once it repeats (same key again within release_s) each repeat extends it
+ *  by release_s only, so letting go stops it about release_s later. Every drive key renews all active axes,
+ *  so keys pressed together stay combined while the last one repeats. */
+typedef struct {
+  double hold_s, release_s; /**< fresh-key hold and repeat-gap release time, s */
+  double expiry_s[3];       /**< per axis: command stops at this time, s */
+  int sign[3];              /**< per axis: -1, 0, +1 */
+  int last_key;             /**< previous drive key, for repeat detection */
+  double last_s;            /**< time of the previous drive key, s */
+} drive_keys_t;
 /** @brief Recorder window summary: samples, trigger index, peak |RPM|. */
 typedef struct {
   int samples, trigger, peak_rpm;
@@ -193,6 +203,7 @@ typedef struct {
   int breakaway_ms;              /**< longest boost per stuck episode, ms */
   double a_per_nm;               /**< motor current per motor torque (1/Kt), A per N*m */
   const char *scale_pct;         /**< "FR,BR,BL,FL" per-wheel trim, integer % */
+  bool off;                      /**< --ff-off: model off instead of the mat preset */
 } drive_ff_args_t;
 /** @brief The feed-forward options, for a tool's drive_option table. */
 #define DRIVE_FF_OPTIONS(a)                                                               \
@@ -205,22 +216,40 @@ typedef struct {
   DRIVE_OPT("ff-breakaway-y-n", DOUBLE, &(a)->breakaway_y_n),                             \
   DRIVE_OPT("ff-breakaway-w-nm", DOUBLE, &(a)->breakaway_w_nm),                           \
   DRIVE_OPT("ff-breakaway-ms", INT, &(a)->breakaway_ms),                                  \
-  DRIVE_OPT("ff-a-per-nm", DOUBLE, &(a)->a_per_nm), DRIVE_OPT("ff-scale", STRING, &(a)->scale_pct)
+  DRIVE_OPT("ff-a-per-nm", DOUBLE, &(a)->a_per_nm), DRIVE_OPT("ff-scale", STRING, &(a)->scale_pct), \
+  DRIVE_OPT("ff-off", BOOL, &(a)->off)
 /** @brief Usage text for DRIVE_FF_OPTIONS. */
 #define DRIVE_FF_USAGE                                                                      \
   "  [--ff-coulomb-x-n N --ff-coulomb-y-n N --ff-viscous-xy-n-per-mps N --ff-coulomb-w-nm NM\n" \
   "   --ff-viscous-w-nm-per-radps NM --ff-breakaway-x-n N --ff-breakaway-y-n N --ff-breakaway-w-nm NM\n" \
-  "   --ff-breakaway-ms 300 --ff-a-per-nm A_PER_NM --ff-scale FR,BR,BL,FL]  Nucleo friction feed-forward\n" \
-  "   (SI units, scale %; breakaway levels apply until two wheels turn, at most --ff-breakaway-ms; any\n" \
-  "   option turns it on and needs --ff-a-per-nm; it is switched off again on exit)"
+  "   --ff-breakaway-ms 300 --ff-a-per-nm A_PER_NM --ff-scale FR,BR,BL,FL | --ff-off]  Nucleo friction\n" \
+  "   feed-forward (SI units, scale %; breakaway levels apply until two wheels turn, at most\n" \
+  "   --ff-breakaway-ms). None given: the mat preset (2026-10-24). Any given: exactly those terms, and\n" \
+  "   --ff-a-per-nm is required. --ff-off: model off. Switched off again on exit."
+
+/* Mat preset, measured 2026-10-24 (hardware-test-results/2026-10-24-keyboard-drive.md): body breakaway and
+ * rolling currents per wheel, expressed as forces through the placeholder 1/Kt of 10 A per N*m. Change
+ * all of them together; with a different 1/Kt every current would scale. */
+#define DRIVE_FF_PRESET_A_PER_NM_MILLI 10000  /**< placeholder 1/Kt, mA per N*m */
+#define DRIVE_FF_PRESET_COULOMB_X_MN 11000    /**< ~1.7 A per wheel rolling in x */
+#define DRIVE_FF_PRESET_COULOMB_Y_MN 9500     /**< ~0.9 A per wheel rolling in y */
+#define DRIVE_FF_PRESET_COULOMB_W_MNM 350     /**< ~0.33 A per wheel rolling in yaw */
+#define DRIVE_FF_PRESET_BREAKAWAY_X_MN 16000  /**< ~2.4 A per wheel to break free in x */
+#define DRIVE_FF_PRESET_BREAKAWAY_Y_MN 16000  /**< ~1.5 A per wheel to break free in y */
+#define DRIVE_FF_PRESET_BREAKAWAY_W_MNM 1100  /**< ~1.05 A per wheel to break free in yaw */
+#define DRIVE_FF_PRESET_BREAKAWAY_MS 1000     /**< hold the boost until two wheels turn, at most this, ms */
 
 /** @brief Feed-forward off: every term zero, trims at their boot value.
  *  @param ff out: mailbox words */
 void drive_ff_off(drive_ff_t *ff);
+/** @brief Feed-forward on with the mat preset (DRIVE_FF_PRESET_*), trims nominal.
+ *  @param ff out: mailbox words */
+void drive_ff_preset(drive_ff_t *ff);
 /** @brief Convert the parsed DRIVE_FF_OPTIONS of a table to mailbox words.
  *  Any ff option given enables the model; then --ff-a-per-nm (> 0) is required. Forces and
  *  torques must be >= 0 and fit the int32 milli-unit words; trims are integers 1..200 %
- *  (the firmware model switches off entirely if any trim is <= 0). Nothing given: drive_ff_off.
+ *  (the firmware model switches off entirely if any trim is <= 0). Nothing given: drive_ff_preset;
+ *  --ff-off alone: drive_ff_off; --ff-off with another ff option is an error.
  *  @param options parsed option table that contains DRIVE_FF_OPTIONS
  *  @param count   entries in options
  *  @param ff      out: mailbox words

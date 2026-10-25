@@ -18,24 +18,33 @@ static void interrupt_handler(int signal_number) { interrupted = signal_number; 
 int main(int argc, char **argv)
 {
   const char *elf = IK_DEFAULT_ELF, *sn = IK_DEFAULT_SN, *log_path = NULL;
-  int accel_rpmps = 0;
+  /* Gentler than the Nucleo's 900 RPM/s: at 2 m/s the wheels stay matched instead of slipping (mat, 2026-10-24). */
+  int accel_rpmps = 400;
   drive_ff_args_t ff_args = {0};
-  drive_keyboard_t controls = {.keys = {.hold_s = 0.6}, .speed_mps = 0.5, .max_speed_mps = 2.5, .yaw_radps = 2};
+  drive_keyboard_t controls = {.keys = {.hold_s = 0.3, .release_s = 0.1}, .speed_mps = 0.5, .max_speed_mps = 2.5, .yaw_radps = 2};
   drive_option options[] = {
     DRIVE_OPT("elf", STRING, &elf), DRIVE_OPT("sn", STRING, &sn),
     DRIVE_OPT("speed", DOUBLE, &controls.speed_mps), DRIVE_OPT("max-speed", DOUBLE, &controls.max_speed_mps),
     DRIVE_OPT("yaw", DOUBLE, &controls.yaw_radps), DRIVE_OPT("hold", DOUBLE, &controls.keys.hold_s),
+    DRIVE_OPT("release", DOUBLE, &controls.keys.release_s),
     DRIVE_OPT("accel", INT, &accel_rpmps), DRIVE_OPT("log", STRING, &log_path), DRIVE_FF_OPTIONS(&ff_args)
   };
   const size_t n_options = sizeof options / sizeof *options;
   int parsed = drive_parse(argc, argv, options, n_options);
   if (parsed) {
-    if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.6 --accel 0 --log F]\n"
+    if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.3 --release 0.1\n"
+                         "  --accel 400 --log F]\n"
                          "W/S forward/back, A/D left/right, Q/E CCW/CW, SPACE zero, +/- speed, X/ESC quit.\n"
-                         "Axes combine and expire without repeat. Streams at 50 Hz; Nucleo stops after 0.3 s\n"
+                         "A tap moves for --hold s, which must exceed the desktop key-repeat delay (250 ms here); a held key stops\n"
+                         "--release s after you let go. Keys combine: hold W, add A = diagonal while A is held.\n"
+                         "Streams at 50 Hz; Nucleo stops after 0.3 s\n"
                          "without heartbeat, ESCs after 0.1 s without the Nucleo. An existing log file is overwritten.\n"
                          DRIVE_FF_USAGE);
     return parsed < 0;
+  }
+  if (!(controls.keys.hold_s > 0 && controls.keys.hold_s <= 2) ||
+      !(controls.keys.release_s > 0 && controls.keys.release_s <= controls.keys.hold_s)) {
+    fprintf(stderr, "need 0 < --release <= --hold <= 2 s\n"); return 1;
   }
   if (fabs(controls.speed_mps) > INT32_MAX / 1000.0 || fabs(controls.max_speed_mps) > INT32_MAX / 1000.0 ||
       fabs(controls.yaw_radps) > INT32_MAX / 1000.0) {
@@ -66,7 +75,7 @@ int main(int argc, char **argv)
     snprintf(link.err, sizeof link.err, "stop the current-mode session before keyboard drive"); rc = -1; goto done;
   }
   if (ik_write(&link, IK_ACCEL_RPMPS, (uint32_t)accel_rpmps)) { rc = -1; goto done; }
-  /* Only a stopped drive takes a new model; without ff options the running one is left alone. */
+  /* Only a stopped drive takes a new model (the preset unless --ff-*); --ff-off leaves the running one alone. */
   if (ff.enable) {
     if (drive_ff_write(&link, &ff)) { rc = -1; goto done; }
     ff_written = true;

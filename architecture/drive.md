@@ -143,16 +143,18 @@ values into `drive_parameters.h`.
 On the ground each wheel needs 3.5–6 A before it turns (mat 2026-10-22; free air
 0.1 A) and 0.3–2.2 A to keep rolling. Left to each ESC's stall ramp the wheels break free one at a
 time and the body pivots about the ones still stuck, so the Nucleo sends friction as feed-forward
-from its body-frame model (`friction_ff.c`, mailbox words `ik_drive_ff_*`); the model is off by
-default. Coulomb friction has its own level per axis (strafing in x needs more than driving in y).
+from its body-frame model (`friction_ff.c`, mailbox words `ik_drive_ff_*`). The Nucleo boots with the
+model off; `keyboard_drive` and `move_test` write the mat preset (`DRIVE_FF_PRESET_*` in
+`drive_ops.h`, measured 2026-10-24) unless given `--ff-*` terms (exactly those) or `--ff-off`. With it,
+mat yaw at 2 rad/s tracks at 93-95 % instead of stick-slipping at 83-87 %. Coulomb friction has its own level per axis (strafing in x needs more than driving in y).
 Breakaway boost: while the twist is nonzero and fewer than 2 wheels report >= 30 RPM along their
 targets, all four wheels get the breakaway levels instead, for at most `--ff-breakaway-ms` per
 stuck episode; a robot that sticks again is boosted again. `move_test` and `keyboard_drive` set it
 with `--ff-coulomb-x-n`, `--ff-coulomb-y-n` (N), `--ff-viscous-xy-n-per-mps` (N per m/s),
 `--ff-coulomb-w-nm` (N·m), `--ff-viscous-w-nm-per-radps` (N·m per rad/s), `--ff-breakaway-x-n`,
 `--ff-breakaway-y-n` (N), `--ff-breakaway-w-nm` (N·m), `--ff-breakaway-ms` (1–2000, default 300 when a
-breakaway level is given), `--ff-a-per-nm` (motor A per N·m, required) and `--ff-scale FR,BR,BL,FL`
-(%, 1–200); they write it only while the drive is stopped and switch it off again on exit, and
+breakaway level is given), `--ff-a-per-nm` (motor A per N·m, required with any term), `--ff-scale FR,BR,BL,FL`
+(%, 1–200) and `--ff-off`; they write it only while the drive is stopped and switch it off again on exit, and
 `move_test` records it under `settings.ff` in result.json. `ik_drive_ff_boost` is 1 while the frames
 carry the boost. With the provisional geometry 1 N gives about 0.095 A per wheel in y and 0.15 A in
 x per 10 A/N·m of `--ff-a-per-nm`. `friction_map` measures the floor friction it needs;

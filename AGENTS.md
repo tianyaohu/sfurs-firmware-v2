@@ -56,6 +56,24 @@ are in `architecture/drive.md`, `system-info/hardware.md`, `architecture/can-fwu
   reset, or deletion of branches/worktrees you did not create unless asked.
 - Build outputs, backups and generated payloads stay out of git.
 
+## Cleanup
+
+- Merging a topic branch into `develop_ai` includes deleting it, locally and on
+  `origin`, and removing its worktree (`git worktree remove`, then
+  `git worktree prune`), in the same session. Check first that
+  `git merge-base --is-ancestor <branch> develop_ai` passes and the worktree has
+  no uncommitted changes.
+- An unmerged branch is deleted only when the user says so. Never delete
+  `main`, `develop`, `develop_ai` or `rig-split` (camera-rig history).
+- One worktree per active topic branch; Claude's live under
+  `.claude/worktrees/`. Before ending a session, run `git worktree list` and
+  `git branch --merged develop_ai` and clean up what is yours.
+- Raw hardware data stays outside git, one directory per session:
+  `/home/fh/sfurs_firmware/hw-data/YYYY-MM-DD-topic/` (no loose files at its
+  root); the session's `hardware-test-results/` file names that path. Never
+  delete anything in `hw-data/`, `esc-backups/` or `nucleo-installed/`.
+- Scratch files go in the agent's temp directory, never in the repo.
+
 ## Hardware
 
 Read `system-info/hardware.md` first. In short:

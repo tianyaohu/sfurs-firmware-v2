@@ -184,3 +184,17 @@ Append only; format in design/README.md.
   stall ramp only reacted to the missing torque by raising Iq. TIGERs' Hall-only mode also uses the sector centre.
 - Expected on hardware: the 150 ms gap peak disappears; vx/vy breakaway at lower current; fewer limit hits.
 - Touches: src/esc (hall_angle.c/.h new, drive_app.c), tests (test_hall_angle, drive_app fake HALL fields), docs.
+
+## 2026-10-24  Drive tools send the measured mat friction preset by default; ESC stuck/bleed rules kept  (who: claude, decided with Frank H)
+- Decision: `keyboard_drive` and `move_test` write `DRIVE_FF_PRESET_*` (drive_ops.h) when no `--ff-*` option is
+  given; any `--ff-*` term is a full manual spec as before; `--ff-off` turns the model off. The Nucleo still boots
+  with it off. The ESC speed loop's stuck ramp and over-speed bleed stay as they are.
+- Why: mat yaw at 2 rad/s (50 wheel RPM) limit-cycled: stuck ramp to 1.2-2.3 A, lurch, per-edge bleed halving I
+  to ~0, stuck again every ~0.4 s (the user's 40 degree steps). TIGERs avoids this with command-side Coulomb ff and
+  no such rules. With the measured ff, yaw tracked 93-95 % (83-87 % without), Iq SD 0.16 vs 0.42 A, collapsed 0-4 %
+  vs 31-35 %; vy and vx 0.5 m/s went from 80 % / 63-75 % to 94-98 % / 93-97 %. A 1 kHz recording with ff showed
+  the stuck ramp never fired and the bleed fired 3-5 ticks per wheel on ~0.2 A, so removing the rules would change
+  little with ff on and only weaken runs without it.
+- Expected on hardware: keyboard yaw without stepping; residual strafe curve remains (left/right pairs share the
+  load unevenly, provisional geometry); 2 m/s slip unaffected (acceleration limit, no yaw feedback).
+- Touches: src/tools/lib/drive_ops.[ch], keyboard_drive.c, tests (test_drive_stage, test_drive_cli), architecture/drive.md.

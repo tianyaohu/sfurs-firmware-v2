@@ -16,8 +16,7 @@ static void test_keys_combine_and_expire(void)
   drive_key_press(&keys, 'd', 0.1);
   drive_key_press(&keys, 'q', 0.2);
   vector(&keys, 0.3, 500, 500, 2000);
-  vector(&keys, 0.6, 500, 0, 2000);
-  vector(&keys, 0.7, 0, 0, 2000);
+  vector(&keys, 0.75, 500, 500, 2000); /* q renewed w and d: the chord expires together */
   vector(&keys, 0.8, 0, 0, 0);
   keys = (drive_keys_t){.hold_s = 0.6};
   drive_key_press(&keys, 'w', 0);
@@ -26,7 +25,9 @@ static void test_keys_combine_and_expire(void)
   vector(&keys, 0.3, 500, 500, 2000);
   drive_key_press(&keys, 's', 0.4);
   vector(&keys, 0.5, 500, -500, 2000);
-  vector(&keys, 0.85, 0, -500, 0);
+  vector(&keys, 0.95, 500, -500, 2000);
+  vector(&keys, 1.0, 0, 0, 0);
+  drive_key_press(&keys, 'd', 0.9);
   drive_key_press(&keys, ' ', 0.9);
   vector(&keys, 0.9, 0, 0, 0);
 }
@@ -40,12 +41,53 @@ static void test_opposite_repeat_space_and_unknown(void)
   drive_key_press(&keys, 'e', 1.1);
   vector(&keys, 1.2, -500, -500, -2000);
   drive_key_press(&keys, 's', 1.5);
-  drive_key_press(&keys, '?', 1.6);
-  vector(&keys, 1.8, 0, -500, 0);
-  drive_key_press(&keys, ' ', 1.9);
-  vector(&keys, 2, 0, 0, 0);
-  drive_key_press(&keys, 0, 2);
-  vector(&keys, 2.1, 0, 0, 0);
+  drive_key_press(&keys, '?', 1.6); /* not a drive key: renews nothing */
+  vector(&keys, 1.8, -500, -500, -2000);
+  vector(&keys, 2.15, 0, 0, 0);
+  drive_key_press(&keys, 'w', 2.2);
+  drive_key_press(&keys, ' ', 2.3);
+  vector(&keys, 2.3, 0, 0, 0);
+  drive_key_press(&keys, 0, 2.4);
+  vector(&keys, 2.5, 0, 0, 0);
+}
+
+/* GNOME autorepeat: first repeat 0.5 s after the press, then every 30 ms. */
+static double hold_key(drive_keys_t *k, int key, double from_s, double to_s)
+{
+  drive_key_press(k, key, from_s);
+  double t = from_s + 0.5;
+  for (; t < to_s; t += 0.03) drive_key_press(k, key, t);
+  return t - 0.03; /* the last repeat */
+}
+
+static void test_release_stops_within_release_time(void)
+{
+  drive_keys_t keys = {.hold_s = 0.55, .release_s = 0.1};
+  drive_key_press(&keys, 'w', 0); /* a tap: the terminal cannot tell it from the start of a hold */
+  vector(&keys, 0.5, 0, 500, 0);
+  vector(&keys, 0.56, 0, 0, 0);
+  double last = hold_key(&keys, 'w', 1, 3);
+  vector(&keys, last + 0.09, 0, 500, 0); /* held: 30 ms repeats keep it alive */
+  vector(&keys, last + 0.11, 0, 0, 0);   /* released: stops within release_s */
+  last = hold_key(&keys, 'q', 4, 5);
+  vector(&keys, last + 0.11, 0, 0, 0);
+}
+
+/* Hold W, then add A while W is still held: the terminal now repeats only A. */
+static void test_chord_lasts_while_last_key_repeats(void)
+{
+  drive_keys_t keys = {.hold_s = 0.55, .release_s = 0.1};
+  hold_key(&keys, 'w', 0, 1);
+  drive_key_press(&keys, 'a', 1.0);
+  vector(&keys, 1.4, -500, 500, 0);  /* W bridged while A waits for its first repeat */
+  double last = 1.0;
+  for (double t = 1.5; t < 3.0; t += 0.03) drive_key_press(&keys, 'a', last = t);
+  vector(&keys, last + 0.09, -500, 500, 0); /* forward + left for as long as A is held */
+  vector(&keys, last + 0.11, 0, 0, 0);      /* A released: the whole chord stops */
+  hold_key(&keys, 'w', 4, 5);
+  drive_key_press(&keys, 'd', 5.0);   /* switch side while W is held */
+  vector(&keys, 5.1, 500, 500, 0);
+  vector(&keys, 5.56, 0, 0, 0);       /* D tapped, not held: stops one hold time later */
 }
 
 static void test_quit_disables_and_zeros(void)
@@ -108,9 +150,11 @@ int main(void)
 {
   test_keys_combine_and_expire();
   test_opposite_repeat_space_and_unknown();
+  test_release_stops_within_release_time();
+  test_chord_lasts_while_last_key_repeats();
   test_quit_disables_and_zeros();
   test_speed_limits_and_rounding();
   test_keyboard_log_all_wheels_and_missing();
-  puts("drive keys: 5 test cases passed");
+  puts("drive keys: 7 test cases passed");
   return 0;
 }

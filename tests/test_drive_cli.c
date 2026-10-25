@@ -175,7 +175,8 @@ static void terminal_case(int mode)
   char log_path[256]; snprintf(log_path, sizeof log_path, "%s/keyboard-%d.jsonl", directory, mode);
   FILE *stale = fopen(log_path, "w"); CHECK(stale != NULL); /* a previous run's log is overwritten, not refused */
   fputs("STALE_PREVIOUS_RUN\n", stale); fclose(stale);
-  const char *args[] = {"--elf", FAKE_ELF, "--log", log_path, NULL};
+  /* Mode 2 keeps the drive reported as running; only --ff-off may attach to it (the preset needs a stopped drive). */
+  const char *args[] = {"--elf", FAKE_ELF, "--log", log_path, mode == 2 ? "--ff-off" : NULL, NULL};
   pid_t pid = spawn(KEYBOARD_TOOL, args, slave);
   await_text(log_path, "\"vector\":[0,0,0]");
   CHECK_EQ(write(master, "w", 1), 1);

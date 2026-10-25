@@ -18,9 +18,10 @@ static void interrupt_handler(int signal_number) { interrupted = signal_number; 
 int main(int argc, char **argv)
 {
   const char *elf = IK_DEFAULT_ELF, *sn = IK_DEFAULT_SN, *log_path = NULL;
-  int accel_rpmps = 0;
+  /* Gentler than the Nucleo's 900 RPM/s: at 2 m/s the wheels stay matched instead of slipping (mat, 2026-10-24). */
+  int accel_rpmps = 400;
   drive_ff_args_t ff_args = {0};
-  drive_keyboard_t controls = {.keys = {.hold_s = 0.55, .release_s = 0.1}, .speed_mps = 0.5, .max_speed_mps = 2.5, .yaw_radps = 2};
+  drive_keyboard_t controls = {.keys = {.hold_s = 0.3, .release_s = 0.1}, .speed_mps = 0.5, .max_speed_mps = 2.5, .yaw_radps = 2};
   drive_option options[] = {
     DRIVE_OPT("elf", STRING, &elf), DRIVE_OPT("sn", STRING, &sn),
     DRIVE_OPT("speed", DOUBLE, &controls.speed_mps), DRIVE_OPT("max-speed", DOUBLE, &controls.max_speed_mps),
@@ -31,10 +32,10 @@ int main(int argc, char **argv)
   const size_t n_options = sizeof options / sizeof *options;
   int parsed = drive_parse(argc, argv, options, n_options);
   if (parsed) {
-    if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.55 --release 0.1\n"
-                         "  --accel 0 --log F]\n"
+    if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.3 --release 0.1\n"
+                         "  --accel 400 --log F]\n"
                          "W/S forward/back, A/D left/right, Q/E CCW/CW, SPACE zero, +/- speed, X/ESC quit.\n"
-                         "A tap moves for --hold s (longer than the keyboard's repeat delay); a held key stops\n"
+                         "A tap moves for --hold s, which must exceed the desktop key-repeat delay (250 ms here); a held key stops\n"
                          "--release s after you let go. Keys combine: hold W, add A = diagonal while A is held.\n"
                          "Streams at 50 Hz; Nucleo stops after 0.3 s\n"
                          "without heartbeat, ESCs after 0.1 s without the Nucleo. An existing log file is overwritten.\n"

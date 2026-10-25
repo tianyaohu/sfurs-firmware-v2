@@ -9,7 +9,8 @@
 #define DRIVE_KEYS 4 /**< kp, ki, stall_ramp_ma_per_s, stall_ms: every RAM tunable the tools restore */
 #define DRIVE_MAX_MOVES 20 /**< moves per staged plan */
 
-/** @brief Keyboard state: per axis (x, y, yaw) the held sign and its expiry, s; hold_s is the hold time, s. */
+/** @brief Keyboard state: per axis (x, y, yaw) the held sign and its expiry, s; hold_s is the hold time, s.
+ *  Every drive key renews all active axes, so keys pressed together stay combined while the last one repeats. */
 typedef struct { double hold_s, expiry_s[3]; int sign[3]; } drive_keys_t;
 /** @brief Recorder window summary: samples, trigger index, peak |RPM|. */
 typedef struct {

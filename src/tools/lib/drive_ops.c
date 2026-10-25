@@ -24,7 +24,10 @@ void drive_key_press(drive_keys_t *k, int key, double now_s)
   if (!p) return;
   int index = (int)(p - names), axis = index / 2;
   k->sign[axis] = index == 0 || index == 3 || index == 5 ? -1 : 1;
-  k->expiry_s[axis] = now_s + k->hold_s;
+  /* A terminal repeats only the last key held and never reports releases, so W then A would decay to A alone.
+   * Any drive key keeps every still-active axis alive: a chord lasts while its last key repeats. */
+  for (int a = 0; a < 3; a++)
+    if (a == axis || (k->sign[a] && k->expiry_s[a] > now_s)) k->expiry_s[a] = now_s + k->hold_s;
 }
 
 void drive_key_vector(drive_keys_t *k, double now_s, double speed_mps, double yaw_radps, int32_t out[3])

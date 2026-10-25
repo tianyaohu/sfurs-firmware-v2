@@ -32,7 +32,8 @@ int main(int argc, char **argv)
   if (parsed) {
     if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.6 --accel 0 --log F]\n"
                          "W/S forward/back, A/D left/right, Q/E CCW/CW, SPACE zero, +/- speed, X/ESC quit.\n"
-                         "Axes combine and expire without repeat. Streams at 50 Hz; Nucleo stops after 0.3 s\n"
+                         "Keys combine (hold W, add A: diagonal while A is held); all stop --hold s after the last\n"
+                         "key repeat, or press S/D/SPACE to change. Streams at 50 Hz; Nucleo stops after 0.3 s\n"
                          "without heartbeat, ESCs after 0.1 s without the Nucleo. An existing log file is overwritten.\n"
                          DRIVE_FF_USAGE);
     return parsed < 0;

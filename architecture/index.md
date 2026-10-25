@@ -58,7 +58,7 @@ Programs (one `targets/<tool>.cmake` each):
 |---|---|
 | `esc_update.c` | Install the ESC app over CAN or SWD, per wheel (logic in `lib/flashimg_*.c`) |
 | `esc_tool.c` | ESC setup: status, align, acknowledged CONFIG set/get, capture, spin, pulse, stop, clear |
-| `keyboard_drive.c` | WASD/QE drive; optional Nucleo friction feed-forward (`--ff-*`) |
+| `keyboard_drive.c` | WASD/QE drive, keys held together combine (diagonals); mat friction feed-forward preset by default (`--ff-*`, `--ff-off`) |
 | `move_test.c` | Scripted straight-line moves, logged with monotonic stamps; optional Nucleo friction feed-forward (`--ff-*`) |
 | `tune_ground.c` | Ground friction identification: breakaway and kinetic current per wheel |
 | `friction_map.c` | Guarded floor SPEED out-and-back friction map and CURRENT breakaway ramps (per wheel, or `--body` vx, vy or wz: all four with the body-force current pattern until two turn); result.json |

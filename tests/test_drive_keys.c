@@ -16,8 +16,7 @@ static void test_keys_combine_and_expire(void)
   drive_key_press(&keys, 'd', 0.1);
   drive_key_press(&keys, 'q', 0.2);
   vector(&keys, 0.3, 500, 500, 2000);
-  vector(&keys, 0.6, 500, 0, 2000);
-  vector(&keys, 0.7, 0, 0, 2000);
+  vector(&keys, 0.75, 500, 500, 2000); /* q renewed w and d: the chord expires together */
   vector(&keys, 0.8, 0, 0, 0);
   keys = (drive_keys_t){.hold_s = 0.6};
   drive_key_press(&keys, 'w', 0);
@@ -26,9 +25,28 @@ static void test_keys_combine_and_expire(void)
   vector(&keys, 0.3, 500, 500, 2000);
   drive_key_press(&keys, 's', 0.4);
   vector(&keys, 0.5, 500, -500, 2000);
-  vector(&keys, 0.85, 0, -500, 0);
+  vector(&keys, 0.95, 500, -500, 2000);
+  vector(&keys, 1.0, 0, 0, 0);
+  drive_key_press(&keys, 'd', 0.9);
   drive_key_press(&keys, ' ', 0.9);
   vector(&keys, 0.9, 0, 0, 0);
+}
+
+/* Hold W, then add A: the terminal now repeats only A (about every 33 ms after a 0.5 s delay). */
+static void test_chord_lasts_while_last_key_repeats(void)
+{
+  drive_keys_t keys = {.hold_s = 0.6};
+  drive_key_press(&keys, 'w', 0);
+  for (double t = 0.5; t < 1.0; t += 0.033) drive_key_press(&keys, 'w', t);
+  drive_key_press(&keys, 'a', 1.0);
+  vector(&keys, 1.4, -500, 500, 0);
+  for (double t = 1.5; t < 3.0; t += 0.033) drive_key_press(&keys, 'a', t);
+  vector(&keys, 3.0, -500, 500, 0); /* forward + left: diagonal for as long as A is held */
+  drive_key_press(&keys, 'd', 3.0);  /* switch side without letting go of the chord */
+  vector(&keys, 3.1, 500, 500, 0);
+  vector(&keys, 3.61, 0, 0, 0);       /* released: everything stops one hold time after the last repeat */
+  drive_key_press(&keys, 'a', 4.0);   /* a fresh key after the chord expired starts alone */
+  vector(&keys, 4.1, -500, 0, 0);
 }
 
 static void test_opposite_repeat_space_and_unknown(void)
@@ -40,12 +58,14 @@ static void test_opposite_repeat_space_and_unknown(void)
   drive_key_press(&keys, 'e', 1.1);
   vector(&keys, 1.2, -500, -500, -2000);
   drive_key_press(&keys, 's', 1.5);
-  drive_key_press(&keys, '?', 1.6);
-  vector(&keys, 1.8, 0, -500, 0);
-  drive_key_press(&keys, ' ', 1.9);
-  vector(&keys, 2, 0, 0, 0);
-  drive_key_press(&keys, 0, 2);
-  vector(&keys, 2.1, 0, 0, 0);
+  drive_key_press(&keys, '?', 1.6); /* not a drive key: renews nothing */
+  vector(&keys, 1.8, -500, -500, -2000);
+  vector(&keys, 2.15, 0, 0, 0);
+  drive_key_press(&keys, 'w', 2.2);
+  drive_key_press(&keys, ' ', 2.3);
+  vector(&keys, 2.3, 0, 0, 0);
+  drive_key_press(&keys, 0, 2.4);
+  vector(&keys, 2.5, 0, 0, 0);
 }
 
 static void test_quit_disables_and_zeros(void)
@@ -108,9 +128,10 @@ int main(void)
 {
   test_keys_combine_and_expire();
   test_opposite_repeat_space_and_unknown();
+  test_chord_lasts_while_last_key_repeats();
   test_quit_disables_and_zeros();
   test_speed_limits_and_rounding();
   test_keyboard_log_all_wheels_and_missing();
-  puts("drive keys: 5 test cases passed");
+  puts("drive keys: 6 test cases passed");
   return 0;
 }

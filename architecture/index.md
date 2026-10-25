@@ -91,7 +91,8 @@ these tools only through logs: both sides stamp `CLOCK_MONOTONIC` seconds, and t
 move's start/end window so poses can be joined by time.
 
 Scripts (`scripts/`): `build.sh` (all firmware images into `build/`), `esc_build.sh`, `boot_build.sh`
-(ESC app and bootloader), `test.sh` (host tests, tool build, sensor gtests).
+(ESC app and bootloader), `test.sh` (host tests, tool build, sensor gtests), `flash_nucleo.sh` (back up and program the Nucleo
+with OpenOCD; lab PC or robot Pi).
 
 ### Tests (`tests/`)
 

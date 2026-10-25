@@ -38,6 +38,23 @@ few characters; check the full serial before any write.
   `*-original-20261012.bin` are the boards as received (previous engineer's
   sensorless image, no bootloader).
 
+## Tools on the robot Pi
+
+`ssl-pi` (Pi 4, Debian 13 aarch64) carries the Nucleo's ST-LINK on USB and builds and flashes the Nucleo
+itself; reach it with `ssh fh@100.97.174.87` (Tailscale). Everything is per user, no root:
+
+- ARM GCC 14.2 (Debian packages extracted) in `~/.local/opt/arm-gcc`, wrappers in `~/.local/bin`
+  as on the lab PC, plus `usr/lib/arm-none-eabi/lib -> newlib` so the relocated compiler finds newlib
+  and its spec files. CMake from `~/sfurs-venv/bin`, ninja and OpenOCD 0.12 from Debian.
+- Checkout `~/sfurs-firmware` (no GitLab key: update with a `git bundle` from the PC). `scripts/build.sh`
+  builds without warnings; set `CMAKE_BUILD_PARALLEL_LEVEL=2` and run long jobs under `nohup`, because the
+  Pi dropped off the network during full-load jobs while powered from a PC USB port.
+- Nucleo flash (no STM32CubeProgrammer on aarch64): `scripts/flash_nucleo.sh [--elf F]` backs up the CM7
+  bank to `~/nucleo-backups/` and programs and verifies the ELF with OpenOCD (same probe setup as `ocd.c`;
+  also works on the lab PC). `--dry-run` prints the commands.
+  `esc_update --can` still calls STM32_Programmer_CLI for the Nucleo updater step, so ESC updates run
+  from the lab PC.
+
 ## Safety rules
 
 - **Flashing an ESC over SWD: battery OFF.** Over CAN (`esc_update --can`,

@@ -198,3 +198,15 @@ Append only; format in design/README.md.
 - Expected on hardware: keyboard yaw without stepping; residual strafe curve remains (left/right pairs share the
   load unevenly, provisional geometry); 2 m/s slip unaffected (acceleration limit, no yaw feedback).
 - Touches: src/tools/lib/drive_ops.[ch], keyboard_drive.c, tests (test_drive_stage, test_drive_cli), architecture/drive.md.
+
+## 2026-10-24  skynet link on develop_ai; the phone tracker stays in the rig line  (who: claude, decided with Frank H)
+
+- Decision: `feature/skynet-uart-link` (skynet serial commands → drive mailbox) is merged into `develop_ai` unchanged.
+  The phone → SSL-Vision tracker lives on `feature/rig-skynet` off `rig-split`, not in firmware-v2;
+  `feature/vision-wireless-ssl` and `feature/vision-rig` (rig under `src/tools/rig/`) are superseded by it. The rig reads
+  wheel geometry from a firmware checkout named by `SFURS_FIRMWARE` instead of importing firmware code.
+- Why: the rig was split out on purpose (entry above); the two branches carried the same tracker files, and the old
+  import of the deleted Python `ik_link` broke every rig test. Robot detection stays AprilTag 36h11 (one tag, pose
+  and heading from its corners, works with one phone and no colour tuning); skynet only sees SSL-Vision packets, so the
+  marker type is invisible to it.
+- Touches: src/nucleo/CM7/Core/Src/skynet_link.c, skynet_uart.c, main.c, tests/test_skynet_link*.c, architecture/drive.md.

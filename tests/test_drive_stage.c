@@ -206,10 +206,18 @@ static void test_ff_options_convert_si_to_mailbox_words(void)
 {
   drive_ff_t ff; char err[160];
   char *none[] = {"tool", "--out", "x"};
-  CHECK_EQ(ff_parse(none, 3, &ff, err), 0);
-  CHECK(!ff.enable); CHECK_EQ(ff.coulomb_x_mn, 0); CHECK_EQ(ff.coulomb_y_mn, 0); CHECK_EQ(ff.a_per_nm_milli, 0);
-  CHECK_EQ(ff.breakaway_ms, 0);
+  CHECK_EQ(ff_parse(none, 3, &ff, err), 0); /* nothing given: the measured mat preset */
+  CHECK(ff.enable); CHECK_EQ(ff.a_per_nm_milli, 10000);
+  CHECK_EQ(ff.coulomb_x_mn, 11000); CHECK_EQ(ff.coulomb_y_mn, 9500); CHECK_EQ(ff.coulomb_w_mnm, 350);
+  CHECK_EQ(ff.breakaway_x_mn, 16000); CHECK_EQ(ff.breakaway_y_mn, 16000); CHECK_EQ(ff.breakaway_w_mnm, 1100);
+  CHECK_EQ(ff.breakaway_ms, 1000); CHECK_EQ(ff.viscous_xy_mn_per_mps, 0); CHECK_EQ(ff.viscous_w_mnm_per_radps, 0);
   for (int w = 0; w < 4; w++) CHECK_EQ(ff.scale_pct[w], DRIVE_FF_SCALE_NOMINAL_PCT);
+  char *off[] = {"tool", "--ff-off"};
+  CHECK_EQ(ff_parse(off, 2, &ff, err), 0);
+  CHECK(!ff.enable); CHECK_EQ(ff.coulomb_x_mn, 0); CHECK_EQ(ff.a_per_nm_milli, 0); CHECK_EQ(ff.breakaway_ms, 0);
+  for (int w = 0; w < 4; w++) CHECK_EQ(ff.scale_pct[w], DRIVE_FF_SCALE_NOMINAL_PCT);
+  char *off_and_term[] = {"tool", "--ff-off", "--ff-coulomb-y-n", "3", "--ff-a-per-nm", "35"};
+  err[0] = 0; CHECK_EQ(ff_parse(off_and_term, 6, &ff, err), -1); CHECK(err[0]);
   char *all[] = {"tool", "--ff-coulomb-x-n", "6.5", "--ff-coulomb-y-n", "4.25", "--ff-viscous-xy-n-per-mps=1.5",
                  "--ff-coulomb-w-nm", "0.3", "--ff-viscous-w-nm-per-radps", "0.0126", "--ff-breakaway-x-n", "20",
                  "--ff-breakaway-y-n", "12.5", "--ff-breakaway-w-nm", "0.9", "--ff-breakaway-ms", "250",

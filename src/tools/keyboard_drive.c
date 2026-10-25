@@ -66,7 +66,7 @@ int main(int argc, char **argv)
     snprintf(link.err, sizeof link.err, "stop the current-mode session before keyboard drive"); rc = -1; goto done;
   }
   if (ik_write(&link, IK_ACCEL_RPMPS, (uint32_t)accel_rpmps)) { rc = -1; goto done; }
-  /* Only a stopped drive takes a new model; without ff options the running one is left alone. */
+  /* Only a stopped drive takes a new model (the preset unless --ff-*); --ff-off leaves the running one alone. */
   if (ff.enable) {
     if (drive_ff_write(&link, &ff)) { rc = -1; goto done; }
     ff_written = true;

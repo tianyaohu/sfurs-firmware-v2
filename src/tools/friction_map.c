@@ -8,7 +8,9 @@
  * Both: [--check --elf F --sn SERIAL]. --check performs preflight without motion.
  *
  * Floor/mat, clear space: each listed speed drives out then back for distance/|speed|
- * (m and m/s for vx/vy; radians and rad/s for wz), <=1 m or 1 rad and <=5 s per leg.
+ * (m and m/s for vx/vy; radians and rad/s for wz), <=1 m or 4*pi rad (two turns) and <=5 s per leg.
+ * Speeds up to 2 m/s or 6 rad/s (the Nucleo limit). Yaw spins in place, so its caps follow wheel speed (150+ RPM needs
+ * ~6 rad/s, where the Hall estimate settles), not floor space.
  * Collection uses the measured RPM/Iq replies after the transient and 0.2 s of constant,
  * unslewed reference. Reject <5 samples, sign reversals or speed SD >10% of mean.
  * Fits equal-weight segment means: Iq[mA] = Ic[mA]*sign(RPM) + b[mA/RPM]*RPM.
@@ -40,14 +42,14 @@
 static volatile sig_atomic_t interrupted;
 static void interrupt_handler(int sig) { interrupted = sig; }
 
-static int speeds_parse(const char *text, double speeds[MAX_SPEEDS], size_t *n)
+static int speeds_parse(const char *text, double max_abs, double speeds[MAX_SPEEDS], size_t *n)
 {
   *n = 0;
   bool positive = false, negative = false;
   while (text && *text) {
     char *end; errno = 0;
     double value = strtod(text, &end);
-    if (errno || end == text || !isfinite(value) || fabs(value) < 0.001 || fabs(value) > 2 ||
+    if (errno || end == text || !isfinite(value) || fabs(value) < 0.001 || fabs(value) > max_abs ||
         (*end && *end != ',') || *n == MAX_SPEEDS) return -1;
     speeds[(*n)++] = value;
     positive |= value > 0; negative |= value < 0;
@@ -90,6 +92,11 @@ static void fit_json(FILE *f, friction_fit_t fit)
   fputc('}', f);
 }
 
+#define MAX_LINEAR_LEG_M 1.0
+#define MAX_WZ_LEG_RAD 12.566370614359172 /* 4*pi: two turns */
+#define MAX_LINEAR_SPEED_MPS 2.0
+#define MAX_WZ_SPEED_RADPS 6.0 /* the Nucleo accepts at most IK_DRIVE_MAX_OMEGA_MRADPS (6000), ~150 wheel RPM */
+
 int main(int argc, char **argv)
 {
   const char *out = NULL, *axis = "vy", *speeds_text = "-0.1,-0.2,0.1,0.2", *wheel = "all", *body = NULL;
@@ -124,12 +131,12 @@ int main(int argc, char **argv)
   if (body_axis >= 0 && body_axis < 3 && !body_weights(body_axis, weight)) selected = 15;
   else for (int w = 0; w < 4; w++) weight[w] = selected & (1U << w) ? 1 : 0;
   int a = !strcmp(axis, "vx") ? 0 : !strcmp(axis, "vy") ? 1 : !strcmp(axis, "wz") ? 2 : -1;
-  if (!out || !*out || a < 0 || !selected || (body && (!breakaway || body_axis < 0 || body_axis > 2)) || distance <= 0 || distance > 1 || pause < 0 || pause > 10 ||
+  if (!out || !*out || a < 0 || !selected || (body && (!breakaway || body_axis < 0 || body_axis > 2)) || distance <= 0 || distance > (a == 2 ? MAX_WZ_LEG_RAD : MAX_LINEAR_LEG_M) || pause < 0 || pause > 10 ||
       limits.min_vbus_v < 8 || limits.max_rpm <= 0 || limits.max_rpm > 600 ||
       limits.transient_s < 0 || limits.transient_s > 4 || reps < 1 || reps > MAX_REPS ||
       rate <= 0 || cap <= 0 || cap > ESC_IQMAX_A * 1000 || cap / rate > 5 || motion <= 0 || motion >= limits.max_rpm ||
-      (!breakaway && speeds_parse(speeds_text, speeds, &n_speeds))) {
-    fprintf(stderr, "invalid friction_map arguments: require --out, axis vx/vy/wz, speeds of both signs, distance <=1, Vbus >=8, RPM <=600, cap <=%d, ramp <=5s\n",
+      (!breakaway && speeds_parse(speeds_text, a == 2 ? MAX_WZ_SPEED_RADPS : MAX_LINEAR_SPEED_MPS, speeds, &n_speeds))) {
+    fprintf(stderr, "invalid friction_map arguments: require --out, axis vx/vy/wz, speeds of both signs (|v| <=2 m/s, |wz| <=6 rad/s), distance <=1 m (vx/vy) or 4*pi rad (wz), Vbus >=8, RPM <=600, cap <=%d, ramp <=5s\n",
             ESC_IQMAX_A * 1000);
     return 1;
   }

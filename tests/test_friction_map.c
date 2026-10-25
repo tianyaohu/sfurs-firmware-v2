@@ -31,6 +31,12 @@ int __wrap_friction_speed_move(ik_link_t *l, const int32_t twist[3], double dura
                                const friction_limits_t *limits, friction_point_t out[4])
 {
   static const int reference[] = {-100, 100, -200, 200, 100, -100, 200, -200};
+  if (twist[2] != 0) { /* leg_caps: a yaw leg reached the robot; its numbers are not checked */
+    CHECK_EQ(twist[0], 0); CHECK_EQ(twist[1], 0); CHECK(duration > 0);
+    for (int w = 0; w < 4; w++) out[w] = (friction_point_t){0};
+    moves++;
+    return 0;
+  }
   CHECK(moves < 8); CHECK(duration > 0); CHECK_EQ(limits->min_vbus_v, 11);
   CHECK_EQ(twist[0], 0); CHECK_EQ(twist[2], 0);
   CHECK_EQ(twist[1], reference[moves]);
@@ -146,11 +152,29 @@ static void failures_and_check(void)
   read_report(text, sizeof text); CHECK(strstr(text, "\"error\":\"interrupted; stopping\""));
 }
 
+static int invoke_legs(const char *axis, const char *distance, const char *speeds)
+{
+  char *argv[] = {"friction_map", "--out", directory, "--pause", "0", "--axis", (char *)axis,
+                  "--distance", (char *)distance, (char *)speeds, NULL};
+  return friction_map_main(10, argv);
+}
+
+/* Yaw spins in place: legs up to two turns, so wheels reach a steady speed; linear legs stay <= 1 m. */
+static void leg_caps(void)
+{
+  reset_report(); invoke_legs("wz", "10", "--speeds=-4,-6,4,6"); CHECK(moves > 0); /* accepted: it drove */
+  read_report((char[32768]){0}, 32768);
+  reset_report(); CHECK_EQ(invoke_legs("wz", "13", "--speeds=-4,-6,4,6"), 1); CHECK_EQ(moves, 0);
+  reset_report(); CHECK_EQ(invoke_legs("vx", "1.5", "--speeds=-0.6,-0.9,0.6,0.9"), 1); CHECK_EQ(moves, 0);
+  reset_report(); CHECK_EQ(invoke_legs("vx", "1", "--speeds=-3,3"), 1); CHECK_EQ(moves, 0);
+  reset_report(); CHECK_EQ(invoke_legs("wz", "12", "--speeds=-7,7"), 1); CHECK_EQ(moves, 0);
+}
+
 int main(void)
 {
   CHECK(mkdtemp(directory));
-  speed_report(); breakaway_report(); body_report(); failures_and_check();
+  speed_report(); breakaway_report(); body_report(); failures_and_check(); leg_caps();
   CHECK_EQ(rmdir(directory), 0);
-  puts("friction_map: 4 test groups passed");
+  puts("friction_map: 5 test groups passed");
   return 0;
 }

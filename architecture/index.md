@@ -24,6 +24,8 @@ When you add a file or folder, add a line here in the same commit.
 | `src/nucleo/CM7/Core/Src/main.c` | CubeMX init; our code only in `USER CODE` sections |
 | `src/nucleo/CM7/Core/Src/ik_drive.c` | 10 ms drive loop: read twist mailbox, IK, slew-limit, send protocol v1 CONTROL frames |
 | `src/nucleo/CM7/Core/Src/ik_telemetry.c` | Poll ESC status/diag, keep last reply per wheel for the PC |
+| `src/nucleo/CM7/Core/Src/skynet_link.c` | skynet's serial robot commands (ControlWire records) into the drive mailbox, with link timeout |
+| `src/nucleo/CM7/Core/Src/skynet_uart.c` | USART3 (ST-LINK virtual COM port, 250 kBd) receive interrupt feeding `skynet_link` |
 | `src/nucleo/CM7/Core/Src/fwu_updater.c`, `can_fwu_host.c` | Updater image: push an ESC app over CAN |
 | `src/shared/src/rover_kinematics.c` | Body twist <-> wheel speeds (IK table) |
 | `src/shared/src/motor_protocol.c` | Motor command protocol v1 codec (CONTROL / CONTROL_REPLY, sequence and session rules), used by the Nucleo, the ESCs and the tools |

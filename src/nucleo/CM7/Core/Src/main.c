@@ -25,6 +25,8 @@
 #if NUCLEO_DRIVE
 #include "ik_drive.h"
 #include "ik_telemetry.h"
+#include "skynet_link.h"
+#include "skynet_uart.h"
 #else
 #include "fwu_updater.h"
 #endif
@@ -251,6 +253,7 @@ Error_Handler();
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk; /* cycle counter for now_us() */
   DWT->CYCCNT = 0U;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+  skynet_uart_init();
 #endif
 /* USER CODE END 2 */
 
@@ -270,6 +273,9 @@ Error_Handler();
 #if NUCLEO_DRIVE
     (void)ik_drive_abi; /* keep the debugger-visible ABI word through linker GC */
     /* every pass also keeps the microsecond clock accumulating while the bus is quiet */
+    (void)skynet_link_abi;
+    /* skynet commands land in the mailbox before this pass reads it; B1 acknowledges a link fault */
+    skynet_link_poll(now, HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
     ik_drive_tick(now, now_us(), can_send_len);
     const uint32_t poll_id = ik_telemetry_poll_due(now);
     if (poll_id != 0U) {

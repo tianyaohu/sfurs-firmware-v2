@@ -1,6 +1,7 @@
 # Omni drive
 
-Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
+Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo, or skynet → ST-LINK
+virtual COM port → `skynet_link.c` → the same mailbox → Nucleo
 (`src/nucleo/CM7/Core/Src/ik_drive.c`) → CAN → four ESCs
 (`src/esc/motor_config/Src/drive_app.c` and `motor_cmd.c`, on top of ST MCSDK 6.4.1).
 
@@ -26,6 +27,49 @@ Keyboard → PC (`build/tools/keyboard_drive`) → SWD mailbox → Nucleo
    faults, HOLD; [command-lifecycle.md](command-lifecycle.md)); `motor_speed.c` is the 1 kHz
    speed loop (below); `drive_app.c` runs both every millisecond, hands the q-current to
    MCSDK (`MC_SetCurrentReferenceMotor1`) and replies to status/diag polls.
+
+## skynet serial link
+
+skynet's real-robot output (`ENABLE_SERIAL` build, `ControlWire.cpp`) is one batch per send:
+for every team robot, in ID order 0..N-1, a 7-byte record: CRC-16/CCITT-FALSE of the
+payload, little-endian, then 5 payload bytes (byte 0: ID bits 0-3, dribbler bit 4; byte 1:
+chipper bit 0, kick 1-4; bytes 2-4: forward, left, CCW rotation as int8 with 127 = 6 m/s or
+6 rad/s). There is no frame marker, and after a dropped byte a window spanning two records
+can pass the CRC. `skynet_link.c` therefore applies a command only from a complete batch:
+a contiguous run of valid records with IDs counting up from 0, closed by the next batch's
+ID 0 or by 20 ms of silence on a record boundary, and as long as the previous batch (the
+team size is fixed for a run, so a CRC-valid fragment left by a lost byte does not pass; the
+first batch after a reset only teaches the length). An invalid window, an out-of-order ID, a
+gap inside a record or a UART/ring overrun discards the batch. The UART interrupt stamps
+every byte; bytes and decoded commands older than 50 ms are dropped (`skynet_link_stale`),
+and the 300 ms timeout counts from a command's arrival.
+
+The record whose ID equals `skynet_link_robot_id` (default 0, writable over SWD) becomes the
+mailbox twist: forward → +vy, left → −vx, rotation → ω, clamped to the mailbox limits;
+`ik_drive_enable` is set and the heartbeat bumped, so arming, slew and the 300 ms stop are
+the SWD path's. Resolution is skynet's: 47 mm/s and 0.047 rad/s per step. Dribbler, chipper
+and kick are ignored (no hardware).
+
+The link takes over only an `IK_STOPPED`, released (`ik_drive_enable` 0) drive in speed
+mode: never a current-mode diagnostic or an SWD tool's session (`skynet_link_refused`). While
+it owns the drive it checks, before decoding, that the mailbox still holds what it wrote; any
+other writer gets the drive and `SKYNET_LINK_FAULT_EXTERNAL` keeps the link out until
+acknowledged. After a timeout it keeps ownership until the drive is stopped, so a skynet that
+resumes during the deceleration drives again at once. A drive fault while the link owns the
+drive latches `skynet_link_fault` and stays latched in `ik_drive_fault` (the robot stays
+stopped) whatever skynet does, until the operator acknowledges it after the fault: the
+Nucleo's blue B1 button (20 ms stable released, then 20 ms pressed) or a bump of
+`skynet_link_ack_seq` over SWD; that also sends CLEAR_FAULT to the ESCs.
+
+USART3 on PD8/PD9 is the ST-LINK virtual COM port, so the Pi needs only the Nucleo's USB
+cable: it appears as `/dev/ttyACM*`. skynet must be built with `-DENABLE_SERIAL=ON`; it
+always opens `ttyUSB0` on Linux (`NetMaster::initNetworks` overrides `SKYNET_ROBOT_PORT`),
+so link `/dev/ttyUSB0` to the ST-LINK port. Baud 250000 is skynet's default and fixed here.
+
+skynet itself resends every robot's last command whenever any robot's command changes, and
+its 5 ms send throttle can hold back a halt that follows a move. The link cannot tell a
+stale resent command from a constant one; both need fixing in skynet's `ControlWire`, as does
+its uninitialised `ControlWire::lastCommandTime`, which can stop it sending at all.
 
 ## CAN protocol
 
@@ -64,6 +108,7 @@ STATUS flags: low nibble = last switch-off reason (1 DISABLE, 2 timeout, 3 fault
 | ESC range check | Targets beyond 2976 RPM or 8 A are rejected, never clamped |
 | Nucleo link | A wheel that misses 6 replies in a row (60 ms) is LOST; a LOST or FAULTED wheel stops the robot (DISABLE to all) and latches `ik_drive_fault` until the PC sets enable to 0; `esc_tool clear` clears ESC faults |
 | Nucleo heartbeat | PC silent for 300 ms → decelerate, hold 200 ms, broadcast DISABLE ×3 |
+| skynet link | Commands only from complete, team-length, CRC-valid batches under 50 ms old; none for 300 ms → twist 0, `ik_drive_enable` 0; takes over only an idle released speed-mode drive and yields to any other writer; a fault stays latched until B1 or `skynet_link_ack_seq` |
 | Kinematics | All wheels scaled together so none exceeds 900 RPM (~3 m/s) |
 
 The stall monitor waits 500 ms at high current, so a loaded wheel still builds torque to

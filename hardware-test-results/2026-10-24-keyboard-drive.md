@@ -9,3 +9,8 @@
 - Result, 2.0 m/s (user, no log): left/right unusable; wheels break traction and spin, the body keeps rotating.
 - Final: user quit `keyboard_drive`; battery on. Final ESC state not read: the TIGERs worktree's `esc_tool` (BR CONFIG writes) held the probe afterwards.
 - Data: `/home/fh/sfurs_firmware/hw-data/2026-10-24-keyboard/run1.jsonl`.
+- Friction (same day, mat, user authorized): the TIGERs session had reinstalled its revision on all four ESCs (FR `0D312472`, BR `1E3E0004`, BL `71BEF2AF`, FL `A28AD730`, 56.6 KB) and the Nucleo after the drive; reinstalled `9720d91` again over CAN, CRCs as above, all IDLE, 15.87-16.02 V.
+  - `friction_map --breakaway --body wz|vx|vy` (2 A/s ramp, 4 A cap, 3 reps per sign), current at the moment two wheels turned, per wheel: wz 0.84-1.26 A, vx 2.09-2.62 A, vy 1.30-1.81 A. All 18 trials moved.
+  - `friction_map --axis vx|vy` speed legs: no fit. vx ±0.1/0.2, ±0.3/0.5 and ±0.7/1.0 m/s (1 rep, 0.7 m): every point `speed_not_steady` (SD 15-56 RPM, > 10 % of mean); at 0.7-1.0 m/s wheels ran 65-128 RPM against 146-167 RPM targets with 1.7-4.3 A. vy ±0.7/1.0 (0.7 m): 3 steady points at 175-188 RPM, 0.77-1.17 A; 1.0 m/s legs too short (3 samples). vy ±0.6/0.9 (0.9 m) aborted after the first leg on `BR: unreadable telemetry`; robot left ~0.9 m from start.
+  - After: all four IDLE/stopped, no faults, Vbus 15.82-15.94 V, probe released, battery on.
+  - Data: `/home/fh/sfurs_firmware/hw-data/2026-10-24-friction/` (`brk-*`, `roll-*`, result.json each).

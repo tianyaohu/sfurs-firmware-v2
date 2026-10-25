@@ -20,23 +20,30 @@ int main(int argc, char **argv)
   const char *elf = IK_DEFAULT_ELF, *sn = IK_DEFAULT_SN, *log_path = NULL;
   int accel_rpmps = 0;
   drive_ff_args_t ff_args = {0};
-  drive_keyboard_t controls = {.keys = {.hold_s = 0.6}, .speed_mps = 0.5, .max_speed_mps = 2.5, .yaw_radps = 2};
+  drive_keyboard_t controls = {.keys = {.hold_s = 0.55, .release_s = 0.1}, .speed_mps = 0.5, .max_speed_mps = 2.5, .yaw_radps = 2};
   drive_option options[] = {
     DRIVE_OPT("elf", STRING, &elf), DRIVE_OPT("sn", STRING, &sn),
     DRIVE_OPT("speed", DOUBLE, &controls.speed_mps), DRIVE_OPT("max-speed", DOUBLE, &controls.max_speed_mps),
     DRIVE_OPT("yaw", DOUBLE, &controls.yaw_radps), DRIVE_OPT("hold", DOUBLE, &controls.keys.hold_s),
+    DRIVE_OPT("release", DOUBLE, &controls.keys.release_s),
     DRIVE_OPT("accel", INT, &accel_rpmps), DRIVE_OPT("log", STRING, &log_path), DRIVE_FF_OPTIONS(&ff_args)
   };
   const size_t n_options = sizeof options / sizeof *options;
   int parsed = drive_parse(argc, argv, options, n_options);
   if (parsed) {
-    if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.6 --accel 0 --log F]\n"
+    if (parsed > 0) puts("keyboard_drive [--elf F --sn SERIAL --speed 0.5 --max-speed 2.5 --yaw 2 --hold 0.55 --release 0.1\n"
+                         "  --accel 0 --log F]\n"
                          "W/S forward/back, A/D left/right, Q/E CCW/CW, SPACE zero, +/- speed, X/ESC quit.\n"
-                         "Keys combine (hold W, add A: diagonal while A is held); all stop --hold s after the last\n"
-                         "key repeat, or press S/D/SPACE to change. Streams at 50 Hz; Nucleo stops after 0.3 s\n"
+                         "A tap moves for --hold s (longer than the keyboard's repeat delay); a held key stops\n"
+                         "--release s after you let go. Keys combine: hold W, add A = diagonal while A is held.\n"
+                         "Streams at 50 Hz; Nucleo stops after 0.3 s\n"
                          "without heartbeat, ESCs after 0.1 s without the Nucleo. An existing log file is overwritten.\n"
                          DRIVE_FF_USAGE);
     return parsed < 0;
+  }
+  if (!(controls.keys.hold_s > 0 && controls.keys.hold_s <= 2) ||
+      !(controls.keys.release_s > 0 && controls.keys.release_s <= controls.keys.hold_s)) {
+    fprintf(stderr, "need 0 < --release <= --hold <= 2 s\n"); return 1;
   }
   if (fabs(controls.speed_mps) > INT32_MAX / 1000.0 || fabs(controls.max_speed_mps) > INT32_MAX / 1000.0 ||
       fabs(controls.yaw_radps) > INT32_MAX / 1000.0) {

@@ -9,9 +9,18 @@
 #define DRIVE_KEYS 4 /**< kp, ki, stall_ramp_ma_per_s, stall_ms: every RAM tunable the tools restore */
 #define DRIVE_MAX_MOVES 20 /**< moves per staged plan */
 
-/** @brief Keyboard state: per axis (x, y, yaw) the held sign and its expiry, s; hold_s is the hold time, s.
- *  Every drive key renews all active axes, so keys pressed together stay combined while the last one repeats. */
-typedef struct { double hold_s, expiry_s[3]; int sign[3]; } drive_keys_t;
+/** @brief Keyboard state: per axis (x, y, yaw) the held sign and its expiry, s.
+ *  A terminal reports no releases and repeats only the last key held, after a delay. A fresh key lasts
+ *  hold_s (longer than that delay); once it repeats (same key again within release_s) each repeat extends it
+ *  by release_s only, so letting go stops it about release_s later. Every drive key renews all active axes,
+ *  so keys pressed together stay combined while the last one repeats. */
+typedef struct {
+  double hold_s, release_s; /**< fresh-key hold and repeat-gap release time, s */
+  double expiry_s[3];       /**< per axis: command stops at this time, s */
+  int sign[3];              /**< per axis: -1, 0, +1 */
+  int last_key;             /**< previous drive key, for repeat detection */
+  double last_s;            /**< time of the previous drive key, s */
+} drive_keys_t;
 /** @brief Recorder window summary: samples, trigger index, peak |RPM|. */
 typedef struct {
   int samples, trigger, peak_rpm;

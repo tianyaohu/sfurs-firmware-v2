@@ -23,11 +23,18 @@ void drive_key_press(drive_keys_t *k, int key, double now_s)
   const char *p = key ? strchr(names, tolower((unsigned char)key)) : NULL;
   if (!p) return;
   int index = (int)(p - names), axis = index / 2;
+  const int key_lower = *p;
+  /* Autorepeat (GNOME default: 500 ms delay, then every 30 ms) is the only sign a key is still held. */
+  const bool repeating = key_lower == k->last_key && now_s - k->last_s <= k->release_s;
+  const double until_s = now_s + (repeating ? k->release_s : k->hold_s);
+  k->last_key = key_lower;
+  k->last_s = now_s;
   k->sign[axis] = index == 0 || index == 3 || index == 5 ? -1 : 1;
-  /* A terminal repeats only the last key held and never reports releases, so W then A would decay to A alone.
-   * Any drive key keeps every still-active axis alive: a chord lasts while its last key repeats. */
+  k->expiry_s[axis] = until_s;
+  /* Only the last key held repeats, so W then A would decay to A alone: every still-active axis follows the
+   * newest key (the hold while it waits for its first repeat, then release_s per repeat). */
   for (int a = 0; a < 3; a++)
-    if (a == axis || (k->sign[a] && k->expiry_s[a] > now_s)) k->expiry_s[a] = now_s + k->hold_s;
+    if (a != axis && k->sign[a] && k->expiry_s[a] > now_s) k->expiry_s[a] = until_s;
 }
 
 void drive_key_vector(drive_keys_t *k, double now_s, double speed_mps, double yaw_radps, int32_t out[3])

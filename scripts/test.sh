@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Host kinematics tests, then cross-compile the vendored Nucleo images. No board.
+# Host kinematics tests, then cross-compile the vendored Nucleo and ESC images.
+# No board, probe, or CAN interface.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 echo "host tests (kinematics)"
@@ -7,7 +8,7 @@ cmake -S "$root/tests" -B "$root/build/host" -G Ninja
 cmake --build "$root/build/host"
 ctest --test-dir "$root/build/host" --output-on-failure
 
-echo "cross-compiling Nucleo images (no board)"
+echo "cross-compiling firmware images (no board)"
 tool=$root/src/nucleo/gcc-arm-none-eabi.cmake
 build_one() {
   echo "building $1"
@@ -18,3 +19,4 @@ build_one() {
 }
 build_one "CM7 image" "$root/src/nucleo/CM7" "$root/build/nucleo-cm7"
 build_one "CM4 skeleton" "$root/src/nucleo/CM4" "$root/build/nucleo-cm4"
+build_one "ESC image" "$root/src/esc/motor_config" "$root/build/esc"

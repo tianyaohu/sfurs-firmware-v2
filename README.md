@@ -43,11 +43,13 @@ not apply amp or RPM limits and does not run the ESC command lifecycle.
 It is host-tested and is not linked into either image.
 
 The command-lifecycle slice (`src/shared/inc/motor_cmd.h`,
-`src/shared/src/motor_cmd.c`, `architecture/command-lifecycle.md`) is the
-next host-only step. It arms one wheel, checks the session and the sequence
-window, and records an in-range SPEED or CURRENT setpoint while staying
-READY. `CLEAR_FAULT` is rejected unsupported. It does not start the bridge,
-and it is not linked into either image.
+`src/shared/src/motor_cmd.c`, `architecture/command-lifecycle.md`) arms one
+wheel, checks the session and the sequence window, and records an in-range
+SPEED or CURRENT setpoint. With a host clock sample it disarms 100 ms after
+the last fresh motion. With a host bridge sample it requests start, waits
+for RUN, and latches a fault if that wait exceeds 500 ms. `CLEAR_FAULT` is
+rejected unsupported. The slice does not call the bridge, and it is not
+linked into either image.
 
 The ESC vendor tree is `src/esc/motor_config`: ST MCSDK 6.4.1 and the
 Cube-generated HAL for the B-G431B-ESC1 (STM32G431CBUx). `main` runs
@@ -94,9 +96,9 @@ ESC output: `build/esc/motor_config.elf` (B-G431B-ESC1, flash at
 ## After this
 
 1. The rest of the owned ESC application on this vendor image: the inbox,
-   the watchdog, MCSDK start and stop, the speed loop, and Hall angle.
-   CONFIG belongs with that work. CONTROL_REPLY is packed here, and the
-   host slice fills one, but nothing on the ESC sends one yet. This image
-   does not speak CAN and does not close a speed loop.
+   HOLD and park, the speed loop, and Hall angle. CONFIG belongs with that
+   work. The host slice fills a CONTROL_REPLY and names start, stop, and
+   set-target, but nothing on the ESC calls it yet. This image does not
+   speak CAN and does not close a speed loop.
 2. Optional hardware milestones (for example LD1 on a board), only when
    you ask.

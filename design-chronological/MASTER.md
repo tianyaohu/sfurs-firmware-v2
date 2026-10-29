@@ -92,3 +92,19 @@ Append only.
   word; linking this file into an image.
 - Touches: `src/shared/inc/motor_cmd.h`, `src/shared/src/motor_cmd.c`,
   `tests/test_motor_cmd.c`, `architecture/command-lifecycle.md`.
+
+## 2026-10-29  Command slice adds the watchdog and STARTING  (who: cloud agent)
+
+- Decision: the arming checks stay. When the caller passes `motor_cmd_inputs`,
+  the same module runs the 100 ms command watchdog and READY → STARTING →
+  RUNNING. STARTING without RUN for 500 ms latches FAULT_MCSDK. NULL inputs
+  still judge one frame with the arming checks only. The sample is host
+  data: no HAL and no MCSDK calls.
+- Why: a recorded setpoint could not time out or name a start. Both are
+  pure functions of a timestamp and a bridge sample, and the reply for a
+  fresh motion is built after those rules so STARTING is visible.
+- Rejected: the reference inbox, HOLD, park, Hall loss, and stall rest;
+  rejecting NOT_ALIGNED or BUSY instead of waiting to start; linking this
+  file into an image.
+- Touches: `src/shared/inc/motor_cmd.h`, `src/shared/src/motor_cmd.c`,
+  `tests/test_motor_cmd.c`, `architecture/command-lifecycle.md`.

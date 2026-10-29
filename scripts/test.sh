@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Host tests (kinematics and the motor-frame codec), then cross-compile the
-# vendored Nucleo and ESC images. No board, probe, or CAN interface.
+# Host tests (kinematics, the motor-frame codec, and the command-lifecycle
+# slice), then cross-compile the vendored Nucleo and ESC images. No board,
+# probe, or CAN interface. The lifecycle slice is not linked into an image.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 echo "host tests"

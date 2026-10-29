@@ -42,13 +42,21 @@ byte and classify a sequence; they do not remember a wheel. The codec does
 not apply amp or RPM limits and does not run the ESC command lifecycle.
 It is host-tested and is not linked into either image.
 
+The command-lifecycle slice (`src/shared/inc/motor_cmd.h`,
+`src/shared/src/motor_cmd.c`, `architecture/command-lifecycle.md`) is the
+next host-only step. It arms one wheel, checks the session and the sequence
+window, and records an in-range SPEED or CURRENT setpoint while staying
+READY. `CLEAR_FAULT` is rejected unsupported. It does not start the bridge,
+and it is not linked into either image.
+
 The ESC vendor tree is `src/esc/motor_config`: ST MCSDK 6.4.1 and the
 Cube-generated HAL for the B-G431B-ESC1 (STM32G431CBUx). `main` runs
 that init and returns to an empty loop. The medium-frequency task runs
 from SysTick and the TIM1 break IRQ, which is how MCSDK generated it.
 The image links at `0x08000000` and cross-compiles; it is not a hardware
-test. `drive_app`, `motor_cmd`, `motor_speed`, and `hall_angle` are not
-in the tree, and the link did not need stubs of them. Hall edge counters
+test. `drive_app`, `motor_speed`, and `hall_angle` are not in the tree,
+and the link did not need stubs of them. `motor_cmd` is the host slice
+above and is not part of this image. Hall edge counters
 and the FOC angle and capture hooks those modules used are removed.
 Parameters the generated code still reads stay: current-loop gains
 4000/4400, speed-loop gains 1024/553, `IQMAX_A` 8, nominal current 6 A,
@@ -76,7 +84,7 @@ scripts/test.sh
 ```
 
 Host test binaries: `build/host/test_rover_kinematics`,
-`build/host/test_motor_protocol`.
+`build/host/test_motor_protocol`, `build/host/test_motor_cmd`.
 CM7 output: `build/nucleo-cm7/sfurs_firmware_v2_CM7.elf`.
 CM4 output: `build/nucleo-cm4/sfurs_firmware_v2_CM4.elf` (CubeMX dual-core
 skeleton; the CM4 boot handshake in CM7 `main` stays disabled).
@@ -85,9 +93,10 @@ ESC output: `build/esc/motor_config.elf` (B-G431B-ESC1, flash at
 
 ## After this
 
-1. The owned ESC application (command, speed loop, Hall angle) on this
-   vendor image. CONFIG and the command lifecycle belong with that work.
-   CONTROL_REPLY is packed here; nothing on the ESC sends one yet. This
-   image does not speak CAN and does not close a speed loop.
+1. The rest of the owned ESC application on this vendor image: the inbox,
+   the watchdog, MCSDK start and stop, the speed loop, and Hall angle.
+   CONFIG belongs with that work. CONTROL_REPLY is packed here, and the
+   host slice fills one, but nothing on the ESC sends one yet. This image
+   does not speak CAN and does not close a speed loop.
 2. Optional hardware milestones (for example LD1 on a board), only when
    you ask.

@@ -17,3 +17,25 @@ Append only.
   harness and validation matrix into this change.
 - Touches: `src/shared/inc/rover_kinematics.h`, `src/shared/src/rover_kinematics.c`,
   `tests/test_rover_kinematics.c`, `scripts/test.sh`.
+
+## 2026-10-29  ESC vendor image is MCSDK 6.4.1 without the drive application  (who: cloud agent)
+
+- Decision: vendor the B-G431B-ESC1 MCSDK 6.4.1 project and Cube HAL, and
+  cross-compile one image at `0x08000000` with the same host toolchain as
+  the Nucleo. `main` is the generated init and an empty loop. The
+  medium-frequency task stays in SysTick and the TIM1 break IRQ.
+- Why: the wheel-controller vendor drop has to build on the PC before any
+  owned drive code is written. The reference tree's command, speed, and
+  Hall-angle modules are that owned code, so they are not copied.
+- Stripped: `drive_app`, `motor_cmd`, `motor_speed`, `hall_angle`; the CAN
+  bring-up and boot-entry code in `main`; the FOC angle and capture hooks;
+  Hall `EdgesPos` / `EdgesNeg` and the `HALL_Clear` speed wipe; the
+  compile-time Hall-shift override; stall macros only the speed module
+  read. The generated `MCI_ExecSpeedRamp` of the default target (0 RPM)
+  is restored at the end of FOC init. The link needed no stubs.
+- Kept: the parameter values the generated code reads. Current-loop gains
+  4000/4400, speed-loop gains 1024/553, `IQMAX_A` 8, nominal current 6 A,
+  Hall FIFO depth 6, over-voltage 18 V, `SPEED_UNIT` `U_RPM`.
+- Not in this change: the CAN bootloader, the `0x08004000` link, four
+  wheel builds, and the Motor Control Workbench project files.
+- Touches: `src/esc/motor_config/`, `scripts/test.sh`.

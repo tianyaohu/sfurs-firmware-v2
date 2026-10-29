@@ -56,3 +56,20 @@ Append only.
   image.
 - Touches: `src/shared/inc/motor_protocol.h`, `src/shared/src/motor_protocol.c`,
   `tests/test_motor_protocol.c`, `architecture/protocol.md`, `scripts/test.sh`.
+
+## 2026-10-29  CONTROL_REPLY and the session and sequence helpers  (who: cloud agent)
+
+- Decision: the shared codec also packs CONTROL_REPLY (`0x410` plus one
+  wheel select bit) and exposes `motor_session_next` and `motor_seq_classify`.
+  Reason codes 6-19, 21-22, and 32-36 are named in the header. CONTROL
+  decode still does not return them. Boot session (`prev` 0) steps modulo
+  255, so every nonzero byte is reachable; select-bit entropy is still
+  `1 + select`. A later session steps modulo 254 so it cannot repeat `prev`.
+- Why: both ends need the reply bytes and the two pure rules before either
+  end grows a drive loop. Naming the reason codes now keeps the wire numbers
+  from being reused by accident. The reply id uses bits 10-4 as the base,
+  the same split as CONTROL, because bit 4 is part of `0x410`.
+- Rejected: porting `motor_cmd` (inbox, watchdog, arming, CONFLICT versus
+  DUPLICATE); linking the codec into the Nucleo or ESC image; CONFIG.
+- Touches: `src/shared/inc/motor_protocol.h`, `src/shared/src/motor_protocol.c`,
+  `tests/test_motor_protocol.c`, `architecture/protocol.md`.

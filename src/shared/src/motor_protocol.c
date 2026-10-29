@@ -2,9 +2,9 @@
 
 #include <stddef.h>
 
-/* Session, sequence, and amp/RPM limits are intentionally absent. They depend
- * on ESC state and on that wheel's compiled limits; checking them here would
- * either be a second copy or a wrong one. */
+/* Amp and RPM limits stay out: they are that wheel's compiled limits.
+ * Session and sequence helpers below are pure. They do not store a wheel
+ * and they do not apply a command. */
 
 static int16_t get16(const uint8_t *p)
 {
@@ -229,4 +229,105 @@ enum motor_reason motor_poll_encode(uint32_t command, uint32_t select, uint32_t 
         data[i] = 0u;
     }
     return MOTOR_R_NONE;
+}
+
+/* Nearest step, halves away from zero. Truncating division does that once
+ * the half-step has been added with the sign of the current. */
+static int8_t reply_iq_steps(int16_t iq_ma)
+{
+    int32_t ma = iq_ma;
+    int32_t steps;
+    const int32_t half = MOTOR_REPLY_IQ_STEP_MA / 2;
+
+    ma += (ma >= 0) ? half : -half;
+    steps = ma / MOTOR_REPLY_IQ_STEP_MA;
+    if (steps > 127) {
+        steps = 127;
+    } else if (steps < -127) {
+        steps = -127;
+    }
+    return (int8_t)steps;
+}
+
+enum motor_reason motor_reply_encode(const struct motor_reply *frame, uint32_t select,
+                                     uint32_t *id, uint8_t data[MOTOR_PROTOCOL_DLC])
+{
+    if (frame == NULL || id == NULL || data == NULL) {
+        return MOTOR_R_BAD_LENGTH;
+    }
+    /* A value outside the enum would be truncated into a different meaning. */
+    if (frame->lifecycle > MOTOR_LC_FAULTED || frame->outcome > MOTOR_OUT_DUPLICATE) {
+        return MOTOR_R_RESERVED_NONZERO;
+    }
+    if (!one_wheel(select)) {
+        return MOTOR_R_BAD_SELECT;
+    }
+    *id = MOTOR_CAN_ID_CONTROL_REPLY | select;
+    data[0] = frame->request_seq;
+    data[1] = frame->applied_seq;
+    data[2] = (uint8_t)(frame->lifecycle | (uint8_t)(frame->outcome << 3) |
+                        (frame->first_edge != 0u ? 0x40u : 0u));
+    data[3] = frame->reason;
+    data[4] = frame->session;
+    put16(&data[5], (uint16_t)frame->rpm);
+    data[7] = (uint8_t)reply_iq_steps(frame->iq_ma);
+    return MOTOR_R_NONE;
+}
+
+enum motor_reason motor_reply_decode(uint32_t id, const uint8_t *data, uint32_t dlc,
+                                     struct motor_reply *out)
+{
+    uint8_t lifecycle;
+    uint8_t outcome;
+
+    if (data == NULL || out == NULL || dlc != MOTOR_PROTOCOL_DLC || id > 0x7FFu ||
+        (id & MOTOR_CAN_ID_BASE_MASK) != MOTOR_CAN_ID_CONTROL_REPLY) {
+        return MOTOR_R_BAD_LENGTH;
+    }
+    lifecycle = (uint8_t)(data[2] & 0x07u);
+    outcome = (uint8_t)((data[2] >> 3) & 0x07u);
+    if ((data[2] & 0x80u) != 0u || lifecycle > MOTOR_LC_FAULTED ||
+        outcome > MOTOR_OUT_DUPLICATE) {
+        return MOTOR_R_RESERVED_NONZERO;
+    }
+    out->request_seq = data[0];
+    out->applied_seq = data[1];
+    out->lifecycle = lifecycle;
+    out->outcome = outcome;
+    out->first_edge = (uint8_t)((data[2] & 0x40u) != 0u);
+    out->reason = data[3];
+    out->session = data[4];
+    out->rpm = get16(&data[5]);
+    out->iq_ma = (int16_t)((int)(int8_t)data[7] * MOTOR_REPLY_IQ_STEP_MA);
+    if (!one_wheel(id & MOTOR_SELECT_MASK)) {
+        return MOTOR_R_BAD_SELECT;
+    }
+    return MOTOR_R_NONE;
+}
+
+enum motor_seq_class motor_seq_classify(uint8_t last_seq, uint8_t seq)
+{
+    /* Unsigned distance: narrowing to int8_t is implementation-defined. */
+    uint8_t ahead = (uint8_t)(seq - last_seq);
+
+    if (ahead == 0u) {
+        return MOTOR_SEQ_DUPLICATE;
+    }
+    if (ahead == 128u) {
+        return MOTOR_SEQ_AMBIGUOUS;
+    }
+    if (ahead > 128u) {
+        return MOTOR_SEQ_STALE;
+    }
+    return (ahead <= MOTOR_SEQ_WINDOW) ? MOTOR_SEQ_NEXT : MOTOR_SEQ_JUMP;
+}
+
+uint8_t motor_session_next(uint8_t prev, uint32_t entropy)
+{
+    /* Boot (mod 255) can land on any nonzero byte. A later step uses mod 254
+     * so it skips prev; the leading 1+ is what keeps 0 out. */
+    uint32_t span = (prev == 0u) ? 255u : 254u;
+    uint32_t base = (prev == 0u) ? 0u : (uint32_t)prev;
+
+    return (uint8_t)(1u + (base + (entropy % span)) % 255u);
 }

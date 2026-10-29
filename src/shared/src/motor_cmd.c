@@ -154,8 +154,8 @@ static enum motor_reason on_motion(struct motor_cmd *m, const struct motor_contr
 }
 
 static enum motor_reason on_control(struct motor_cmd *m, const struct motor_control *c,
-                                    uint32_t rx_ms, struct motor_cmd_actions *act,
-                                    uint8_t *outcome)
+                                    uint32_t rx_ms, uint8_t call_session,
+                                    struct motor_cmd_actions *act, uint8_t *outcome)
 {
     *outcome = MOTOR_OUT_REJECTED;
     if (c->mode != MOTOR_MODE_DISABLE) {
@@ -166,7 +166,10 @@ static enum motor_reason on_control(struct motor_cmd *m, const struct motor_cont
         if (m->lifecycle == MOTOR_LC_FAULTED) {
             return (enum motor_reason)m->latched;
         }
-        if (c->session != m->session) {
+        /* call_session is the session at entry. A disarm in this call has
+         * already replaced it, and motor_session_next is pure, so a frame
+         * that repeats the new byte has not read it from a reply. */
+        if (c->session != m->session || m->session != call_session) {
             return MOTOR_R_BAD_SESSION;
         }
         if (m->lifecycle == MOTOR_LC_DISARMED) {
@@ -240,6 +243,7 @@ enum motor_reason motor_cmd_control(struct motor_cmd *m, uint32_t id, const uint
     enum motor_reason structural;
     enum motor_reason reason;
     uint8_t outcome;
+    uint8_t call_session;
     int motion_accepted;
 
     if (act != NULL) {
@@ -256,11 +260,13 @@ enum motor_reason motor_cmd_control(struct motor_cmd *m, uint32_t id, const uint
     if (in != NULL) {
         m->now_ms = in->now_ms;
     }
+    call_session = m->session;
     /* A broadcast DISABLE includes this wheel. Any other foreign select does not. */
     if (structural == MOTOR_R_NONE && (id & m->cfg.select) != m->cfg.select) {
         structural = MOTOR_R_BAD_SELECT;
     }
-    /* Judged at the frame's own receive time, so a deadline frame finds the wheel disarmed. */
+    /* Judged at the frame's own receive time, so a deadline frame finds the wheel disarmed.
+     * call_session stays the pre-disarm value: this frame cannot arm on the new one. */
     if (in != NULL && structural == MOTOR_R_NONE && armed(m->lifecycle) &&
         rx_watch_expired(rx_ms, m->watch_ms)) {
         disarm(m, act);
@@ -274,7 +280,7 @@ enum motor_reason motor_cmd_control(struct motor_cmd *m, uint32_t id, const uint
         reason = MOTOR_R_TIMEOUT;
         outcome = MOTOR_OUT_REJECTED;
     } else {
-        reason = on_control(m, &frame, rx_ms, act, &outcome);
+        reason = on_control(m, &frame, rx_ms, call_session, act, &outcome);
     }
     /* A fresh motion is answered after the start rules so STARTING is visible.
      * ARM, DISABLE, and rejects are answered at the verdict; the watchdog may

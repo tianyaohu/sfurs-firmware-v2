@@ -108,3 +108,20 @@ Append only.
   file into an image.
 - Touches: `src/shared/inc/motor_cmd.h`, `src/shared/src/motor_cmd.c`,
   `tests/test_motor_cmd.c`, `architecture/command-lifecycle.md`.
+
+## 2026-10-29  Timeout session is not usable in the same call  (who: cloud agent)
+
+- Decision: an ARM judged after the receive-time disarm in the same call is
+  held to the session from the start of that call. Guessing
+  `motor_session_next(session, now_ms)` is `BAD_SESSION` and leaves the
+  wheel DISARMED. Motion on that deadline stays `NOT_ARMED`. The published
+  session arms on a later call.
+- Why: the helper is pure, and the disarm runs before the frame is judged.
+  A matching byte would otherwise come back READY without a reply having
+  carried the new session. The reference lifecycle rejects a frame drained
+  in the tick that rotated the session, for the same reason.
+- Rejected: storing a tick session on the state (one call has no inbox);
+  rejecting that motion as `BAD_SESSION` instead of `NOT_ARMED`.
+- Touches: `src/shared/inc/motor_cmd.h`, `src/shared/src/motor_cmd.c`,
+  `tests/test_motor_cmd.c`, `architecture/command-lifecycle.md`,
+  `architecture/index.md`.

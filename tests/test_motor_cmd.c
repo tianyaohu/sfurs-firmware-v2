@@ -872,6 +872,80 @@ static void test_start_timeout(uint32_t select)
     expect_eq("run in time stop", act.stop, 0);
 }
 
+/* A frame in the call that rotates the session cannot arm on the new byte. */
+static void test_deadline_session(uint32_t select)
+{
+    struct motor_cmd m;
+    struct motor_reply r;
+    struct motor_control c;
+    struct motor_cmd_inputs in;
+    struct motor_cmd_actions act;
+    uint8_t session;
+    uint8_t predicted;
+    uint8_t seq;
+
+    boot(&m, select, 0);
+    session = m.session;
+    arm_at(&m, select, 0, &r);
+    in = kin(0, MOTOR_CMD_MC_IDLE, 1, 0);
+    c = ctrl(MOTOR_MODE_SPEED, 0, 25, 0, 2, session);
+    expect_eq("dl setup", submit_at(&m, &c, select, 0, &in, &act, &r), MOTOR_R_STARTING);
+    seq = m.last_seq;
+
+    in = kin(MOTOR_WATCHDOG_MS, MOTOR_CMD_MC_STARTING, 1, 0);
+    predicted = motor_session_next(session, MOTOR_WATCHDOG_MS);
+    c = ctrl(MOTOR_MODE_DISABLE, MOTOR_FLAG_ARM, 0, 0, 9, predicted);
+    expect_eq("guess arm",
+              submit_at(&m, &c, select, MOTOR_WATCHDOG_MS, &in, &act, &r), MOTOR_R_BAD_SESSION);
+    expect_reply("guess arm", &r, 9, 0, MOTOR_LC_DISARMED, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SESSION,
+                 predicted);
+    expect_eq("guess lc", m.lifecycle, MOTOR_LC_DISARMED);
+    expect_eq("guess sess", m.session, predicted);
+    expect_eq("guess seq", m.last_seq, seq);
+    expect_eq("guess sp", m.setpoint, 0);
+    expect_eq("guess why", m.disarm_reason, MOTOR_R_TIMEOUT);
+    expect_eq("guess stop", act.stop, 1);
+    expect_eq("guess start", act.start, 0);
+    expect_eq("guess tgt", act.set_target, 0);
+
+    /* The session in that reply is usable on the next call. */
+    c = ctrl(MOTOR_MODE_DISABLE, MOTOR_FLAG_ARM, 0, 0, 10, predicted);
+    expect_eq("known arm",
+              submit_at(&m, &c, select, MOTOR_WATCHDOG_MS, &in, &act, &r), MOTOR_R_NONE);
+    expect_eq("known lc", m.lifecycle, MOTOR_LC_READY);
+    expect_eq("known sess", m.session, predicted);
+    expect_eq("known why", m.disarm_reason, 0);
+    expect_eq("known stop", act.stop, 0);
+
+    boot(&m, select, 0);
+    session = m.session;
+    arm_at(&m, select, 0, &r);
+    in = kin(MOTOR_WATCHDOG_MS, MOTOR_CMD_MC_IDLE, 1, 0);
+    c = ctrl(MOTOR_MODE_DISABLE, MOTOR_FLAG_ARM, 0, 0, 4, session);
+    expect_eq("old arm",
+              submit_at(&m, &c, select, MOTOR_WATCHDOG_MS, &in, &act, &r), MOTOR_R_BAD_SESSION);
+    expect_reply("old arm", &r, 4, 0, MOTOR_LC_DISARMED, MOTOR_OUT_REJECTED, MOTOR_R_BAD_SESSION,
+                 m.session);
+    expect_eq("old arm lc", m.lifecycle, MOTOR_LC_DISARMED);
+    expect_eq("old arm stop", act.stop, 0);
+    expect_eq("old arm why", m.disarm_reason, MOTOR_R_TIMEOUT);
+    expect_eq("old arm sess", m.session, (int)motor_session_next(session, MOTOR_WATCHDOG_MS));
+
+    boot(&m, select, 0);
+    session = m.session;
+    arm_at(&m, select, 0, &r);
+    predicted = motor_session_next(session, MOTOR_WATCHDOG_MS);
+    in = kin(MOTOR_WATCHDOG_MS, MOTOR_CMD_MC_IDLE, 1, 0);
+    c = ctrl(MOTOR_MODE_SPEED, 0, 12, 0, 3, predicted);
+    expect_eq("guess motion",
+              submit_at(&m, &c, select, MOTOR_WATCHDOG_MS, &in, &act, &r), MOTOR_R_NOT_ARMED);
+    expect_eq("guess motion lc", m.lifecycle, MOTOR_LC_DISARMED);
+    expect_eq("guess motion sp", m.setpoint, 0);
+    expect_eq("guess motion start", act.start, 0);
+    expect_reply("guess motion", &r, 3, 0, MOTOR_LC_DISARMED, MOTOR_OUT_REJECTED, MOTOR_R_NOT_ARMED,
+                 predicted);
+}
+
 int main(void)
 {
     unsigned i;
@@ -892,6 +966,9 @@ int main(void)
         test_late_motion(sampled[i]);
         test_start_run(sampled[i]);
         test_start_timeout(sampled[i]);
+    }
+    for (i = 0; i < 4u; ++i) {
+        test_deadline_session(k_wheel[i]);
     }
     if (g_failures != 0) {
         fprintf(stderr, "%d failure(s)\n", g_failures);

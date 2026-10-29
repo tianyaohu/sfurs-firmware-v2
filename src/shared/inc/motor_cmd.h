@@ -109,7 +109,10 @@ void motor_cmd_init(struct motor_cmd *m, const struct motor_cmd_cfg *cfg, uint32
  * those rules, so the reply can already say STARTING. ARM, DISABLE, and
  * rejects are answered at the verdict; the watchdog may still move the
  * state afterwards, which is how a late ARM is applied and then disarms.
- * NULL @p in does not sample, so an accepted motion stays READY and is APPLIED.
+ * A receive-time disarm rotates the session before ARM is judged. That ARM
+ * is held to the session from the start of the call, so it cannot arm on
+ * the session this call just published. NULL @p in does not sample, so an
+ * accepted motion stays READY and is APPLIED.
  *
  * ::MOTOR_R_NONE means the reply outcome is APPLIED or DUPLICATE.
  * ::MOTOR_R_STARTING means INHIBITED: the motion was recorded and the wheel

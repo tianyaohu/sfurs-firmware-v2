@@ -34,8 +34,11 @@ On a sampled `motor_cmd_control`, and on `motor_cmd_tick`, in this order:
 
 1. If armed (READY, STARTING, or RUNNING) and `rx_ms - watch_ms >= 100`
    (signed), disarm before the frame is judged. A motion timestamped on
-   that deadline is then `NOT_ARMED`. The signed difference is so a frame
-   older than the last command is not treated as an expiry.
+   that deadline is then `NOT_ARMED`. An ARM in that same call is held to
+   the session from before the disarm. The new session is `BAD_SESSION`
+   until a later call: `motor_session_next` is pure in `(session, now_ms)`,
+   so the byte can be guessed without reading a reply. The signed difference
+   is so a frame older than the last command is not treated as an expiry.
 2. A motion frame with age `now_ms - rx_ms >= 100` is `REJECTED(TIMEOUT)`
    and is not applied. It does not refresh `watch_ms`. DISABLE and ARM are
    not expired by age. The TIMEOUT reply is the lifecycle at that verdict.
@@ -95,7 +98,9 @@ restore the setpoint.
 ARM (`DISABLE` + `ARM`):
 
 - FAULTED → `REJECTED` with `latched`, before the session is checked.
-- Wrong session → `BAD_SESSION`, state unchanged.
+- Wrong session → `BAD_SESSION`, and the ARM changes nothing. A session
+  rotated earlier in this call by the receive-time disarm counts as wrong,
+  including when the frame repeats that new session.
 - DISARMED → READY, `last_seq` is this frame's sequence, `watch_ms` is
   `rx_ms`, `disarm_reason` clears, `APPLIED`.
 - Already armed → stay in that state, re-baseline `last_seq`, forget the

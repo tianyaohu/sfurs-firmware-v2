@@ -15,3 +15,11 @@ target_compile_options(test_rover_kinematics PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(test_rover_kinematics PRIVATE m)
 add_test(NAME rover_kinematics COMMAND test_rover_kinematics)
+
+add_executable(test_motor_protocol
+    test_motor_protocol.c
+    ../src/shared/src/motor_protocol.c)
+target_include_directories(test_motor_protocol PRIVATE ../src/shared/inc)
+target_compile_options(test_motor_protocol PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME motor_protocol COMMAND test_motor_protocol)

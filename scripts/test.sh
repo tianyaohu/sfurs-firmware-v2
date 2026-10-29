@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# No host tests yet. Cross-compile the vendored Nucleo images. No board.
+# Host kinematics tests, then cross-compile the vendored Nucleo images. No board.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-echo "no host tests yet; cross-compiling Nucleo images (no board)"
+echo "host tests (kinematics)"
+cmake -S "$root/tests" -B "$root/build/host" -G Ninja
+cmake --build "$root/build/host"
+ctest --test-dir "$root/build/host" --output-on-failure
+
+echo "cross-compiling Nucleo images (no board)"
 tool=$root/src/nucleo/gcc-arm-none-eabi.cmake
 build_one() {
   echo "building $1"

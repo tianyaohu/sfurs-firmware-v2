@@ -192,9 +192,8 @@ outcome APPLIED, first Hall edge seen, session `0x3C`, measured 118 RPM and
 
 ## Not in this codec
 
-CONFIG, and the ESC command lifecycle (`motor_cmd`: arming, the inbox, the
-watchdog, applying a setpoint, choosing CONFLICT over DUPLICATE). Those are
-what would return `OUT_OF_RANGE`, `NOT_ARMED`, `BAD_SESSION`, `STALE`,
-`SEQ_AMBIGUOUS`, `SEQ_JUMP`, and `CONFLICT` for a CONTROL frame. The helpers
-above only compute the next session byte and the sequence class. Nothing
-here is linked into the Nucleo or ESC image.
+CONFIG. Arming, the session check, CONFLICT versus DUPLICATE, and the
+setpoint limit live in `motor_cmd` ([command-lifecycle.md](command-lifecycle.md)),
+which calls these helpers and is not linked into an image either. The inbox,
+the watchdog, and STARTING/RUNNING are not in that module yet. Nothing here
+is linked into the Nucleo or ESC image.

@@ -23,3 +23,12 @@ target_include_directories(test_motor_protocol PRIVATE ../src/shared/inc)
 target_compile_options(test_motor_protocol PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
 add_test(NAME motor_protocol COMMAND test_motor_protocol)
+
+add_executable(test_motor_cmd
+    test_motor_cmd.c
+    ../src/shared/src/motor_cmd.c
+    ../src/shared/src/motor_protocol.c)
+target_include_directories(test_motor_cmd PRIVATE ../src/shared/inc)
+target_compile_options(test_motor_cmd PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME motor_cmd COMMAND test_motor_cmd)

@@ -73,3 +73,22 @@ Append only.
   DUPLICATE); linking the codec into the Nucleo or ESC image; CONFIG.
 - Touches: `src/shared/inc/motor_protocol.h`, `src/shared/src/motor_protocol.c`,
   `tests/test_motor_protocol.c`, `architecture/protocol.md`.
+
+## 2026-10-29  Command slice arms and records a setpoint  (who: cloud agent)
+
+- Decision: host-only `motor_cmd` handles one CONTROL for one wheel. Init is
+  DISARMED and the session is `motor_session_next(0, entropy)`. ARM moves to
+  READY. Motion that passes the session, the sequence window, and the rpm/mA
+  limits is stored and answered APPLIED while the lifecycle stays READY.
+  `CLEAR_FAULT` is REJECTED(UNSUPPORTED). This slice does not enter FAULTED;
+  if a caller sets the latch, ARM answers with that reason before it checks
+  the session. Plain DISABLE clears the recorded setpoint and does not change
+  the lifecycle, because nothing here turns the bridge on.
+- Why: the codec already names the reply and the sequence classes. The next
+  checkable piece is those checks plus arming. Staying in READY keeps the
+  applied setpoint visible to a host test, with no plant model and no MCSDK.
+- Rejected: porting the reference `motor_cmd` (inbox, watchdog, HOLD, park,
+  MCSDK start timeout, stall rest); a CLEAR_FAULT path that invents a fault
+  word; linking this file into an image.
+- Touches: `src/shared/inc/motor_cmd.h`, `src/shared/src/motor_cmd.c`,
+  `tests/test_motor_cmd.c`, `architecture/command-lifecycle.md`.

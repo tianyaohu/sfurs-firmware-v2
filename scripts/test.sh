@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Host kinematics tests, then cross-compile the vendored Nucleo and ESC images.
-# No board, probe, or CAN interface.
+# Host tests (kinematics and the motor-frame codec), then cross-compile the
+# vendored Nucleo and ESC images. No board, probe, or CAN interface.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-echo "host tests (kinematics)"
+echo "host tests"
 cmake -S "$root/tests" -B "$root/build/host" -G Ninja
 cmake --build "$root/build/host"
 ctest --test-dir "$root/build/host" --output-on-failure

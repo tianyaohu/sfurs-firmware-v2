@@ -26,6 +26,19 @@ A twist that would exceed 900 RPM on any wheel is scaled on all four
 together. The module is host-tested and is not linked into the CM7 image
 yet.
 
+The frame codec (`src/shared/inc/motor_protocol.h`,
+`src/shared/src/motor_protocol.c`, wire format in
+`architecture/protocol.md`) encodes and decodes CONTROL v1 and the
+STATUS and DIAG polls and replies. CONTROL is 8 bytes: version and mode
+(DISABLE, SPEED, or CURRENT), flags, an int16 setpoint, an int16
+feed-forward, a sequence, and a session. STATUS carries RPM, q-axis
+current in MCSDK counts (544 per ampere), the MCSDK state, and flags.
+DIAG carries bus centivolts, the fault word, Hall shift in electrical
+degrees, the align result, and I²t percent. The codec enforces the
+CONTROL wire rules, including which wheels a frame may name. It does
+not apply amp or RPM limits and does not track session or sequence.
+It is host-tested and is not linked into either image.
+
 The ESC vendor tree is `src/esc/motor_config`: ST MCSDK 6.4.1 and the
 Cube-generated HAL for the B-G431B-ESC1 (STM32G431CBUx). `main` runs
 that init and returns to an empty loop. The medium-frequency task runs
@@ -49,7 +62,7 @@ headers. `LICENSE` at the repo root is MIT for code we add.
 
 ## Build
 
-`scripts/test.sh` runs the host CTest for kinematics, then cross-compiles
+`scripts/test.sh` runs the host CTests, then cross-compiles
 the Nucleo images and the ESC image with `arm-none-eabi-gcc`, CMake, and
 Ninja. GitHub Actions installs that toolchain on `ubuntu-latest` and runs
 the script. No further compiler, pack, or MCSDK tool is required. The
@@ -59,7 +72,8 @@ runner has no robot attached.
 scripts/test.sh
 ```
 
-Host test binary: `build/host/test_rover_kinematics`.
+Host test binaries: `build/host/test_rover_kinematics`,
+`build/host/test_motor_protocol`.
 CM7 output: `build/nucleo-cm7/sfurs_firmware_v2_CM7.elf`.
 CM4 output: `build/nucleo-cm4/sfurs_firmware_v2_CM4.elf` (CubeMX dual-core
 skeleton; the CM4 boot handshake in CM7 `main` stays disabled).
@@ -68,10 +82,8 @@ ESC output: `build/esc/motor_config.elf` (B-G431B-ESC1, flash at
 
 ## After this
 
-1. Protocol codecs, with host tests. Those pull requests do not need a
-   Nucleo or an ESC attached.
-2. The owned ESC application (command, speed loop, Hall angle) on this
-   vendor image. This image does not speak CAN and does not close a
-   speed loop.
-3. Optional hardware milestones (for example LD1 on a board), only when
+1. The owned ESC application (command, speed loop, Hall angle) on this
+   vendor image. CONTROL_REPLY and CONFIG belong with that work. This
+   image does not speak CAN and does not close a speed loop.
+2. Optional hardware milestones (for example LD1 on a board), only when
    you ask.

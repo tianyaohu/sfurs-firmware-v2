@@ -39,3 +39,20 @@ Append only.
 - Not in this change: the CAN bootloader, the `0x08004000` link, four
   wheel builds, and the Motor Control Workbench project files.
 - Touches: `src/esc/motor_config/`, `scripts/test.sh`.
+
+## 2026-10-29  Frame codec is CONTROL, STATUS, and DIAG  (who: cloud agent)
+
+- Decision: one shared codec encodes and decodes CONTROL v1 and the STATUS
+  and DIAG polls and replies. CONTROL structural checks stop at the wire
+  (version, mode, flags, unused fields, which wheels a frame may name).
+  Reason `BAD_LENGTH` stays 20 so codes 6-19 remain free for the ESC's
+  range, session, and sequence checks. Those checks are not in this codec.
+- Why: both ends of the bus have to agree on the bytes before either end
+  grows a drive loop. STATUS and DIAG are the telemetry frames already
+  fixed by the old service layout; they are a different id scheme from
+  CONTROL, and they belong in the same codec so there is still one packer.
+- Rejected: copying the reference codec's CONFIG, CONTROL_REPLY, session
+  stepper, and sequence window; linking this file into the Nucleo or ESC
+  image.
+- Touches: `src/shared/inc/motor_protocol.h`, `src/shared/src/motor_protocol.c`,
+  `tests/test_motor_protocol.c`, `architecture/protocol.md`, `scripts/test.sh`.

@@ -28,15 +28,18 @@ yet.
 
 The frame codec (`src/shared/inc/motor_protocol.h`,
 `src/shared/src/motor_protocol.c`, wire format in
-`architecture/protocol.md`) encodes and decodes CONTROL v1 and the
-STATUS and DIAG polls and replies. CONTROL is 8 bytes: version and mode
-(DISABLE, SPEED, or CURRENT), flags, an int16 setpoint, an int16
-feed-forward, a sequence, and a session. STATUS carries RPM, q-axis
-current in MCSDK counts (544 per ampere), the MCSDK state, and flags.
-DIAG carries bus centivolts, the fault word, Hall shift in electrical
-degrees, the align result, and I²t percent. The codec enforces the
-CONTROL wire rules, including which wheels a frame may name. It does
-not apply amp or RPM limits and does not track session or sequence.
+`architecture/protocol.md`) encodes and decodes CONTROL v1, CONTROL_REPLY,
+and the STATUS and DIAG polls and replies. CONTROL is 8 bytes: version and
+mode (DISABLE, SPEED, or CURRENT), flags, an int16 setpoint, an int16
+feed-forward, a sequence, and a session. CONTROL_REPLY is 8 bytes from one
+wheel: the sequences, lifecycle and outcome, the reason byte, measured RPM,
+and q-axis current in 50 mA steps. STATUS carries RPM, q-axis current in
+MCSDK counts (544 per ampere), the MCSDK state, and flags. DIAG carries bus
+centivolts, the fault word, Hall shift in electrical degrees, the align
+result, and I²t percent. The codec enforces the CONTROL wire rules,
+including which wheels a frame may name. Pure helpers pick the next session
+byte and classify a sequence; they do not remember a wheel. The codec does
+not apply amp or RPM limits and does not run the ESC command lifecycle.
 It is host-tested and is not linked into either image.
 
 The ESC vendor tree is `src/esc/motor_config`: ST MCSDK 6.4.1 and the
@@ -83,7 +86,8 @@ ESC output: `build/esc/motor_config.elf` (B-G431B-ESC1, flash at
 ## After this
 
 1. The owned ESC application (command, speed loop, Hall angle) on this
-   vendor image. CONTROL_REPLY and CONFIG belong with that work. This
+   vendor image. CONFIG and the command lifecycle belong with that work.
+   CONTROL_REPLY is packed here; nothing on the ESC sends one yet. This
    image does not speak CAN and does not close a speed loop.
 2. Optional hardware milestones (for example LD1 on a board), only when
    you ask.

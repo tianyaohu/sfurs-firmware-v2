@@ -486,19 +486,464 @@ static void test_rejects(void)
                   MOTOR_R_BAD_LENGTH);
 }
 
+/* CONTROL_REPLY, FR. Seq 5 applied, RUNNING, first Hall edge, session 0x3C,
+ * 118 RPM, 1.25 A. Id 0x411 = 0x410 | FR.
+ *   byte 0  request seq 5
+ *   byte 1  applied seq 5
+ *   byte 2  0x43 = RUNNING (3) | APPLIED (0) | first_edge
+ *   byte 3  reason NONE
+ *   byte 4  session 0x3C
+ *   bytes 5-6  0x0076 = 118 RPM
+ *   byte 7  0x19 = 25 steps of 50 mA = 1250 mA
+ *
+ * Negative twin: -118 RPM (0xFF8A), -1250 mA (step -25 = 0xE7).
+ */
+static const uint8_t k_reply_118[MOTOR_PROTOCOL_DLC] = {
+    0x05, 0x05, 0x43, 0x00, 0x3C, 0x76, 0x00, 0x19
+};
+static const uint8_t k_reply_neg[MOTOR_PROTOCOL_DLC] = {
+    0x05, 0x05, 0x43, 0x00, 0x3C, 0x8A, 0xFF, 0xE7
+};
+
+static int reply_match(const struct motor_reply *got, const struct motor_reply *want)
+{
+    return got->request_seq == want->request_seq && got->applied_seq == want->applied_seq &&
+           got->lifecycle == want->lifecycle && got->outcome == want->outcome &&
+           got->first_edge == want->first_edge && got->reason == want->reason &&
+           got->session == want->session && got->rpm == want->rpm && got->iq_ma == want->iq_ma;
+}
+
+static int struct_untouched(const void *p, unsigned n)
+{
+    unsigned i;
+    const uint8_t *b = p;
+
+    for (i = 0; i < n; ++i) {
+        if (b[i] != 0x5A) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void test_reason_numbers(void)
+{
+    /* The lifecycle is not implemented here. The numbers still have to match
+     * the wire table, and BAD_LENGTH stays 20. */
+    if (MOTOR_R_OUT_OF_RANGE != 6 || MOTOR_R_NOT_ARMED != 7 || MOTOR_R_BAD_SESSION != 8 ||
+        MOTOR_R_STALE != 9 || MOTOR_R_SEQ_AMBIGUOUS != 10 || MOTOR_R_SEQ_JUMP != 11 ||
+        MOTOR_R_NOT_ALIGNED != 12 || MOTOR_R_BUSY != 13 || MOTOR_R_MODE_CHANGE != 14 ||
+        MOTOR_R_NOT_IDLE != 15 || MOTOR_R_LIMITED != 16 || MOTOR_R_STARTING != 17 ||
+        MOTOR_R_FF_UNUSED != 18 || MOTOR_R_CONFLICT != 19 || MOTOR_R_BAD_LENGTH != 20 ||
+        MOTOR_R_UNSUPPORTED != 21 || MOTOR_R_STALLED != 22 || MOTOR_R_FAULT_MCSDK != 32 ||
+        MOTOR_R_FAULT_STALL != 33 || MOTOR_R_FAULT_HALL_LOST != 34 || MOTOR_R_TIMEOUT != 35 ||
+        MOTOR_R_LIFECYCLE_OVERFLOW != 36 || MOTOR_SEQ_WINDOW != 16u ||
+        MOTOR_REPLY_IQ_STEP_MA != 50 || (int)MOTOR_LC_RUNNING != 3 ||
+        (int)MOTOR_OUT_DUPLICATE != 4) {
+        fail("reason numbers", "wire codes drifted");
+    }
+}
+
+static void test_golden_reply(void)
+{
+    struct motor_reply in = {
+        .request_seq = 5,
+        .applied_seq = 5,
+        .lifecycle = MOTOR_LC_RUNNING,
+        .outcome = MOTOR_OUT_APPLIED,
+        .first_edge = 1,
+        .reason = MOTOR_R_NONE,
+        .session = 0x3C,
+        .rpm = 118,
+        .iq_ma = 1250
+    };
+    struct motor_reply neg = in;
+    struct motor_reply out;
+    uint8_t data[MOTOR_PROTOCOL_DLC];
+    uint32_t id = 0;
+
+    if (25 * MOTOR_REPLY_IQ_STEP_MA != 1250) {
+        fail("golden reply", "1.25 A is not 25 steps");
+    }
+    memset(&out, 0, sizeof out);
+    expect_reason("golden reply encode",
+                  motor_reply_encode(&in, MOTOR_SELECT_FR, &id, data), MOTOR_R_NONE);
+    if (id != 0x411u || id != (MOTOR_CAN_ID_CONTROL_REPLY | MOTOR_SELECT_FR)) {
+        fprintf(stderr, "FAIL golden reply id: %03X\n", id);
+        g_failures++;
+    }
+    expect_bytes("golden reply", data, k_reply_118, MOTOR_PROTOCOL_DLC);
+    expect_reason("golden reply decode",
+                  motor_reply_decode(0x411u, k_reply_118, MOTOR_PROTOCOL_DLC, &out),
+                  MOTOR_R_NONE);
+    if (!reply_match(&out, &in)) {
+        fail("golden reply decode", "fields");
+    }
+
+    neg.rpm = -118;
+    neg.iq_ma = -1250;
+    expect_reason("negative reply encode",
+                  motor_reply_encode(&neg, MOTOR_SELECT_FR, &id, data), MOTOR_R_NONE);
+    expect_bytes("negative reply", data, k_reply_neg, MOTOR_PROTOCOL_DLC);
+    expect_reason("negative reply decode",
+                  motor_reply_decode(id, k_reply_neg, MOTOR_PROTOCOL_DLC, &out),
+                  MOTOR_R_NONE);
+    if (!reply_match(&out, &neg)) {
+        fail("negative reply decode", "fields");
+    }
+}
+
+static void test_reply_each_wheel(void)
+{
+    int w;
+    int life;
+    int outcome;
+    int edge;
+
+    for (w = 0; w < 4; ++w) {
+        struct motor_reply in = {
+            .request_seq = (uint8_t)(9 + w),
+            .applied_seq = (uint8_t)(3 + w),
+            .lifecycle = MOTOR_LC_HOLD,
+            .outcome = MOTOR_OUT_INHIBITED,
+            .first_edge = 0,
+            .reason = MOTOR_R_LIMITED,
+            .session = (uint8_t)(1u + k_wheel[w]),
+            .rpm = (int16_t)(-40 * (w + 1)),
+            .iq_ma = (int16_t)((w % 2 == 0 ? 1 : -1) * 500)
+        };
+        struct motor_reply out;
+        uint8_t data[MOTOR_PROTOCOL_DLC];
+        uint32_t id = 0;
+        char name[32];
+
+        snprintf(name, sizeof name, "reply %s", k_wheel_name[w]);
+        expect_reason(name, motor_reply_encode(&in, k_wheel[w], &id, data), MOTOR_R_NONE);
+        expect_reason(name, motor_reply_decode(id, data, MOTOR_PROTOCOL_DLC, &out),
+                      MOTOR_R_NONE);
+        if (id != (MOTOR_CAN_ID_CONTROL_REPLY | k_wheel[w]) || !reply_match(&out, &in)) {
+            fail(name, "round trip");
+        }
+    }
+
+    for (life = 0; life <= (int)MOTOR_LC_FAULTED; ++life) {
+        for (outcome = 0; outcome <= (int)MOTOR_OUT_DUPLICATE; ++outcome) {
+            for (edge = 0; edge <= 1; ++edge) {
+                struct motor_reply in = {
+                    .request_seq = 0xA5,
+                    .applied_seq = 0x5A,
+                    .lifecycle = (uint8_t)life,
+                    .outcome = (uint8_t)outcome,
+                    .first_edge = (uint8_t)edge,
+                    .reason = 0,
+                    .session = 255,
+                    .rpm = -120,
+                    .iq_ma = -1250
+                };
+                struct motor_reply out;
+                uint8_t data[MOTOR_PROTOCOL_DLC];
+                uint32_t id = 0;
+                uint8_t byte2 = (uint8_t)(life | (outcome << 3) | (edge ? 0x40 : 0));
+
+                expect_reason("reply status",
+                              motor_reply_encode(&in, MOTOR_SELECT_BR, &id, data),
+                              MOTOR_R_NONE);
+                if (id != 0x412u || data[2] != byte2 || data[5] != 0x88u || data[6] != 0xFFu ||
+                    data[7] != 0xE7u) {
+                    fail("reply status", "packing");
+                    return;
+                }
+                expect_reason("reply status decode",
+                              motor_reply_decode(id, data, MOTOR_PROTOCOL_DLC, &out),
+                              MOTOR_R_NONE);
+                if (!reply_match(&out, &in)) {
+                    fail("reply status", "fields");
+                    return;
+                }
+            }
+        }
+    }
+}
+
+static void test_reply_iq_steps(void)
+{
+    static const struct {
+        int16_t ma;
+        int8_t steps;
+    } cases[] = {
+        {0, 0}, {1, 0}, {-1, 0}, {24, 0}, {-24, 0}, {25, 1}, {-25, -1},
+        {26, 1}, {-26, -1}, {74, 1}, {-74, -1}, {75, 2}, {-75, -2},
+        {1249, 25}, {1250, 25}, {-1250, -25}, {1274, 25}, {-1274, -25},
+        {1275, 26}, {-1275, -26}, {6324, 126}, {-6324, -126},
+        {6325, 127}, {-6325, -127}, {6350, 127}, {-6350, -127},
+        {6351, 127}, {-6351, -127}, {8000, 127}, {-8000, -127},
+        {INT16_MAX, 127}, {INT16_MIN, -127}
+    };
+    unsigned i;
+
+    for (i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+        struct motor_reply in = {
+            .request_seq = 5, .applied_seq = 5, .lifecycle = MOTOR_LC_RUNNING,
+            .outcome = MOTOR_OUT_APPLIED, .first_edge = 1, .reason = 0,
+            .session = 0x3C, .rpm = 118, .iq_ma = cases[i].ma
+        };
+        struct motor_reply out;
+        uint8_t data[MOTOR_PROTOCOL_DLC];
+        uint32_t id = 0;
+        int16_t want_ma = (int16_t)(cases[i].steps * MOTOR_REPLY_IQ_STEP_MA);
+
+        expect_reason("iq step",
+                      motor_reply_encode(&in, MOTOR_SELECT_FR, &id, data), MOTOR_R_NONE);
+        if (data[7] != (uint8_t)cases[i].steps ||
+            data[0] != 0x05 || data[5] != 0x76) {
+            fprintf(stderr, "FAIL iq %d: byte7 %02X want %02X\n",
+                    (int)cases[i].ma, data[7], (uint8_t)cases[i].steps);
+            g_failures++;
+            return;
+        }
+        expect_reason("iq step decode",
+                      motor_reply_decode(0x411u, data, MOTOR_PROTOCOL_DLC, &out),
+                      MOTOR_R_NONE);
+        if (out.iq_ma != want_ma || out.rpm != 118) {
+            fprintf(stderr, "FAIL iq %d: decoded %d want %d\n",
+                    (int)cases[i].ma, (int)out.iq_ma, (int)want_ma);
+            g_failures++;
+            return;
+        }
+    }
+}
+
+static void test_reply_rejects(void)
+{
+    struct motor_reply in = {
+        .request_seq = 5, .applied_seq = 5, .lifecycle = MOTOR_LC_RUNNING,
+        .outcome = MOTOR_OUT_APPLIED, .first_edge = 1, .reason = MOTOR_R_CONFLICT,
+        .session = 0x3C, .rpm = 118, .iq_ma = 1250
+    };
+    struct motor_reply bad = in;
+    struct motor_reply out;
+    uint8_t data[MOTOR_PROTOCOL_DLC];
+    uint8_t packed[MOTOR_PROTOCOL_DLC];
+    uint32_t id = 0xA5A5A5A5u;
+    unsigned reason;
+
+    memset(data, 0x5A, sizeof data);
+    bad.lifecycle = 6;
+    expect_reason("reply lifecycle 6",
+                  motor_reply_encode(&bad, MOTOR_SELECT_FR, &id, data),
+                  MOTOR_R_RESERVED_NONZERO);
+    bad = in;
+    bad.outcome = 5;
+    expect_reason("reply outcome 5",
+                  motor_reply_encode(&bad, MOTOR_SELECT_FR, &id, data),
+                  MOTOR_R_RESERVED_NONZERO);
+    expect_reason("reply two wheels",
+                  motor_reply_encode(&in, MOTOR_SELECT_FR | MOTOR_SELECT_BR, &id, data),
+                  MOTOR_R_BAD_SELECT);
+    expect_reason("reply no wheel",
+                  motor_reply_encode(&in, 0, &id, data), MOTOR_R_BAD_SELECT);
+    if (id != 0xA5A5A5A5u || !same_bytes(data, MOTOR_PROTOCOL_DLC, 0x5A)) {
+        fail("rejected reply encode", "outputs changed");
+    }
+
+    expect_reason("reply reason passthrough",
+                  motor_reply_encode(&in, MOTOR_SELECT_FL, &id, packed), MOTOR_R_NONE);
+    if (packed[3] != MOTOR_R_CONFLICT || id != 0x418u) {
+        fail("reply reason", "CONFLICT not carried");
+    }
+    for (reason = 0; reason <= 255u; ++reason) {
+        in.reason = (uint8_t)reason;
+        expect_reason("reply any reason",
+                      motor_reply_encode(&in, MOTOR_SELECT_FL, &id, packed), MOTOR_R_NONE);
+        expect_reason("reply any reason decode",
+                      motor_reply_decode(id, packed, MOTOR_PROTOCOL_DLC, &out),
+                      MOTOR_R_NONE);
+        if (out.reason != (uint8_t)reason) {
+            fail("reply any reason", "byte changed");
+            return;
+        }
+    }
+
+    memset(&out, 0x5A, sizeof out);
+    expect_reason("reply short",
+                  motor_reply_decode(0x411u, k_reply_118, 4u, &out), MOTOR_R_BAD_LENGTH);
+    expect_reason("reply status id",
+                  motor_reply_decode(0x281u, k_reply_118, MOTOR_PROTOCOL_DLC, &out),
+                  MOTOR_R_BAD_LENGTH);
+    packed[2] = 0xC3;
+    expect_reason("reply bit 7",
+                  motor_reply_decode(0x411u, packed, MOTOR_PROTOCOL_DLC, &out),
+                  MOTOR_R_RESERVED_NONZERO);
+    packed[2] = 6;
+    expect_reason("reply decode lifecycle 6",
+                  motor_reply_decode(0x411u, packed, MOTOR_PROTOCOL_DLC, &out),
+                  MOTOR_R_RESERVED_NONZERO);
+    packed[2] = (uint8_t)(5u << 3);
+    expect_reason("reply decode outcome 5",
+                  motor_reply_decode(0x411u, packed, MOTOR_PROTOCOL_DLC, &out),
+                  MOTOR_R_RESERVED_NONZERO);
+    if (!struct_untouched(&out, sizeof out)) {
+        fail("rejected reply decode", "out was written");
+    }
+
+    expect_reason("reply decode two wheels",
+                  motor_reply_decode(0x413u, k_reply_118, MOTOR_PROTOCOL_DLC, &out),
+                  MOTOR_R_BAD_SELECT);
+    if (out.rpm != 118 || out.iq_ma != 1250 || out.lifecycle != MOTOR_LC_RUNNING ||
+        out.first_edge != 1 || out.session != 0x3C) {
+        fail("reply decode two wheels", "payload not filled");
+    }
+}
+
+/* Signed 8-bit distance, written out so it is not the implementation. */
+static enum motor_seq_class seq_window(uint8_t last_seq, uint8_t seq)
+{
+    int d = (int)seq - (int)last_seq;
+
+    if (d > 127) {
+        d -= 256;
+    } else if (d < -128) {
+        d += 256;
+    }
+    if (d == 0) {
+        return MOTOR_SEQ_DUPLICATE;
+    }
+    if (d == -128) {
+        return MOTOR_SEQ_AMBIGUOUS;
+    }
+    if (d < 0) {
+        return MOTOR_SEQ_STALE;
+    }
+    if (d <= (int)MOTOR_SEQ_WINDOW) {
+        return MOTOR_SEQ_NEXT;
+    }
+    return MOTOR_SEQ_JUMP;
+}
+
+static void test_seq_classify(void)
+{
+    static const struct {
+        uint8_t seq;
+        enum motor_seq_class want;
+    } from_250[] = {
+        {251, MOTOR_SEQ_NEXT},       /* d = 1 */
+        {10, MOTOR_SEQ_NEXT},        /* d = 16 */
+        {11, MOTOR_SEQ_JUMP},        /* d = 17 */
+        {250, MOTOR_SEQ_DUPLICATE},  /* d = 0 */
+        {249, MOTOR_SEQ_STALE},      /* d = -1 */
+        {122, MOTOR_SEQ_AMBIGUOUS}   /* d = -128 */
+    };
+    int last;
+    int seq;
+    unsigned i;
+
+    for (i = 0; i < sizeof from_250 / sizeof from_250[0]; ++i) {
+        enum motor_seq_class got = motor_seq_classify(250, from_250[i].seq);
+
+        if (got != from_250[i].want) {
+            fprintf(stderr, "FAIL seq 250 -> %u: class %d want %d\n",
+                    from_250[i].seq, (int)got, (int)from_250[i].want);
+            g_failures++;
+        }
+    }
+    for (last = 0; last < 256; ++last) {
+        for (seq = 0; seq < 256; ++seq) {
+            if (motor_seq_classify((uint8_t)last, (uint8_t)seq) !=
+                seq_window((uint8_t)last, (uint8_t)seq)) {
+                fprintf(stderr, "FAIL seq window last %d seq %d\n", last, seq);
+                g_failures++;
+                return;
+            }
+        }
+    }
+}
+
+/* Documented formula, including the boot modulus of 255. */
+static uint8_t session_ref(uint8_t prev, uint32_t entropy)
+{
+    if (prev == 0u) {
+        return (uint8_t)(1u + (entropy % 255u));
+    }
+    return (uint8_t)(1u + ((uint32_t)(prev - 1u) + 1u + (entropy % 254u)) % 255u);
+}
+
+static void test_session_next(void)
+{
+    static const uint32_t extra[] = {
+        0, 253, 254, 255, 256, 508, 509, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFFu
+    };
+    int prev;
+    unsigned i;
+
+    if (motor_session_next(0, MOTOR_SELECT_FR) != 2u ||
+        motor_session_next(0, MOTOR_SELECT_BR) != 3u ||
+        motor_session_next(0, MOTOR_SELECT_BL) != 5u ||
+        motor_session_next(0, MOTOR_SELECT_FL) != 9u) {
+        fail("boot session", "1 + select");
+    }
+    for (prev = 0; prev < 256; ++prev) {
+        uint8_t seen[256];
+        unsigned span = (prev == 0) ? 255u : 254u;
+        unsigned entropy;
+
+        memset(seen, 0, sizeof seen);
+        for (entropy = 0; entropy < span; ++entropy) {
+            uint8_t next = motor_session_next((uint8_t)prev, entropy);
+
+            if (next == 0u || next == (uint8_t)prev || seen[next] != 0u ||
+                next != session_ref((uint8_t)prev, entropy)) {
+                fprintf(stderr, "FAIL session prev %d entropy %u -> %u\n",
+                        prev, entropy, next);
+                g_failures++;
+                return;
+            }
+            seen[next] = 1u;
+        }
+        if (seen[0] != 0u) {
+            fail("session", "produced 0");
+            return;
+        }
+        for (i = 1; i <= 255u; ++i) {
+            if (seen[i] != (i != (unsigned)prev)) {
+                fprintf(stderr, "FAIL session reach prev %d value %u\n", prev, i);
+                g_failures++;
+                return;
+            }
+        }
+        for (i = 0; i < sizeof extra / sizeof extra[0]; ++i) {
+            uint8_t next = motor_session_next((uint8_t)prev, extra[i]);
+
+            if (next == 0u || next == (uint8_t)prev ||
+                next != session_ref((uint8_t)prev, extra[i])) {
+                fprintf(stderr, "FAIL session prev %d entropy %u -> %u\n",
+                        prev, extra[i], next);
+                g_failures++;
+                return;
+            }
+        }
+    }
+}
+
 int main(void)
 {
+    test_reason_numbers();
     test_golden_control();
     test_golden_status();
     test_golden_diag();
+    test_golden_reply();
     test_signed_control_bytes();
     test_round_trip_each_wheel();
     test_broadcast_and_arm();
     test_rejects();
+    test_reply_each_wheel();
+    test_reply_iq_steps();
+    test_reply_rejects();
+    test_seq_classify();
+    test_session_next();
     if (g_failures != 0) {
         fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;
     }
-    printf("motor protocol: CONTROL, STATUS, DIAG ok\n");
+    printf("motor protocol: CONTROL, CONTROL_REPLY, STATUS, DIAG ok\n");
     return 0;
 }

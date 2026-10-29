@@ -8,8 +8,8 @@ not call the kinematics module or the frame codec.
 
 - `src/shared/inc/rover_kinematics.h` — body twist to four wheel motor RPM.
 - `src/shared/src/rover_kinematics.c` — provisional wheel map and that map.
-- `src/shared/inc/motor_protocol.h` — CONTROL, STATUS, and DIAG frame layout.
-- `src/shared/src/motor_protocol.c` — encode and decode of those frames.
+- `src/shared/inc/motor_protocol.h` — CONTROL, CONTROL_REPLY, STATUS, and DIAG layout, plus the session and sequence helpers.
+- `src/shared/src/motor_protocol.c` — encode and decode of those frames, and those helpers.
 - `architecture/protocol.md` — wire format that codec implements.
 - `tests/test_rover_kinematics.c` — host CTest for all four wheels.
 - `tests/test_motor_protocol.c` — host CTest for the frame codec, all four wheels.

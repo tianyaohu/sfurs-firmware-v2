@@ -6,11 +6,15 @@ CONTROL at a time. `motor_cmd_control` decodes with `motor_control_decode`
 and answers with `motor_reply_encode` on `cfg.select`.
 
 `motor_cmd_inputs` is the caller's clock (`now_ms`) and bridge sample
-(`mc` IDLE / STARTING / RUN / FAULT, `aligned`, `busy`). NULL inputs do
-not sample: the watchdog does not run and an accepted motion stays READY.
-`motor_cmd_tick` is that sample with no frame. `motor_cmd_actions` is
-`start`, `set_target`, and `stop`. A set-target reads `mode`, `setpoint`,
-and `ff_ma` from the state.
+(`mc` IDLE / STARTING / RUN / FAULT, `aligned`, `busy`, `standstill`).
+NULL inputs do not sample: the watchdog does not run and an accepted
+motion does not start or enter HOLD. `motor_cmd_tick` is that sample with
+no frame. `motor_cmd_actions` is `start`, `set_target`, and `stop`. A
+set-target reads `mode`, `setpoint`, and `ff_ma` from the state.
+`stop_reason` is the STATUS stop nibble when `stop` is set (1 DISABLE,
+2 timeout, 3 fault, 8 parked). The same value sticks on the state until
+the next real switch-off. A stop while the bridge is already off does not
+set one.
 
 ## States
 
@@ -20,9 +24,8 @@ and `ff_ma` from the state.
 | READY | ARM accepted. The bridge is off. A nonzero target starts when the sample allows it. |
 | STARTING | `start` and `set_target` were requested. Waiting for `mc == RUN`. |
 | RUNNING | the sample reported RUN. A further accepted motion is `APPLIED` and sets `set_target`. |
+| HOLD | SPEED setpoint 0 and `standstill` for 150 ms while RUNNING. The bridge stays on. A nonzero SPEED frame returns to RUNNING without a start. |
 | FAULTED | STARTING waited 500 ms without RUN, or a caller set `lifecycle` and `latched`. ARM and motion are `REJECTED` with `latched`. |
-
-HOLD is not used.
 
 ## Clock
 
@@ -32,7 +35,7 @@ DISABLE, a duplicate, and any reject do not change it.
 
 On a sampled `motor_cmd_control`, and on `motor_cmd_tick`, in this order:
 
-1. If armed (READY, STARTING, or RUNNING) and `rx_ms - watch_ms >= 100`
+1. If armed (READY, STARTING, RUNNING, or HOLD) and `rx_ms - watch_ms >= 100`
    (signed), disarm before the frame is judged. A motion timestamped on
    that deadline is then `NOT_ARMED`. An ARM in that same call is held to
    the session from before the disarm. The new session is `BAD_SESSION`
@@ -44,9 +47,10 @@ On a sampled `motor_cmd_control`, and on `motor_cmd_tick`, in this order:
    not expired by age. The TIMEOUT reply is the lifecycle at that verdict.
 3. After the verdict, if still armed and `now_ms - watch_ms >= 100`, disarm.
 
-A fresh motion is answered after step 3 and the start rules, so its reply
-already shows STARTING or RUNNING. ARM, DISABLE, duplicates, and rejects
-are answered at the verdict; step 3 still runs afterwards. A late ARM
+A fresh motion is answered after step 3 and the start, HOLD, and park
+rules, so its reply already shows STARTING, RUNNING, HOLD, or READY after
+a park. ARM, DISABLE, duplicates, and rejects are answered at the verdict;
+step 3, HOLD, and park still run afterwards. A late ARM
 (receive time already 100 ms behind `now_ms`) is APPLIED, then that same
 call disarms.
 
@@ -70,16 +74,53 @@ Sampled after the frame (and on tick) when the watchdog did not trip:
 An accepted nonzero motion answered while the lifecycle is still READY or
 STARTING is `INHIBITED(STARTING)`. Not aligned, busy, or `mc` other than
 IDLE records the target and waits; it does not reject. RUNNING is
-`APPLIED`. A zero setpoint does not start.
+`APPLIED`. A zero setpoint does not start. From RUNNING it can enter HOLD,
+below.
 
-DISABLE while STARTING or RUNNING: `actions.stop`, lifecycle READY, target
-and applied sequence cleared, session kept. DISABLE while DISARMED, READY,
-or FAULTED does not change the lifecycle.
+DISABLE while STARTING, RUNNING, or HOLD: `actions.stop` with stop reason
+DISABLE, lifecycle READY, target and applied sequence cleared, session
+kept. DISABLE while DISARMED, READY, or FAULTED does not change the
+lifecycle.
+
+## HOLD and park
+
+Only SPEED. The caller sets `standstill` when it already sees the wheel at
+rest (in the reference speed loop, below 45 RPM). This slice does not read
+a speed. CURRENT with setpoint 0 stays RUNNING and never enters HOLD.
+
+Sampled after the watchdog and the start rules, on a control call and on
+tick:
+
+- RUNNING, mode SPEED, setpoint 0, `standstill`: the first such sample
+  starts a timer (`hold_since`). The sample where
+  `now_ms - hold_since >= 150` (`MOTOR_CMD_HOLD_MS`) enters HOLD. Any
+  sample that is not all three clears the timer. Entering HOLD does not
+  `start` or `stop`; the bridge stays on, so the next nonzero SPEED frame
+  does not pay for a start.
+- HOLD and `now_ms - state_ms >= 1000` (`MOTOR_CMD_PARK_MS`): `actions.stop`,
+  stop reason `MOTOR_STOP_PARKED` (8), lifecycle READY, target cleared
+  (setpoint, feed-forward, mode, applied sequence). The session stays, so
+  the wheel stays armed. `last_valid` stays: a retransmission of the last
+  motion is still `DUPLICATE` and does not restore the target. The next
+  nonzero target takes the READY → STARTING path once `mc` is IDLE.
+- A SPEED frame with a nonzero setpoint in HOLD is applied as RUNNING.
+  `actions.set_target` is set and `actions.start` is not. A frame that
+  arrives on the park deadline resumes; it does not park.
+- A zero SPEED frame in HOLD refreshes the watchdog and does not restart
+  the 1000 ms timer.
+- A CURRENT frame in HOLD is `REJECTED(MODE_CHANGE)` and changes nothing.
+  A mode change while STARTING or RUNNING is still accepted.
+
+The 100 ms watchdog still applies on the way into HOLD and during it. A
+silent wheel disarms with stop reason timeout, not parked. Fresh motion
+has to keep arriving or the hold never reaches 150 ms and the park never
+reaches 1000 ms.
 
 ## One CONTROL
 
 Checked in this order. NULL inputs stop before the clock and the start
-rules, and an accepted motion is then APPLIED in READY.
+rules. An accepted motion is then APPLIED and does not start or enter
+HOLD. A nonzero setpoint accepted in HOLD still resumes to RUNNING.
 
 A frame that is not a DLC-8 CONTROL is `BAD_LENGTH` and produces no reply.
 The state is unchanged. Any other structural failure (`BAD_VERSION`,
@@ -89,9 +130,10 @@ trip. A frame whose select does not include this wheel is `BAD_SELECT`. A
 plain DISABLE may name any non-empty subset that includes this wheel.
 
 Plain DISABLE is `APPLIED`. The recorded setpoint, feed-forward, and
-applied sequence are cleared. From STARTING or RUNNING the lifecycle
-returns to READY and `actions.stop` is set. Otherwise the lifecycle stays,
-including when the caller has set FAULTED. The last accepted payload is
+applied sequence are cleared. From STARTING, RUNNING, or HOLD the lifecycle
+returns to READY and `actions.stop` is set (stop reason DISABLE). Otherwise
+the lifecycle stays, including when the caller has set FAULTED. The last
+accepted payload is
 kept, so a retransmission of that motion is still `DUPLICATE` and does not
 restore the setpoint.
 
@@ -115,7 +157,7 @@ Motion (`SPEED` or `CURRENT`), first failure wins:
 1. Age `>= 100` ms when inputs were passed → `REJECTED(TIMEOUT)`, not
    applied. This is before the lifecycle check, so a late frame is
    TIMEOUT even when the wheel is disarmed or faulted.
-2. FAULTED → `REJECTED(latched)`. DISARMED → `NOT_ARMED`. READY, STARTING, and RUNNING continue.
+2. FAULTED → `REJECTED(latched)`. DISARMED → `NOT_ARMED`. READY, STARTING, RUNNING, and HOLD continue.
 3. Session matches. Otherwise `BAD_SESSION`.
 4. `motor_seq_classify`:
    - `DUPLICATE` and the same mode, flags, setpoint, feed-forward, and session → outcome `DUPLICATE`, reason none, state unchanged. Does not refresh `watch_ms`.
@@ -123,12 +165,15 @@ Motion (`SPEED` or `CURRENT`), first failure wins:
    - `STALE`, `SEQ_AMBIGUOUS`, `SEQ_JUMP`.
 5. `|setpoint|` above `max_rpm` (SPEED) or `max_ma` (CURRENT), or `|feed-forward|` above `max_ma` → `OUT_OF_RANGE`. The limit itself is accepted.
 6. `CURRENT` while `current_supported` is 0 → `UNSUPPORTED`.
+7. HOLD and a mode other than the one latched for that hold → `MODE_CHANGE`.
 
 On accept: update `last_seq`, the stored payload, and `watch_ms` (`rx_ms`);
-record the setpoint, feed-forward, mode, and applied sequence. With inputs,
-the start rules then run and a nonzero target that is not yet RUNNING is
-`INHIBITED(STARTING)`. Without inputs the lifecycle stays where it was and
-the reply is `APPLIED`. Measured RPM and current in the reply are 0.
+record the setpoint, feed-forward, mode, and applied sequence. A nonzero
+setpoint accepted in HOLD moves the lifecycle to RUNNING before the reply.
+With inputs, the start, HOLD, and park rules then run. A nonzero target
+that is not yet RUNNING is `INHIBITED(STARTING)`. Without inputs the
+lifecycle stays where it was, except for that HOLD resume, and the reply
+is `APPLIED`. Measured RPM and current in the reply are 0.
 
 Boot session is `motor_session_next(0, entropy)`. Entropy equal to the
 wheel select bit is `1 + select` (FR 2, BR 3, BL 5, FL 9). A watchdog
@@ -137,8 +182,7 @@ disarm uses `now_ms` as the entropy.
 ## Deferred
 
 - ISR inbox, ordered drain, `SUPERSEDED`, `LIFECYCLE_OVERFLOW`
-- HOLD, park
-- Hall loss, stall rest, `MODE_CHANGE`, `NOT_ALIGNED` and `BUSY` as rejects, `LIMITED`
+- Hall loss, stall rest, mode latch while STARTING or RUNNING, `NOT_ALIGNED` and `BUSY` as rejects, `LIMITED`
 - MCSDK fault while RUNNING, and `CLEAR_FAULT` back to DISARMED
 - CONFIG frames
 - Linking this file into the ESC or Nucleo image

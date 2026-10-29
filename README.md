@@ -96,9 +96,9 @@ ESC output: `build/esc/motor_config.elf` (B-G431B-ESC1, flash at
 ## After this
 
 1. The rest of the owned ESC application on this vendor image: the inbox,
-   HOLD and park, the speed loop, and Hall angle. CONFIG belongs with that
-   work. The host slice fills a CONTROL_REPLY and names start, stop, and
-   set-target, but nothing on the ESC calls it yet. This image does not
-   speak CAN and does not close a speed loop.
+   the speed loop, and Hall angle. CONFIG belongs with that work. The host
+   slice fills a CONTROL_REPLY and names start, stop, set-target, HOLD, and
+   park, but nothing on the ESC calls it yet. This image does not speak
+   CAN and does not close a speed loop.
 2. Optional hardware milestones (for example LD1 on a board), only when
    you ask.

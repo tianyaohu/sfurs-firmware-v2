@@ -2,7 +2,7 @@
 #define MOTOR_CMD_H
 
 /** @file motor_cmd.h
- *  @brief One-wheel CONTROL lifecycle: arm, watchdog, and start.
+ *  @brief One-wheel CONTROL lifecycle: arm, watchdog, start, HOLD, and park.
  *
  *  Host logic only. It calls the frame codec and does not touch HAL or
  *  MCSDK. The caller samples the clock and the bridge into
@@ -19,6 +19,12 @@
 
 /** @brief STARTING without the bridge in RUN for this long latches a fault, ms. */
 #define MOTOR_CMD_START_TIMEOUT_MS 500u
+
+/** @brief SPEED at setpoint 0 and standstill for this long enters HOLD, ms. */
+#define MOTOR_CMD_HOLD_MS 150u
+
+/** @brief HOLD for this long switches the output off and returns to READY, ms. */
+#define MOTOR_CMD_PARK_MS 1000u
 
 /** @brief Bridge state the caller sampled. Not an MCSDK enum. */
 enum motor_cmd_mc {
@@ -40,27 +46,30 @@ struct motor_cmd_cfg {
  * @brief Clock and bridge sample.
  *
  * NULL on ::motor_cmd_control keeps the arming checks only: the watchdog
- * does not run and the lifecycle does not leave READY for STARTING, because
- * this call did not observe a bridge.
+ * does not run, READY does not start, and RUNNING does not enter HOLD,
+ * because this call did not observe a bridge.
  */
 struct motor_cmd_inputs {
     uint32_t now_ms; /**< caller clock, ms; the same clock as a frame's receive time */
-    uint8_t mc;      /**< ::motor_cmd_mc */
-    uint8_t aligned; /**< 1 when the Hall phase shift is known */
-    uint8_t busy;    /**< 1 while alignment or capture is in progress */
+    uint8_t mc;         /**< ::motor_cmd_mc */
+    uint8_t aligned;    /**< 1 when the Hall phase shift is known */
+    uint8_t busy;       /**< 1 while alignment or capture is in progress */
+    uint8_t standstill; /**< 1 when the caller already sees the wheel at rest */
 };
 
 /**
  * @brief What the caller does with the bridge after a call. Cleared first.
  *
  * When @c set_target is 1, program @c motor_cmd::mode, @c setpoint, and
- * @c ff_ma. @c start and @c stop are requests; several may be set, and a
- * fault clears @c start and @c set_target so only @c stop remains.
+ * @c ff_ma. @c start and @c stop are requests; several may be set. A fault
+ * or a park clears @c start and @c set_target so only @c stop remains.
+ * @c stop_reason is the STATUS stop nibble of that switch-off.
  */
 struct motor_cmd_actions {
-    uint8_t start;      /**< 1: start the bridge */
-    uint8_t set_target; /**< 1: program the recorded target */
-    uint8_t stop;       /**< 1: switch the output off */
+    uint8_t start;       /**< 1: start the bridge */
+    uint8_t set_target;  /**< 1: program the recorded target */
+    uint8_t stop;        /**< 1: switch the output off */
+    uint8_t stop_reason; /**< ::motor_stop_reason when @c stop is 1, else 0 */
 };
 
 /**
@@ -80,11 +89,14 @@ struct motor_cmd {
     uint8_t latched;       /**< ::motor_reason while FAULTED */
     uint8_t mode;          /**< mode of the recorded target */
     uint8_t disarm_reason; /**< ::MOTOR_R_TIMEOUT after a watchdog disarm, else 0 */
+    uint8_t holding;       /**< 1 while SPEED 0 and standstill are accumulating toward HOLD */
+    uint8_t stop_reason;   /**< last real switch-off, ::motor_stop_reason; 0 until the first */
     int16_t setpoint;      /**< recorded target: RPM (SPEED) or q-axis mA (CURRENT) */
     int16_t ff_ma;         /**< recorded feed-forward, q-axis mA */
     struct motor_control last_frame; /**< accepted motion payload, for a duplicate check */
     uint32_t watch_ms;     /**< ARM time, or receive time of the last fresh motion */
-    uint32_t state_ms;     /**< now_ms when STARTING was entered */
+    uint32_t state_ms;     /**< now_ms when STARTING or HOLD was entered */
+    uint32_t hold_since;   /**< now_ms when @c holding last started */
     uint32_t now_ms;       /**< last sampled clock */
 };
 
@@ -106,9 +118,10 @@ void motor_cmd_init(struct motor_cmd *m, const struct motor_cmd_cfg *cfg, uint32
  *
  * When @p in is non-NULL this call also samples the clock (@p rx_ms is the
  * frame's receive time) and the bridge. A fresh motion is answered after
- * those rules, so the reply can already say STARTING. ARM, DISABLE, and
- * rejects are answered at the verdict; the watchdog may still move the
- * state afterwards, which is how a late ARM is applied and then disarms.
+ * those rules, so the reply can already say STARTING, HOLD, or READY after
+ * a park. ARM, DISABLE, and rejects are answered at the verdict; the
+ * watchdog, HOLD, and park may still move the state afterwards, which is
+ * how a late ARM is applied and then disarms.
  * A receive-time disarm rotates the session before ARM is judged. That ARM
  * is held to the session from the start of the call, so it cannot arm on
  * the session this call just published. NULL @p in does not sample, so an
@@ -140,9 +153,9 @@ enum motor_reason motor_cmd_control(struct motor_cmd *m, uint32_t id, const uint
 /**
  * @brief Advance the clock and the start rules with no frame.
  *
- * Same watchdog and READY / STARTING / RUNNING / start-timeout rules as a
- * sampled ::motor_cmd_control. @p in NULL, or @p m NULL, leaves the state
- * alone (actions are still cleared when @p act is non-NULL).
+ * Same watchdog, READY / STARTING / RUNNING, HOLD, park, and start-timeout
+ * rules as a sampled ::motor_cmd_control. @p in NULL, or @p m NULL, leaves
+ * the state alone (actions are still cleared when @p act is non-NULL).
  *
  * @param m   state
  * @param in  clock and bridge sample

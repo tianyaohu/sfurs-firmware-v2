@@ -193,7 +193,7 @@ outcome APPLIED, first Hall edge seen, session `0x3C`, measured 118 RPM and
 ## Not in this codec
 
 CONFIG. Arming, the session check, CONFLICT versus DUPLICATE, the
-setpoint limit, the 100 ms watchdog, and STARTING/RUNNING live in
-`motor_cmd` ([command-lifecycle.md](command-lifecycle.md)), which calls
+setpoint limit, the 100 ms watchdog, STARTING/RUNNING, and HOLD/park live
+in `motor_cmd` ([command-lifecycle.md](command-lifecycle.md)), which calls
 these helpers and is not linked into an image either. The inbox is not
 in that module yet. Nothing here is linked into the Nucleo or ESC image.

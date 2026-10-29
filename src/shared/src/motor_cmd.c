@@ -8,11 +8,14 @@ static void clear_target(struct motor_cmd *m)
     m->ff_ma = 0;
     m->mode = MOTOR_MODE_DISABLE;
     m->applied_seq = 0;
+    m->holding = 0u;
 }
 
+/* HOLD is output-on: the bridge stays energised at zero current, so a
+ * timeout or DISABLE has to switch it off. */
 static int output_on(uint8_t lc)
 {
-    return lc == MOTOR_LC_STARTING || lc == MOTOR_LC_RUNNING;
+    return lc == MOTOR_LC_STARTING || lc == MOTOR_LC_RUNNING || lc == MOTOR_LC_HOLD;
 }
 
 static int armed(uint8_t lc)
@@ -41,11 +44,23 @@ static int rx_watch_expired(uint32_t rx_ms, uint32_t watch_ms)
     return (int32_t)(rx_ms - watch_ms) >= (int32_t)MOTOR_WATCHDOG_MS;
 }
 
+/* A cause is recorded only when the output actually switches off. */
+static void note_stop(struct motor_cmd *m, struct motor_cmd_actions *act, uint8_t reason)
+{
+    if (act != NULL) {
+        act->stop = 1u;
+        act->stop_reason = reason;
+        act->start = 0u;
+        act->set_target = 0u;
+    }
+    m->stop_reason = reason;
+}
+
 /* Output was on: the caller has to stop it. Disarm from READY does not. */
 static void disarm(struct motor_cmd *m, struct motor_cmd_actions *act)
 {
-    if (act != NULL && output_on(m->lifecycle)) {
-        act->stop = 1u;
+    if (output_on(m->lifecycle)) {
+        note_stop(m, act, MOTOR_STOP_TIMEOUT);
     }
     m->lifecycle = MOTOR_LC_DISARMED;
     m->session = motor_session_next(m->session, m->now_ms);
@@ -56,16 +71,15 @@ static void disarm(struct motor_cmd *m, struct motor_cmd_actions *act)
 
 static void fault_start(struct motor_cmd *m, struct motor_cmd_actions *act)
 {
-    if (act != NULL) {
-        act->stop = 1u;
-        act->start = 0u;
-        act->set_target = 0u;
-    }
+    note_stop(m, act, MOTOR_STOP_FAULT);
     m->lifecycle = MOTOR_LC_FAULTED;
     m->latched = MOTOR_R_FAULT_MCSDK;
     m->last_valid = 0u;
     clear_target(m);
 }
+
+static void consider_hold(struct motor_cmd *m, const struct motor_cmd_inputs *in,
+                          struct motor_cmd_actions *act);
 
 /* Watchdog first: a wheel that has already gone silent must not start. */
 static void after_sample(struct motor_cmd *m, const struct motor_cmd_inputs *in,
@@ -85,15 +99,45 @@ static void after_sample(struct motor_cmd *m, const struct motor_cmd_inputs *in,
         }
         return;
     }
-    if (m->lifecycle != MOTOR_LC_STARTING) {
+    if (m->lifecycle == MOTOR_LC_STARTING) {
+        if (in->mc == MOTOR_CMD_MC_RUN) {
+            m->lifecycle = MOTOR_LC_RUNNING;
+            m->holding = 0u;
+        } else if ((m->now_ms - m->state_ms) >= MOTOR_CMD_START_TIMEOUT_MS) {
+            fault_start(m, act);
+        }
         return;
     }
-    if (in->mc == MOTOR_CMD_MC_RUN) {
-        m->lifecycle = MOTOR_LC_RUNNING;
+    consider_hold(m, in, act);
+}
+
+/* SPEED at rest becomes a zero-current hold, then a silent park. CURRENT
+ * at 0 stays RUNNING: that mode never holds. The caller reports standstill;
+ * this slice has no speed estimate. */
+static void consider_hold(struct motor_cmd *m, const struct motor_cmd_inputs *in,
+                          struct motor_cmd_actions *act)
+{
+    if (m->lifecycle == MOTOR_LC_RUNNING) {
+        if (m->mode == MOTOR_MODE_SPEED && m->setpoint == 0 && in->standstill != 0u) {
+            if (m->holding == 0u) {
+                m->holding = 1u;
+                m->hold_since = m->now_ms;
+            } else if ((m->now_ms - m->hold_since) >= MOTOR_CMD_HOLD_MS) {
+                /* Bridge stays on, so the next nonzero SPEED frame skips a start. */
+                m->lifecycle = MOTOR_LC_HOLD;
+                m->state_ms = m->now_ms;
+                m->holding = 0u;
+            }
+        } else {
+            m->holding = 0u;
+        }
         return;
     }
-    if ((m->now_ms - m->state_ms) >= MOTOR_CMD_START_TIMEOUT_MS) {
-        fault_start(m, act);
+    if (m->lifecycle == MOTOR_LC_HOLD && (m->now_ms - m->state_ms) >= MOTOR_CMD_PARK_MS) {
+        /* A long zero-current hold is audible. Switch off and stay armed. */
+        note_stop(m, act, MOTOR_STOP_PARKED);
+        m->lifecycle = MOTOR_LC_READY;
+        clear_target(m);
     }
 }
 
@@ -138,6 +182,10 @@ static enum motor_reason on_motion(struct motor_cmd *m, const struct motor_contr
     if (c->mode == MOTOR_MODE_CURRENT && m->cfg.current_supported == 0u) {
         return MOTOR_R_UNSUPPORTED;
     }
+    /* HOLD is the latched SPEED run. STARTING and RUNNING still accept a new mode. */
+    if (m->lifecycle == MOTOR_LC_HOLD && c->mode != m->mode) {
+        return MOTOR_R_MODE_CHANGE;
+    }
     m->last_seq = c->seq;
     m->last_frame = *c;
     m->last_valid = 1u;
@@ -146,6 +194,11 @@ static enum motor_reason on_motion(struct motor_cmd *m, const struct motor_contr
     m->ff_ma = c->ff_ma;
     m->applied_seq = c->seq;
     m->watch_ms = rx_ms; /* duplicates and rejects returned above, so they do not refresh */
+    /* The bridge is already on. Starting again would stop and spin back up. */
+    if (m->lifecycle == MOTOR_LC_HOLD && c->setpoint != 0) {
+        m->lifecycle = MOTOR_LC_RUNNING;
+        m->holding = 0u;
+    }
     if (act != NULL && output_on(m->lifecycle)) {
         act->set_target = 1u;
     }
@@ -188,9 +241,7 @@ static enum motor_reason on_control(struct motor_cmd *m, const struct motor_cont
         return MOTOR_R_UNSUPPORTED;
     }
     if (output_on(m->lifecycle)) {
-        if (act != NULL) {
-            act->stop = 1u;
-        }
+        note_stop(m, act, MOTOR_STOP_DISABLE);
         m->lifecycle = MOTOR_LC_READY;
     }
     clear_target(m);
@@ -282,9 +333,10 @@ enum motor_reason motor_cmd_control(struct motor_cmd *m, uint32_t id, const uint
     } else {
         reason = on_control(m, &frame, rx_ms, call_session, act, &outcome);
     }
-    /* A fresh motion is answered after the start rules so STARTING is visible.
-     * ARM, DISABLE, and rejects are answered at the verdict; the watchdog may
-     * still move the state afterwards (a late ARM is applied, then disarms). */
+    /* A fresh motion is answered after the start, HOLD, and park rules, so
+     * STARTING, HOLD, or a park back to READY is visible. ARM, DISABLE, and
+     * rejects are answered at the verdict; the watchdog and park may still
+     * move the state afterwards (a late ARM is applied, then disarms). */
     motion_accepted = structural == MOTOR_R_NONE && frame.mode != MOTOR_MODE_DISABLE &&
                       outcome == MOTOR_OUT_APPLIED && reason == MOTOR_R_NONE;
     if (in != NULL && motion_accepted != 0) {

@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Host slice: arm, session, sequence, watchdog, STARTING/RUNNING. No MCSDK. */
+/* Host slice: arm, session, sequence, watchdog, STARTING/RUNNING, HOLD, park. */
 
 static const uint32_t k_wheel[4] = {
     MOTOR_SELECT_FR, MOTOR_SELECT_BR, MOTOR_SELECT_BL, MOTOR_SELECT_FL
@@ -488,6 +488,8 @@ static void test_watchdog(uint32_t select)
     expect_eq("wd 100 sp", m.setpoint, 0);
     expect_eq("wd 100 why", m.disarm_reason, MOTOR_R_TIMEOUT);
     expect_eq("wd 100 stop", act.stop, 0);
+    expect_eq("wd 100 why stop", act.stop_reason, 0);
+    expect_eq("wd 100 sticky", m.stop_reason, 0);
 
     c = ctrl(MOTOR_MODE_SPEED, 0, 10, 0, 2, session);
     in = kin(MOTOR_WATCHDOG_MS, MOTOR_CMD_MC_IDLE, 1, 0);
@@ -530,6 +532,8 @@ static void test_watchdog_stops(uint32_t select)
     expect_eq("wd stop lc", m.lifecycle, MOTOR_LC_DISARMED);
     expect_eq("wd stop sess", m.session, (int)motor_session_next(session, MOTOR_WATCHDOG_MS));
     expect_eq("wd stop flag", act.stop, 1);
+    expect_eq("wd stop why", act.stop_reason, MOTOR_STOP_TIMEOUT);
+    expect_eq("wd stop sticky", m.stop_reason, MOTOR_STOP_TIMEOUT);
     expect_eq("wd stop start", act.start, 0);
     expect_eq("wd stop sp", m.setpoint, 0);
     expect_eq("wd stop seq", m.applied_seq, 0);
@@ -783,6 +787,8 @@ static void test_start_run(uint32_t select)
     expect_eq("stop", submit_at(&m, &c, select, 80, &in, &act, &r), MOTOR_R_NONE);
     expect_reply("stop", &r, 9, 0, MOTOR_LC_READY, MOTOR_OUT_APPLIED, MOTOR_R_NONE, session);
     expect_eq("stop flag", act.stop, 1);
+    expect_eq("stop why", act.stop_reason, MOTOR_STOP_DISABLE);
+    expect_eq("stop sticky", m.stop_reason, MOTOR_STOP_DISABLE);
     expect_eq("stop lc", m.lifecycle, MOTOR_LC_READY);
     expect_eq("stop sess", m.session, session);
     expect_eq("stop sp", m.setpoint, 0);
@@ -842,6 +848,8 @@ static void test_start_timeout(uint32_t select)
     expect_eq("t500 lc", m.lifecycle, MOTOR_LC_FAULTED);
     expect_eq("t500 latch", m.latched, MOTOR_R_FAULT_MCSDK);
     expect_eq("t500 stop", act.stop, 1);
+    expect_eq("t500 why", act.stop_reason, MOTOR_STOP_FAULT);
+    expect_eq("t500 sticky", m.stop_reason, MOTOR_STOP_FAULT);
     expect_eq("t500 start", act.start, 0);
     expect_eq("t500 tgt", act.set_target, 0);
     expect_eq("t500 sp", m.setpoint, 0);
@@ -946,6 +954,325 @@ static void test_deadline_session(uint32_t select)
                  predicted);
 }
 
+static enum motor_reason speed_at(struct motor_cmd *m, uint32_t select, uint32_t t, int16_t sp,
+                                  int16_t ff, uint8_t seq, uint8_t standstill, uint8_t mc,
+                                  struct motor_cmd_actions *act, struct motor_reply *r)
+{
+    struct motor_cmd_inputs in = kin(t, mc, 1, 0);
+    struct motor_control c = ctrl(MOTOR_MODE_SPEED, 0, sp, ff, seq, m->session);
+
+    in.standstill = standstill;
+    return submit_at(m, &c, select, t, &in, act, r);
+}
+
+static void reach_run(struct motor_cmd *m, uint32_t select, uint8_t mode, int16_t sp)
+{
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    struct motor_cmd_inputs in = kin(0, MOTOR_CMD_MC_IDLE, 1, 0);
+    struct motor_control c = ctrl(mode, 0, sp, 0, 2, m->session);
+
+    arm_at(m, select, 0, &r);
+    expect_eq("reach", submit_at(m, &c, select, 0, &in, &act, &r), MOTOR_R_STARTING);
+    in = kin(0, MOTOR_CMD_MC_RUN, 1, 0);
+    motor_cmd_tick(m, &in, &act);
+    expect_eq("reach run", m->lifecycle, MOTOR_LC_RUNNING);
+    expect_eq("reach mode", m->mode, mode);
+}
+
+/* Zeros at 0, 90, and 149 stay RUNNING. The frame at 150 enters HOLD. */
+static uint8_t to_hold(struct motor_cmd *m, uint32_t select)
+{
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    uint8_t seq = 3;
+    uint32_t t;
+
+    for (t = 0; t <= 90u; t += 90u) {
+        expect_eq("pre", speed_at(m, select, t, 0, 0, seq, 1, MOTOR_CMD_MC_RUN, &act, &r),
+                  MOTOR_R_NONE);
+        expect_eq("pre lc", m->lifecycle, MOTOR_LC_RUNNING);
+        expect_eq("pre stop", act.stop, 0);
+        seq++;
+    }
+    expect_eq("h149", speed_at(m, select, MOTOR_CMD_HOLD_MS - 1u, 0, 0, seq, 1, MOTOR_CMD_MC_RUN,
+                               &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("h149 lc", m->lifecycle, MOTOR_LC_RUNNING);
+    seq++;
+    expect_eq("h150", speed_at(m, select, MOTOR_CMD_HOLD_MS, 0, 0, seq, 1, MOTOR_CMD_MC_RUN, &act,
+                               &r),
+              MOTOR_R_NONE);
+    expect_reply("h150", &r, seq, seq, MOTOR_LC_HOLD, MOTOR_OUT_APPLIED, MOTOR_R_NONE, m->session);
+    expect_eq("h150 stop", act.stop, 0);
+    expect_eq("h150 start", act.start, 0);
+    expect_eq("h150 t", (int)m->state_ms, (int)MOTOR_CMD_HOLD_MS);
+    seq++;
+    return seq;
+}
+
+/* Fresh zero SPEED frames every 90 ms so the watchdog does not win. */
+static uint8_t creep(struct motor_cmd *m, uint32_t select, uint8_t seq, uint32_t t_prev,
+                     uint32_t t_last)
+{
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    uint32_t t = t_prev;
+    uint32_t held = m->state_ms;
+
+    while (t + 90u <= t_last) {
+        t += 90u;
+        expect_eq("creep", speed_at(m, select, t, 0, 0, seq, 1, MOTOR_CMD_MC_RUN, &act, &r),
+                  MOTOR_R_NONE);
+        expect_eq("creep lc", m->lifecycle, MOTOR_LC_HOLD);
+        expect_eq("creep t", (int)m->state_ms, (int)held);
+        seq++;
+    }
+    return seq;
+}
+
+static void boot_running(struct motor_cmd *m, uint32_t select, uint8_t mode, int16_t sp)
+{
+    boot(m, select, 1);
+    reach_run(m, select, mode, sp);
+}
+
+static void test_hold_entry(uint32_t select)
+{
+    struct motor_cmd m;
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    struct motor_control c;
+    uint8_t session;
+    uint32_t watch;
+
+    boot_running(&m, select, MOTOR_MODE_SPEED, 80);
+    session = m.session;
+    /* A target, even at rest, is not a hold. */
+    expect_eq("moving", speed_at(&m, select, 90, 80, 0, 3, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("moving lc", m.lifecycle, MOTOR_LC_RUNNING);
+    expect_eq("moving 2", speed_at(&m, select, 150, 80, 0, 4, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("moving 2 lc", m.lifecycle, MOTOR_LC_RUNNING);
+
+    /* Standstill starts the timer; leaving standstill clears it. */
+    expect_eq("arm0", speed_at(&m, select, 150, 0, 0, 5, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("arm0 lc", m.lifecycle, MOTOR_LC_RUNNING);
+    expect_eq("glitch", speed_at(&m, select, 240, 0, 0, 6, 0, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("rearm", speed_at(&m, select, 300, 0, 0, 7, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("rearm lc", m.lifecycle, MOTOR_LC_RUNNING);
+    expect_eq("re90", speed_at(&m, select, 390, 0, 0, 8, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("re90 lc", m.lifecycle, MOTOR_LC_RUNNING);
+    expect_eq("re150", speed_at(&m, select, 450, 0, 0, 9, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_reply("re150", &r, 9, 9, MOTOR_LC_HOLD, MOTOR_OUT_APPLIED, MOTOR_R_NONE, session);
+    expect_eq("re150 t", (int)m.state_ms, 450);
+    watch = m.watch_ms;
+
+    c = ctrl(MOTOR_MODE_DISABLE, MOTOR_FLAG_ARM, 0, 0, 10, session);
+    {
+        struct motor_cmd_inputs in = kin(450, MOTOR_CMD_MC_RUN, 1, 0);
+
+        expect_eq("hold arm", submit_at(&m, &c, select, 450, &in, &act, &r), MOTOR_R_NONE);
+    }
+    expect_eq("hold arm lc", m.lifecycle, MOTOR_LC_HOLD);
+    expect_eq("hold arm watch", (int)m.watch_ms, (int)watch);
+    expect_eq("hold arm sp", m.setpoint, 0);
+
+    c = ctrl(MOTOR_MODE_CURRENT, 0, 100, 0, 11, session);
+    {
+        struct motor_cmd_inputs in = kin(450, MOTOR_CMD_MC_RUN, 1, 0);
+
+        expect_eq("hold cur", submit_at(&m, &c, select, 450, &in, &act, &r), MOTOR_R_MODE_CHANGE);
+        expect_reply("hold cur", &r, 11, 9, MOTOR_LC_HOLD, MOTOR_OUT_REJECTED, MOTOR_R_MODE_CHANGE,
+                     session);
+    }
+    expect_eq("hold cur lc", m.lifecycle, MOTOR_LC_HOLD);
+    expect_eq("hold cur sp", m.setpoint, 0);
+    expect_eq("hold cur seq", m.last_seq, 10);
+
+    expect_eq("hold range", speed_at(&m, select, 450, 901, 0, 11, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_OUT_OF_RANGE);
+    expect_eq("hold range lc", m.lifecycle, MOTOR_LC_HOLD);
+    expect_eq("hold zero", speed_at(&m, select, 500, 0, 0, 11, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("hold zero lc", m.lifecycle, MOTOR_LC_HOLD);
+    expect_eq("hold zero t", (int)m.state_ms, 450);
+
+    /* No sample: a zero frame cannot invent standstill, so it does not hold. */
+    boot_running(&m, select, MOTOR_MODE_SPEED, 40);
+    c = ctrl(MOTOR_MODE_SPEED, 0, 0, 0, 3, m.session);
+    expect_eq("nosample", submit(&m, &c, select, &r), MOTOR_R_NONE);
+    expect_eq("nosample lc", m.lifecycle, MOTOR_LC_RUNNING);
+}
+
+static void test_resume_before_park(uint32_t select)
+{
+    struct motor_cmd m;
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    uint8_t seq;
+    uint8_t session;
+    uint32_t t_park;
+
+    boot_running(&m, select, MOTOR_MODE_SPEED, 80);
+    session = m.session;
+    t_park = MOTOR_CMD_HOLD_MS + MOTOR_CMD_PARK_MS;
+
+    seq = to_hold(&m, select);
+    seq = creep(&m, select, seq, MOTOR_CMD_HOLD_MS, t_park - 100u);
+    expect_eq("ka", speed_at(&m, select, t_park - 90u, 0, 0, seq, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("ka lc", m.lifecycle, MOTOR_LC_HOLD);
+    seq++;
+    expect_eq("resume",
+              speed_at(&m, select, t_park, 25, 0, seq, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_reply("resume", &r, seq, seq, MOTOR_LC_RUNNING, MOTOR_OUT_APPLIED, MOTOR_R_NONE, session);
+    expect_eq("resume start", act.start, 0);
+    expect_eq("resume stop", act.stop, 0);
+    expect_eq("resume tgt", act.set_target, 1);
+    expect_eq("resume sp", m.setpoint, 25);
+    expect_eq("resume sess", m.session, session);
+}
+
+static void test_park(uint32_t select)
+{
+    struct motor_cmd m;
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    struct motor_cmd_inputs in;
+    struct motor_control kept;
+    uint8_t seq;
+    uint8_t session;
+    uint32_t t_park;
+
+    boot_running(&m, select, MOTOR_MODE_SPEED, 80);
+    session = m.session;
+    seq = to_hold(&m, select);
+    t_park = MOTOR_CMD_HOLD_MS + MOTOR_CMD_PARK_MS;
+    seq = creep(&m, select, seq, MOTOR_CMD_HOLD_MS, t_park - 100u);
+    kept = ctrl(MOTOR_MODE_SPEED, 0, 0, 7, seq, session);
+    expect_eq("ff", speed_at(&m, select, t_park - 90u, 0, 7, seq, 1, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_NONE);
+    expect_eq("ff lc", m.lifecycle, MOTOR_LC_HOLD);
+    expect_eq("ff ma", m.ff_ma, 7);
+    expect_eq("ff t", (int)m.state_ms, (int)MOTOR_CMD_HOLD_MS);
+    seq++;
+
+    in = kin(t_park - 1u, MOTOR_CMD_MC_RUN, 1, 0);
+    in.standstill = 1;
+    motor_cmd_tick(&m, &in, &act);
+    expect_eq("p999 lc", m.lifecycle, MOTOR_LC_HOLD);
+    expect_eq("p999 stop", act.stop, 0);
+    expect_eq("p999 ff", m.ff_ma, 7);
+
+    in = kin(t_park, MOTOR_CMD_MC_RUN, 1, 0);
+    in.standstill = 1;
+    motor_cmd_tick(&m, &in, &act);
+    expect_eq("park lc", m.lifecycle, MOTOR_LC_READY);
+    expect_eq("park stop", act.stop, 1);
+    expect_eq("park why", act.stop_reason, MOTOR_STOP_PARKED);
+    expect_eq("park sticky", m.stop_reason, MOTOR_STOP_PARKED);
+    expect_eq("park start", act.start, 0);
+    expect_eq("park tgt", act.set_target, 0);
+    expect_eq("park sp", m.setpoint, 0);
+    expect_eq("park ff", m.ff_ma, 0);
+    expect_eq("park seq", m.applied_seq, 0);
+    expect_eq("park mode", m.mode, MOTOR_MODE_DISABLE);
+    expect_eq("park sess", m.session, session);
+    expect_eq("park disarm", m.disarm_reason, 0);
+    expect_eq("park valid", m.last_valid, 1);
+
+    in = kin(t_park, MOTOR_CMD_MC_RUN, 1, 0);
+    expect_eq("park dup", submit_at(&m, &kept, select, t_park, &in, &act, &r), MOTOR_R_NONE);
+    expect_eq("park dup out", r.outcome, MOTOR_OUT_DUPLICATE);
+    expect_eq("park dup sp", m.setpoint, 0);
+    expect_eq("park dup lc", m.lifecycle, MOTOR_LC_READY);
+
+    /* The bridge has not reported IDLE yet, so the next target waits. */
+    expect_eq("wait", speed_at(&m, select, t_park, 40, 0, seq, 0, MOTOR_CMD_MC_RUN, &act, &r),
+              MOTOR_R_STARTING);
+    expect_eq("wait lc", m.lifecycle, MOTOR_LC_READY);
+    expect_eq("wait start", act.start, 0);
+    expect_eq("wait sp", m.setpoint, 40);
+    in = kin(t_park + 10u, MOTOR_CMD_MC_IDLE, 1, 0);
+    motor_cmd_tick(&m, &in, &act);
+    expect_eq("again lc", m.lifecycle, MOTOR_LC_STARTING);
+    expect_eq("again start", act.start, 1);
+    expect_eq("again stop", act.stop, 0);
+    expect_eq("again sess", m.session, session);
+}
+
+static void test_hold_disable_and_watchdog(uint32_t select)
+{
+    struct motor_cmd m;
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    struct motor_cmd_inputs in;
+    struct motor_control c;
+    uint8_t session;
+
+    boot_running(&m, select, MOTOR_MODE_SPEED, 80);
+    session = m.session;
+    to_hold(&m, select);
+    c = ctrl(MOTOR_MODE_DISABLE, 0, 0, 0, 20, 0);
+    in = kin(MOTOR_CMD_HOLD_MS + 10u, MOTOR_CMD_MC_RUN, 1, 0);
+    expect_eq("hold dis", submit_at(&m, &c, select, MOTOR_CMD_HOLD_MS + 10u, &in, &act, &r),
+              MOTOR_R_NONE);
+    expect_reply("hold dis", &r, 20, 0, MOTOR_LC_READY, MOTOR_OUT_APPLIED, MOTOR_R_NONE, session);
+    expect_eq("hold dis stop", act.stop, 1);
+    expect_eq("hold dis why", act.stop_reason, MOTOR_STOP_DISABLE);
+    expect_eq("hold dis sticky", m.stop_reason, MOTOR_STOP_DISABLE);
+    expect_eq("hold dis sess", m.session, session);
+    expect_eq("hold dis sp", m.setpoint, 0);
+
+    boot_running(&m, select, MOTOR_MODE_SPEED, 80);
+    session = m.session;
+    to_hold(&m, select);
+    in = kin(MOTOR_CMD_HOLD_MS + MOTOR_WATCHDOG_MS - 1u, MOTOR_CMD_MC_RUN, 1, 0);
+    motor_cmd_tick(&m, &in, &act);
+    expect_eq("hw99 lc", m.lifecycle, MOTOR_LC_HOLD);
+    expect_eq("hw99 stop", act.stop, 0);
+    in = kin(MOTOR_CMD_HOLD_MS + MOTOR_WATCHDOG_MS, MOTOR_CMD_MC_RUN, 1, 0);
+    motor_cmd_tick(&m, &in, &act);
+    expect_eq("hw100 lc", m.lifecycle, MOTOR_LC_DISARMED);
+    expect_eq("hw100 stop", act.stop, 1);
+    expect_eq("hw100 why", act.stop_reason, MOTOR_STOP_TIMEOUT);
+    expect_eq("hw100 disarm", m.disarm_reason, MOTOR_R_TIMEOUT);
+    expect_eq("hw100 sess", m.session,
+              (int)motor_session_next(session, MOTOR_CMD_HOLD_MS + MOTOR_WATCHDOG_MS));
+    expect_eq("hw100 sp", m.setpoint, 0);
+}
+
+static void test_current_skips_hold(uint32_t select)
+{
+    struct motor_cmd m;
+    struct motor_reply r;
+    struct motor_cmd_actions act;
+    struct motor_control c;
+    uint32_t t;
+    uint8_t seq = 3;
+
+    boot_running(&m, select, MOTOR_MODE_CURRENT, 100);
+    for (t = 0; t <= 300u; t += 90u) {
+        struct motor_cmd_inputs in = kin(t, MOTOR_CMD_MC_RUN, 1, 0);
+
+        in.standstill = 1u;
+        c = ctrl(MOTOR_MODE_CURRENT, 0, 0, 0, seq, m.session);
+        expect_eq("cur0", submit_at(&m, &c, select, t, &in, &act, &r), MOTOR_R_NONE);
+        expect_eq("cur0 lc", m.lifecycle, MOTOR_LC_RUNNING);
+        expect_eq("cur0 stop", act.stop, 0);
+        expect_eq("cur0 mode", m.mode, MOTOR_MODE_CURRENT);
+        seq++;
+    }
+}
+
 int main(void)
 {
     unsigned i;
@@ -969,11 +1296,16 @@ int main(void)
     }
     for (i = 0; i < 4u; ++i) {
         test_deadline_session(k_wheel[i]);
+        test_hold_entry(k_wheel[i]);
+        test_resume_before_park(k_wheel[i]);
+        test_park(k_wheel[i]);
+        test_hold_disable_and_watchdog(k_wheel[i]);
+        test_current_skips_hold(k_wheel[i]);
     }
     if (g_failures != 0) {
         fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;
     }
-    printf("motor_cmd: arm, watchdog, starting, running ok\n");
+    printf("motor_cmd: arm, watchdog, starting, running, hold, park ok\n");
     return 0;
 }

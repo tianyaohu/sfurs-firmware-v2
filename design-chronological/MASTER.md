@@ -125,3 +125,25 @@ Append only.
 - Touches: `src/shared/inc/motor_cmd.h`, `src/shared/src/motor_cmd.c`,
   `tests/test_motor_cmd.c`, `architecture/command-lifecycle.md`,
   `architecture/index.md`.
+
+## 2026-10-29  Command slice holds at standstill, then parks  (who: cloud agent)
+
+- Decision: host-only `motor_cmd` enters HOLD when a sampled SPEED target
+  is 0 and the caller reports standstill for 150 ms. The bridge stays on.
+  A nonzero SPEED frame returns to RUNNING without a start. CURRENT in HOLD
+  is `REJECTED(MODE_CHANGE)`; a mode change while STARTING or RUNNING is
+  still accepted. HOLD for 1000 ms switches the output off, records STATUS
+  stop reason parked (8), and returns to READY with the session kept. The
+  100 ms watchdog still disarms a silent wheel, so either timer completes
+  only while fresh motion keeps the arm. The caller supplies `standstill`;
+  this slice does not estimate speed. No HAL or MCSDK calls, and the file
+  stays out of the images.
+- Why: the wire already names lifecycle HOLD and stop reason 8. Both
+  transitions are a clock plus a sample, which is what this slice already
+  trusts for STARTING. Parking only after a second of zero-current hold
+  matches the reference: an immediate output-off was the retired behaviour.
+- Rejected: copying the reference inbox, stall rest, and Hall-loss paths;
+  comparing an RPM inside this module; latching mode for the whole run.
+- Touches: `src/shared/inc/motor_cmd.h`, `src/shared/src/motor_cmd.c`,
+  `tests/test_motor_cmd.c`, `architecture/command-lifecycle.md`,
+  `architecture/index.md`, `architecture/protocol.md`, `README.md`.
